@@ -55,3 +55,9 @@
 .assistant-options button span { color: var(--elys-muted); }
 #assistant-status { margin-block-start: 12px; overflow-wrap: anywhere; }
 #assistant-status:empty { display: none; }
+.assistant-draft-comparison {
+  margin-block-start: 14px;
+  padding: 12px;
+  border: 1px solid var(--elys-line);
+  border-radius: 10px;
+}

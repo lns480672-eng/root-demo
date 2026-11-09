@@ -18,6 +18,8 @@ function setupRequirementAssistant({request, onBuild, onExit}) {
   let selectedDirection = null;
   let questions = [];
   let draft = null;
+  let conflict = false;
+  let comparison = null;
 
   function node(tag, attributes = {}, ...children) {
     const element = document.createElement(tag);
@@ -46,7 +48,14 @@ function setupRequirementAssistant({request, onBuild, onExit}) {
   const [draftLabel, editor] = field('需求草稿', 'assistant-draft-editor', maxDraft, 8);
   const start = button(null, '分析我的想法', () => analyze({step: 'start', idea: idea.value.trim()}), true);
   const organize = button('assistant-organize', '整理成需求草稿', organizeAnswers, true);
-  const save = button('assistant-save', '保存需求', saveDraft, true);
+  const save = button('assistant-save', '保存需求', () => saveDraft(), true);
+  const reviewSaved = button('assistant-review-saved', '核对保存版', () => openDraft(draft.id));
+  const [savedLabel, savedEditor] = field('当前保存版（只读）', 'assistant-saved-version', maxDraft, 5);
+  savedEditor.readOnly = true;
+  const replaceSaved = button('assistant-replace-saved', '用本次编辑更新保存版', () => saveDraft(comparison.revision));
+  const comparisonPanel = node('div', {class: 'assistant-draft-comparison'}, savedLabel, savedEditor,
+    node('p', {class: 'auth-muted'}, '你本次的编辑仍在上方。核对后可修改文字，再明确更新保存版。'),
+    node('div', {class: 'assistant-actions'}, replaceSaved));
   const build = button('assistant-build', '带到直接开发', () => {
     if (isText(editor.value, maxDraft)) onBuild(editor.value);
   });
@@ -70,7 +79,7 @@ function setupRequirementAssistant({request, onBuild, onExit}) {
       node('div', {class: 'assistant-actions'}, organize)),
     draft: screen('assistant-draft', '检查需求草稿',
       node('div', {id: 'assistant-draft-text'}, draftLabel, editor), dirty,
-      node('div', {class: 'assistant-actions'}, save, build)),
+      node('div', {class: 'assistant-actions'}, save, reviewSaved, build), comparisonPanel),
     drafts: screen('assistant-drafts-view', '我的需求', list,
       node('div', {class: 'assistant-actions'}, backToDraft, retryList)),
   };
@@ -97,7 +106,12 @@ function setupRequirementAssistant({request, onBuild, onExit}) {
     myDrafts.disabled = view === 'draft' && saving;
     start.disabled = pending || !isText(idea.value, maxIdea);
     organize.disabled = pending || !questions.length || !readAnswers().every(Boolean);
-    save.disabled = pending || saving || !isText(editor.value, maxDraft) || editor.value === draft?.savedText;
+    const canSave = !pending && !saving && isText(editor.value, maxDraft);
+    save.disabled = !canSave || conflict || editor.value === draft?.savedText;
+    reviewSaved.hidden = !conflict || Boolean(comparison);
+    reviewSaved.disabled = pending || saving;
+    comparisonPanel.hidden = !comparison;
+    replaceSaved.disabled = !canSave || !comparison;
     build.disabled = !isText(editor.value, maxDraft);
     retryList.disabled = pending;
     dirty.hidden = !editor.value || editor.value === draft?.savedText;
@@ -198,6 +212,8 @@ function setupRequirementAssistant({request, onBuild, onExit}) {
 
   function openEditor(text, record) {
     draft = record;
+    conflict = false;
+    comparison = null;
     editor.value = text;
     show('draft', editor);
   }
@@ -207,10 +223,11 @@ function setupRequirementAssistant({request, onBuild, onExit}) {
     return record;
   }
 
-  async function saveDraft() {
-    if (save.disabled) return;
+  async function saveDraft(reviewedRevision) {
+    if (reviewedRevision === undefined ? save.disabled : replaceSaved.disabled) return;
     draft ??= {id: crypto.randomUUID(), revision: 0, savedText: null};
-    const {id, revision} = draft;
+    const {id, revision: originalRevision} = draft;
+    const revision = reviewedRevision ?? originalRevision;
     const text = editor.value;
     const url = draftsPath + '/' + id;
     const saveEpoch = epoch;
@@ -228,11 +245,17 @@ function setupRequirementAssistant({request, onBuild, onExit}) {
         result = readDraft(restored, id);
       }
       if (result.text !== text || result.revision !== revision + 1) throw invalid();
-      if (draft?.id === id && draft.revision === revision) {
+      if (draft?.id === id && draft.revision === originalRevision) {
         draft = {id, revision: result.revision, savedText: text};
+        conflict = false;
+        comparison = null;
         if (saveEpoch === epoch) feedback('已保存到「我的需求」。');
       }
     } catch (error) {
+      if (error.code === 'draft_conflict' && draft?.id === id) {
+        conflict = true;
+        comparison = null;
+      }
       if (saveEpoch === epoch) feedback(error.message || '暂时无法保存，请重试。', true);
     } finally {
       saving = false;
@@ -265,6 +288,13 @@ function setupRequirementAssistant({request, onBuild, onExit}) {
 
   function openDraft(id) {
     run('正在打开草稿…', async () => readDraft(await request(draftsPath + '/' + id), id), result => {
+      if (draft?.id === id && editor.value !== draft.savedText) {
+        conflict = result.revision !== draft.revision;
+        comparison = conflict ? result : null;
+        savedEditor.value = result.text;
+        show('draft', conflict ? savedEditor : editor);
+        return;
+      }
       directions = [];
       selectedDirection = null;
       questions = [];

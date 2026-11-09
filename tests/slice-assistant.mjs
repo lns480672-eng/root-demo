@@ -130,6 +130,15 @@ export async function verifyAssistant({
   assert.equal(await input(draft), edited);
   await screenshot('assistant-conflict-retains-edit');
 
+  stage('opening the same conflicting draft shows the saved version without replacing the edit');
+  await click('#assistant-drafts');
+  await until(() => visible(`#assistant-draft-list [data-draft-id="${id}"]`));
+  await click(`#assistant-draft-list [data-draft-id="${id}"]`);
+  await until(() => visible(draft));
+  assert.equal(await input(draft), edited);
+  assert.equal(await input('#assistant-saved-version'), remote);
+  assert.equal((await appRequest(draftsPath + '/' + id)).body.text, remote);
+
   stage('assistant handoff copies the current edit without generating');
   await click('#assistant-build');
   await until(() => visible('#requirement'));
@@ -137,6 +146,13 @@ export async function verifyAssistant({
   assert.equal(await evaluate('window.assistantGenerated'), 0);
   assert.deepEqual(await library(), initialLibrary);
   assert.equal((await activeTool()).loader, initial.loader);
+
+  stage('explicitly saving the compared edit updates only the reviewed revision');
+  await click('#idea-entry');
+  await until(() => visible('#assistant-replace-saved'));
+  await click('#assistant-replace-saved');
+  await waitStatus('已保存');
+  assert.equal((await appRequest(draftsPath + '/' + id)).body.text, edited);
 
   stage('saved drafts survive login and stay private to their account');
   await logout();
@@ -146,7 +162,7 @@ export async function verifyAssistant({
   await until(() => visible(`#assistant-draft-list [data-draft-id="${id}"]`));
   await click(`#assistant-draft-list [data-draft-id="${id}"]`);
   await until(() => visible(draft));
-  assert.equal(await input(draft), remote);
+  assert.equal(await input(draft), edited);
   const revised = '重新登录后编辑，可以按借具名筛选并保存。';
   await setInput(draft, revised);
   await click('#assistant-save');
@@ -165,6 +181,6 @@ export async function verifyAssistant({
   assert.equal((await activeTool()).id, initial.id);
   return {id: 'TEST-012/013', result: 'passed',
     lateResponseIgnored: true, clearAndAmbiguousPaths: true, twoDirections: true,
-    lostReceiptRecovered: true, conflictRetainsEdit: true, generationDuringHandoff: 0,
+    lostReceiptRecovered: true, conflictRetainsEdit: true, comparisonRetainsEdit: true, generationDuringHandoff: 0,
     draftSurvivesLogin: true, crossAccountReadAndWrite: 404};
 }
