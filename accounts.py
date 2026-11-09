@@ -9,6 +9,7 @@ import time
 from contextlib import closing, contextmanager
 
 SESSION_SECONDS = 12 * 60 * 60
+ADMIN_SETUP_SECONDS = 60 * 60
 USERNAME = re.compile(r"[a-z0-9_-]{3,32}")
 TOOL_STORAGE_BYTES = 256 * 1024
 TABLE_STORAGE_BYTES = 8 * 1024 * 1024
@@ -54,6 +55,12 @@ def password_hash(password, salt):
     return hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, 600_000)
 
 
+def admin_password(value):
+    if not isinstance(value, str) or not 15 <= len(value) <= 128:
+        raise ApiError(400, "invalid_password", "管理员密码须为 15–128 个字符。")
+    return value
+
+
 class Store:
     def __init__(self, path):
         path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -67,6 +74,13 @@ class Store:
                 );
                 CREATE TABLE IF NOT EXISTS invites (
                     digest TEXT PRIMARY KEY, remaining INTEGER NOT NULL, expires INTEGER NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS admin_setup (
+                    singleton INTEGER PRIMARY KEY CHECK(singleton=1),
+                    digest TEXT, expires INTEGER,
+                    account INTEGER REFERENCES accounts(id),
+                    CHECK ((account IS NULL AND digest IS NOT NULL AND expires IS NOT NULL)
+                        OR (account IS NOT NULL AND digest IS NULL AND expires IS NULL))
                 );
                 CREATE TABLE IF NOT EXISTS sessions (
                     digest TEXT PRIMARY KEY, account INTEGER NOT NULL REFERENCES accounts(id),
@@ -136,6 +150,55 @@ class Store:
                    (invite_digest, uses, expires))
         return invite_digest
 
+    @staticmethod
+    def setup_state(db):
+        return db.execute("SELECT digest, expires, account FROM admin_setup WHERE singleton=1").fetchone()
+
+    def create_admin_setup_code(self):
+        code = secrets.token_urlsafe(32)
+        with self.connection(write=True) as db:
+            row = self.setup_state(db)
+            if row is not None and row["account"] is not None:
+                raise ApiError(409, "setup_closed", "管理员已设置。")
+            db.execute(
+                "INSERT INTO admin_setup(singleton,digest,expires) VALUES (1,?,?) "
+                "ON CONFLICT(singleton) DO UPDATE SET digest=excluded.digest,expires=excluded.expires",
+                (digest(code), int(time.time()) + ADMIN_SETUP_SECONDS),
+            )
+        return code
+
+    @staticmethod
+    def setup_available(row):
+        return row is not None and row["account"] is None and row["expires"] > int(time.time())
+
+    def require_setup_code(self, db, submitted):
+        row = self.setup_state(db)
+        if row is not None and row["account"] is not None:
+            raise ApiError(409, "setup_closed", "管理员已设置，请登录。")
+        if not self.setup_available(row) or not hmac.compare_digest(row["digest"], submitted):
+            raise ApiError(403, "invalid_setup_code", "初始化码无效或已过期。")
+
+    def setup_admin(self, data, previous_token):
+        code = data.get("code")
+        if not isinstance(code, str) or not re.fullmatch(r"[A-Za-z0-9_-]{43}", code):
+            raise ApiError(403, "invalid_setup_code", "初始化码无效或已过期。")
+        name, _ = credentials(data, registering=True)
+        password = admin_password(data.get("password"))
+        submitted = digest(code)
+        with self.connection() as db:
+            self.require_setup_code(db, submitted)
+        salt = secrets.token_bytes(16)
+        hashed = password_hash(password, salt)
+        with self.connection(write=True) as db:
+            self.require_setup_code(db, submitted)
+            if db.execute("SELECT 1 FROM accounts WHERE username=?", (name,)).fetchone():
+                raise ApiError(409, "username_taken", "用户名已被使用。")
+            account = db.execute("INSERT INTO accounts(username,salt,password_hash) VALUES (?,?,?)",
+                                 (name, salt, hashed)).lastrowid
+            db.execute("UPDATE admin_setup SET account=?,digest=NULL,expires=NULL WHERE singleton=1", (account,))
+            token, marker = self.create_session(db, account, previous_token)
+        return token, {"user": name, "marker": marker, "latest": None}
+
     def register(self, data, previous_token=""):
         name, password = credentials(data, registering=True)
         invite = data.get("invite")
@@ -179,8 +242,34 @@ class Store:
         if not hmac.compare_digest(hashed, account["password_hash"] if account else bytes(32)):
             raise ApiError(401, "login_failed", "用户名或密码错误。")
         with self.connection(write=True) as db:
+            current = db.execute("SELECT password_hash FROM accounts WHERE id=?", (account["id"],)).fetchone()
+            if current is None or not hmac.compare_digest(hashed, current["password_hash"]):
+                raise ApiError(401, "login_failed", "用户名或密码错误。")
             token, _ = self.create_session(db, account["id"], previous_token)
         return token
+
+    def change_admin_password(self, data, token, marker, require_admin):
+        current = data.get("currentPassword")
+        new = admin_password(data.get("newPassword"))
+        if not isinstance(current, str) or not 1 <= len(current) <= 128:
+            raise ApiError(400, "invalid_password", "请输入当前密码。")
+        with self.connection() as db:
+            name = require_admin(db, token, marker)
+            account = db.execute("SELECT id,salt,password_hash FROM accounts WHERE username=?", (name,)).fetchone()
+        hashed = password_hash(current, account["salt"])
+        if not hmac.compare_digest(hashed, account["password_hash"]):
+            raise ApiError(401, "incorrect_password", "当前密码不正确。")
+        if current == new:
+            raise ApiError(400, "password_unchanged", "请设置与当前密码不同的新密码。")
+        salt = secrets.token_bytes(16)
+        replacement = password_hash(new, salt)
+        with self.connection(write=True) as db:
+            require_admin(db, token, marker)
+            updated = db.execute("UPDATE accounts SET salt=?,password_hash=? WHERE id=? AND password_hash=?",
+                                 (salt, replacement, account["id"], hashed))
+            if not updated.rowcount:
+                raise ApiError(409, "session_changed", "密码已变更，请重新登录。")
+            db.execute("DELETE FROM sessions WHERE account=?", (account["id"],))
 
     @staticmethod
     def create_session(db, account_id, previous_token):

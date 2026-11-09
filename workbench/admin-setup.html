@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>设置首个管理员 · ROOT</title>
+<link rel="stylesheet" href="/admin.css">
+<script src="/admin-setup.js" defer></script>
+</head>
+<body>
+<div class="shell">
+  <header class="masthead">
+    <div class="identity"><span class="wordmark">ROOT</span><span class="mark" aria-hidden="true"></span><span class="role-tag">管理后台</span></div>
+    <a class="workbench-link" href="/">返回工作台</a>
+  </header>
+  <main class="panel credential-panel" aria-labelledby="setup-title">
+    <div class="intro">
+      <h1 id="setup-title">设置首个管理员</h1>
+      <p>输入交付时单独收到的初始化码，再设置你的用户名和密码。设置完成后即可发放邀请码。</p>
+    </div>
+    <form id="setup-form" class="credential-form" method="post">
+      <label for="setup-code">一次性初始化码</label>
+      <input id="setup-code" type="password" autocomplete="one-time-code" minlength="43" maxlength="43" required>
+      <label for="setup-username">管理员用户名</label>
+      <input id="setup-username" autocomplete="username" autocapitalize="none" spellcheck="false" minlength="3" maxlength="32" pattern="[A-Za-z0-9_\x2d]{3,32}" required>
+      <p class="muted meta">3–32 位英文字母、数字、连字符或下划线</p>
+      <label for="setup-password">管理员密码</label>
+      <input id="setup-password" type="password" autocomplete="new-password" minlength="15" maxlength="128" required>
+      <p class="muted meta">15–128 个字符</p>
+      <label for="setup-password-again">确认密码</label>
+      <input id="setup-password-again" type="password" autocomplete="new-password" minlength="15" maxlength="128" required>
+      <p id="setup-feedback" class="notice" role="status"></p>
+      <button id="setup-submit" type="submit" class="primary">设置管理员</button>
+    </form>
+  </main>
+</div>
+</body>
+</html>

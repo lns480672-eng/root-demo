@@ -2088,6 +2088,136 @@
           }
         }
       }
+    },
+    "/api/admin/setup": {
+      "post": {
+        "operationId": "setupFirstAdministrator",
+        "tags": [
+          "账号"
+        ],
+        "summary": "设置首个管理员",
+        "description": "部署命令签发的短期一次性初始化码和新密码在同一事务内完成初始化。成功后返回新管理员会话。",
+        "responses": {
+          "201": {
+            "description": "首个管理员已创建",
+            "headers": {
+              "Set-Cookie": {
+                "$ref": "#/components/headers/SetSessionCookie"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthenticatedSession"
+                }
+              }
+            }
+          },
+          "409": {
+            "$ref": "#/components/responses/Http409"
+          },
+          "403": {
+            "$ref": "#/components/responses/Http403"
+          },
+          "400": {
+            "$ref": "#/components/responses/Http400"
+          },
+          "415": {
+            "$ref": "#/components/responses/Http415"
+          },
+          "503": {
+            "$ref": "#/components/responses/Http503"
+          },
+          "default": {
+            "$ref": "#/components/responses/UnexpectedError"
+          },
+          "429": {
+            "$ref": "#/components/responses/Http429"
+          }
+        },
+        "security": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdminSetupRequest"
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Origin"
+          }
+        ]
+      }
+    },
+    "/api/admin/password": {
+      "post": {
+        "operationId": "changeAdministratorPassword",
+        "tags": [
+          "账号"
+        ],
+        "summary": "管理员修改自己的密码",
+        "description": "须有管理员会话及当前密码。成功后服务端撤销该账号全部会话并清除浏览器 Cookie。",
+        "responses": {
+          "200": {
+            "description": "密码已变更",
+            "headers": {
+              "Set-Cookie": {
+                "$ref": "#/components/headers/SetSessionCookie"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Ok"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Http401"
+          },
+          "409": {
+            "$ref": "#/components/responses/Http409"
+          },
+          "403": {
+            "$ref": "#/components/responses/Http403"
+          },
+          "400": {
+            "$ref": "#/components/responses/Http400"
+          },
+          "415": {
+            "$ref": "#/components/responses/Http415"
+          },
+          "503": {
+            "$ref": "#/components/responses/Http503"
+          },
+          "default": {
+            "$ref": "#/components/responses/UnexpectedError"
+          },
+          "429": {
+            "$ref": "#/components/responses/Http429"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdminPasswordRequest"
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Origin"
+          }
+        ]
+      }
     }
   },
   "components": {
@@ -4169,6 +4299,56 @@
         "required": [
           "kind",
           "text"
+        ]
+      },
+      "AdminSetupRequest": {
+        "type": "object",
+        "properties": {
+          "username": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{3,32}$",
+            "description": "账号按去掉首尾空白的小写值处理。"
+          },
+          "password": {
+            "type": "string",
+            "minLength": 15,
+            "maxLength": 128,
+            "format": "password",
+            "writeOnly": true
+          },
+          "code": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{43}$",
+            "writeOnly": true
+          }
+        },
+        "required": [
+          "username",
+          "password",
+          "code"
+        ]
+      },
+      "AdminPasswordRequest": {
+        "type": "object",
+        "properties": {
+          "currentPassword": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "format": "password",
+            "writeOnly": true
+          },
+          "newPassword": {
+            "type": "string",
+            "minLength": 15,
+            "maxLength": 128,
+            "format": "password",
+            "writeOnly": true
+          }
+        },
+        "required": [
+          "currentPassword",
+          "newPassword"
         ]
       }
     }

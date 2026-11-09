@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import { verifyTableJourney } from './verify-table-journey.mjs';
 import { verifyStagedFlow, verifyStagedCalculator, verifyStagedRegistration, verifyStagedRevision, verifyStagedReconnect } from './verify-staged-flow.mjs';
-import { spawn } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { createServer } from 'node:http';
 import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
@@ -18,7 +18,9 @@ const collectCoverage = process.argv.includes('--coverage');
 const mainOnly = process.argv.includes('--main');
 const entryFlow = process.argv.includes('--entry-flow');
 const adminFlow = process.argv.includes('--admin-flow');
-if ((entryFlow || adminFlow) && live) throw new Error('选定的流程使用模型替身，请移除 --live');
+const adminSetup = process.argv.includes('--admin-setup');
+if ((entryFlow || adminFlow || adminSetup) && live) throw new Error('选定的流程使用模型替身，请移除 --live');
+if (adminSetup && (adminFlow || stagedFlow)) throw new Error('--admin-setup requires a fresh instance without a legacy administrator');
 const artifactsArg = process.argv.find(arg => arg.startsWith('--artifacts='));
 let artifacts = artifactsArg?.slice('--artifacts='.length);
 const app = process.env.WORKBENCH_URL || 'http://127.0.0.1:8765';
@@ -430,6 +432,43 @@ try {
   await cdp('Emulation.setDeviceMetricsOverride', { width: 1360, height: 980, deviceScaleFactor: 1, mobile: false });
   await cdp('Page.navigate', { url: base });
   await until(() => evaluate('document.documentElement.dataset.ready === "true"'));
+  if (adminSetup) {
+    stage = 'administrator setup, invite and password change';
+    const code = execFileSync('python3', ['-B', 'workbench.py', '--runs-dir', join(root, 'runs'),
+      '--create-admin-setup-code'], { encoding: 'utf8', env: { ...process.env, ROOT_TRIAL_ADMINS: '' } }).trim();
+    await cdp('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
+    await cdp('Page.navigate', { url: base + '/admin' });
+    await until(() => visible('#setup-form'));
+    await screenshot('admin-first-setup');
+    await type('#setup-code', code);
+    await type('#setup-username', 'qa-admin-owner');
+    await type('#setup-password', password);
+    await type('#setup-password-again', password);
+    await click('#setup-submit');
+    await until(() => visible('#invite-generate'));
+    await click('#invite-generate');
+    await until(() => visible('#invite-result'));
+    await click('#security-nav');
+    await until(() => visible('#password-form'));
+    await screenshot('admin-password-change');
+    const newPassword = 'new-root-browser-test-only!';
+    await type('#current-password', password);
+    await type('#new-password', newPassword);
+    await type('#new-password-again', newPassword);
+    await click('#password-submit');
+    await until(() => visible('#auth-submit'));
+    await type('#username', 'qa-admin-owner');
+    await type('#password', newPassword);
+    await click('#auth-submit');
+    await until(() => visible('#workspace'));
+    await cdp('Page.navigate', { url: base + '/admin#invites' });
+    await until(() => visible('#invite-generate'));
+    await cdp('Page.navigate', { url: base });
+    await until(() => visible('#workspace'));
+    await logout();
+    await cdp('Emulation.setDeviceMetricsOverride', { width: 1360, height: 980, deviceScaleFactor: 1, mobile: false });
+    evidence.tests.push('AC-021 窄屏从后台设置管理员，完成后发码。修改密码后重新登录并打开后台。');
+  }
   if (adminFlow) {
     const { verifyAdmin } = await import('./slice-admin.mjs');
     evidence.tests.push(...await verifyAdmin({

@@ -215,3 +215,9 @@
     .meter + .meter { border-left: 0; border-top: 1px solid var(--line); }
   }
   #load-feedback { margin-top: 14px; padding: 12px 16px; }
+
+.credential-panel { max-width: 620px; margin: 18px auto 0; padding: clamp(18px, 4vw, 36px); }
+.credential-form { display: grid; gap: 8px; max-width: 480px; margin-top: 18px; }
+.credential-form label { font-weight: 600; margin-top: 6px; }
+.credential-form input { width: 100%; min-width: 0; }
+.credential-form button { justify-self: start; }

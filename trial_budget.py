@@ -152,7 +152,7 @@ class TrialBudget:
             account = self.account_rows(db, day, user["id"]).fetchone()
             return {
                 **self.account_view(account, *self.totals(db), reset),
-                "paused": self.paused(db), "admin": (user["id"], user["username"]) in self.admins,
+                "paused": self.paused(db), "admin": self.is_admin(db, user),
             }
 
     def require_generation_slot(self, row):
@@ -274,9 +274,15 @@ class TrialBudget:
         self.require_generation_slot(self.account_rows(db, day, account_id).fetchone())
         db.execute("INSERT INTO generation_success VALUES (?, ?)", (run_id, account_id))
 
+    def is_admin(self, db, user):
+        if (user["id"], user["username"]) in self.admins:
+            return True
+        row = self.store.setup_state(db)
+        return row is not None and row["account"] == user["id"]
+
     def require_admin(self, db, token, marker):
         user = self.store.session(db, token, marker)
-        if (user["id"], user["username"]) not in self.admins:
+        if not self.is_admin(db, user):
             raise ApiError(403, "admin_required", "需要管理员权限。")
         return user["username"]
 

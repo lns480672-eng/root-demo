@@ -23,6 +23,7 @@
       <p class="nav-title">管理模块</p>
       <a id="trial-nav" href="#manage">用量与额度</a>
       <a id="invite-nav" href="#invites">邀请码管理</a>
+      <a id="security-nav" href="#security">账号安全</a>
       <a id="account-nav" href="#accounts">账号管理 <span class="locked-label">已锁定</span></a>
     </nav>
     <div class="admin-content">
@@ -107,6 +108,23 @@
           </div>
           <p id="invite-feedback" class="notice" role="status"></p>
         </section>
+      </section>
+      <section id="security-module" aria-labelledby="security-title" hidden>
+        <div class="intro">
+          <h1 id="security-title">账号安全</h1>
+          <p>修改自己的密码。保存后需要用新密码重新登录。</p>
+        </div>
+        <form id="password-form" class="credential-form" method="post">
+          <label for="current-password">当前密码</label>
+          <input id="current-password" type="password" autocomplete="current-password" maxlength="128" required>
+          <label for="new-password">新密码</label>
+          <input id="new-password" type="password" autocomplete="new-password" minlength="15" maxlength="128" required>
+          <p class="muted meta">15–128 个字符</p>
+          <label for="new-password-again">确认新密码</label>
+          <input id="new-password-again" type="password" autocomplete="new-password" minlength="15" maxlength="128" required>
+          <p id="password-feedback" class="notice" role="status"></p>
+          <button id="password-submit" type="submit" class="primary">保存新密码</button>
+        </form>
       </section>
       <section id="account-preview" aria-labelledby="account-module" aria-describedby="account-preview-note" hidden>
         <div class="intro">

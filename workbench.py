@@ -32,6 +32,7 @@ STATIC = {
     ADMIN: ("admin.html", "text/html; charset=utf-8"),
     "/admin.css": ("admin.css", "text/css; charset=utf-8"),
     "/admin.js": ("admin.js", "text/javascript; charset=utf-8"),
+    "/admin-setup.js": ("admin-setup.js", "text/javascript; charset=utf-8"),
     "/workbench.css": ("workbench.css", "text/css; charset=utf-8"),
     "/entry.js": ("entry.js", "text/javascript; charset=utf-8"),
     "/assistant.js": ("assistant.js", "text/javascript; charset=utf-8"),
@@ -54,6 +55,8 @@ STAGED = "/api/staged"
 STAGED_TASK = re.compile(STAGED + r"/([a-f0-9]{32})")
 STAGED_ACTION = re.compile(STAGED + r"/([a-f0-9]{32})/(resume|candidate|publish|resolve-publish)")
 ADMIN_INVITES = "/api/admin/invites"
+ADMIN_SETUP = "/api/admin/setup"
+ADMIN_PASSWORD = "/api/admin/password"
 TABLE_INSPECT = "/api/table/inspect"
 TABLE_GENERATE = "/api/table/generate"
 TABLE_CONFIG = "/api/table/config"
@@ -178,7 +181,8 @@ def serve(key, port, runs=generate.RUNS, *, generation_limits=(5, 30), analysis_
         return staged.status(token, marker, task)
     assets = {url: (ROOT / "workbench" / name).read_bytes()
               for url, (name, _) in STATIC.items()}
-    build = build_id(assets)
+    setup_page = (ROOT / "workbench" / "admin-setup.html").read_bytes()
+    build = build_id({**assets, "admin-setup.html": setup_page})
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, format, *args):
@@ -197,7 +201,8 @@ def serve(key, port, runs=generate.RUNS, *, generation_limits=(5, 30), analysis_
                 self.send_header("Content-Security-Policy", policy)
                 paths = (*STATIC, "/api/config", "/api/releases", "/api/session", "/api/register", "/api/login", "/api/logout",
                          "/api/generate", "/api/tools", "/api/tools/*", DRAFTS, DRAFTS + "/*", ANALYZE, CLAIM_ANALYSIS_DRAFT,
-                         TABLE_INSPECT, TABLE_GENERATE, TABLE_CONFIG, TRIAL, TRIAL_ADMIN, ADMIN_INVITES)
+                         TABLE_INSPECT, TABLE_GENERATE, TABLE_CONFIG, TRIAL, TRIAL_ADMIN, ADMIN_INVITES,
+                         ADMIN_SETUP, ADMIN_PASSWORD)
                 if staged:
                     paths += (STAGED, STAGED + "/*")
                 allowed = " ".join(f'"http://{host}{path}"' for path in paths)
@@ -251,6 +256,9 @@ def serve(key, port, runs=generate.RUNS, *, generation_limits=(5, 30), analysis_
             if self.path in assets:
                 if self.path == ADMIN:
                     with store.connection() as db:
+                        if not admin_usernames and store.setup_available(store.setup_state(db)):
+                            self.send_bytes(200, setup_page, STATIC[ADMIN][1], SHELL_POLICY)
+                            return
                         budget.require_admin(db, self.cookie_token(), None)
                 _, mime = STATIC[self.path]
                 self.send_bytes(200, assets[self.path], mime,
@@ -399,6 +407,16 @@ def serve(key, port, runs=generate.RUNS, *, generation_limits=(5, 30), analysis_
                 return
             if self.path == ADMIN_INVITES:
                 self.send_json(201, budget.issue_invite(token, self.marker(), data.get("requestId")))
+                return
+            if self.path == ADMIN_SETUP:
+                if admin_usernames:
+                    raise ApiError(409, "setup_closed", "管理员已配置，请登录。")
+                new_token, identity = store.setup_admin(data, token)
+                self.send_json(201, identity, session_cookie(new_token))
+                return
+            if self.path == ADMIN_PASSWORD:
+                store.change_admin_password(data, token, self.marker(), budget.require_admin)
+                self.send_json(200, {"ok": True}, session_cookie("", 0))
                 return
             if staged and (match := STAGED_ACTION.fullmatch(self.path)):
                 marker = self.marker()
@@ -595,10 +613,20 @@ def main():
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--prompt-key", action="store_true", help="在本机终端隐藏输入 Key")
     parser.add_argument("--runs-dir", type=Path, default=generate.RUNS)
-    parser.add_argument("--create-invite", action="store_true")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--create-invite", action="store_true")
+    mode.add_argument("--create-admin-setup-code", action="store_true")
     parser.add_argument("--invite-hours", type=int, default=24)
     parser.add_argument("--invite-uses", type=int, default=1)
     args = parser.parse_args()
+    if args.create_admin_setup_code:
+        if any(name.strip() for name in os.environ.get("ROOT_TRIAL_ADMINS", "").split(",")):
+            parser.error("管理员已由部署配置指定。")
+        try:
+            print(Store(args.runs_dir / "workspace.sqlite3").create_admin_setup_code())
+        except ApiError as error:
+            parser.error(str(error))
+        return 0
     if args.create_invite:
         if not 1 <= args.invite_hours <= 720 or not 1 <= args.invite_uses <= 50:
             parser.error("本地邀请码期限 1–720 小时、使用次数 1–50。")

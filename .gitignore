@@ -41,6 +41,8 @@
 !/workbench/admin.html
 !/workbench/admin.css
 !/workbench/admin.js
+!/workbench/admin-setup.html
+!/workbench/admin-setup.js
 !/tests/
 /tests/*
 !/tests/fixtures.py
@@ -58,3 +60,4 @@
 !/账号与工具设计.md
 !/accounts.py
 !/tests/test_accounts.py
+!/tests/test_admin_setup.py

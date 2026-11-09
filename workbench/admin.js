@@ -63,13 +63,42 @@ async function request(path, data) {
 function showSection() {
   const locked = location.hash === '#accounts';
   const invites = location.hash === '#invites';
-  get('admin').hidden = locked || invites;
+  const security = location.hash === '#security';
+  get('admin').hidden = locked || invites || security;
   get('account-preview').hidden = !locked;
   get('invite-module').hidden = !invites;
-  get('trial-nav').setAttribute('aria-current', locked || invites ? 'false' : 'page');
+  get('security-module').hidden = !security;
+  if (!security) get('password-form').reset();
+  get('trial-nav').setAttribute('aria-current', locked || invites || security ? 'false' : 'page');
   get('account-nav').setAttribute('aria-current', locked ? 'page' : 'false');
   get('invite-nav').setAttribute('aria-current', invites ? 'page' : 'false');
+  get('security-nav').setAttribute('aria-current', security ? 'page' : 'false');
 }
+
+get('password-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  const submit = get('password-submit');
+  const feedback = get('password-feedback');
+  if (submit.disabled) return;
+  const newPassword = get('new-password').value;
+  if (newPassword !== get('new-password-again').value) {
+    feedback.textContent = '两次输入的新密码不一致。';
+    get('new-password-again').focus();
+    return;
+  }
+  submit.disabled = true;
+  feedback.textContent = '正在保存新密码…';
+  try {
+    await request('/api/admin/password', { currentPassword: get('current-password').value, newPassword });
+    event.target.reset();
+    location.replace('/');
+  } catch (error) {
+    feedback.textContent = error.knownRejection ? error.message
+      : '暂时无法确认修改结果。请返回工作台，用新密码重新登录核对。';
+  } finally {
+    submit.disabled = false;
+  }
+});
 
 function inviteKey() {
   return 'root:admin-invite-request:' + identity.user;
@@ -335,5 +364,8 @@ retryAction.addEventListener('click', () => applyAction());
 inviteGenerate.addEventListener('click', issueInvite);
 get('invite-copy').addEventListener('click', copyInvite);
 window.addEventListener('hashchange', showSection);
-window.addEventListener('pagehide', clearInviteResult);
+window.addEventListener('pagehide', () => {
+  clearInviteResult();
+  get('password-form').reset();
+});
 load();
