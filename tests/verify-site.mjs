@@ -237,6 +237,7 @@ try {
   for (const width of [1360, 390, 320]) {
     await cdp('Emulation.setDeviceMetricsOverride', { width, height: 850, deviceScaleFactor: 1, mobile: false });
     const layout = await evaluate(`(() => {
+      window.scrollTo({top: 0, behavior: 'instant'});
       const entry = document.querySelector('header .header-entry');
       const box = entry.getBoundingClientRect();
       return [entry.href, document.querySelector('.workspace-entry a').href,
@@ -258,6 +259,37 @@ try {
     assert.ok(invitation?.visible, '官网应能展开查看邀请码来源和注册指引');
     assert.match(invitation.text, /向邀请你体验 ROOT 的项目方获取邀请码/);
     assert.match(invitation.text, /凭邀请码注册/);
+
+    const capabilities = await evaluate(`(() => {
+      const faq = document.querySelector('#root-site-faq');
+      document.querySelector('header a[href="#root-site-about"]').click();
+      const summaries = [...faq.querySelectorAll('summary')];
+      const questions = ['ROOT 适合做哪些工具？', '工具里的数据会保存吗？', '首版有哪些限制？',
+        '可以把生成的工具公开发布吗？'];
+      return questions.map(label => {
+        const summary = summaries.find(item => item.textContent.trim() === label);
+        if (!summary) return null;
+        summary.click();
+        const answer = summary.parentElement;
+        const paragraphs = [...answer.querySelectorAll('p')];
+        const visible = answer.open && paragraphs.length > 0 && paragraphs.every(paragraph => {
+          const rect = paragraph.getBoundingClientRect();
+          return paragraph.checkVisibility() && rect.left >= 0 && rect.right <= innerWidth
+            && paragraph.scrollWidth <= paragraph.clientWidth;
+        });
+        const text = paragraphs.map(paragraph => paragraph.textContent.trim()).join(' ');
+        summary.click();
+        return {visible, text};
+      });
+    })()`);
+    assert.ok(capabilities.every(answer => answer?.visible), `${width} px 应能展开并完整阅读工具能力、保存、限制与发布问答`);
+    const [tools, storage, limits, publishing] = capabilities.map(answer => answer.text);
+    assert.match(tools, /清单、跟进看板、计算器.*CSV.*XLSX.*第一个工作表/);
+    assert.match(storage, /登录工作台.*保存到你的账号.*我的工具.*官网试用.*刷新后会恢复原样/);
+    assert.match(limits, /暂不支持通用数据库、附件存储和多人共享编辑/);
+    assert.match(limits, /暂不支持音视频播放、录音和语音功能.*摄像头、麦克风、蓝牙或 USB 设备/);
+    assert.match(limits, /暂不支持同步原表、连接外部系统和定时后台任务/);
+    assert.match(publishing, /工作台内.*公开发布暂未开放/);
   }
 
   const sample = await evaluate(`(() => {
@@ -389,7 +421,7 @@ try {
     assert.match(await returnPage.evaluate('document.querySelector("#list").textContent', restored.context), new RegExp(record));
     console.log('TEST-003 local HTTPS passed · one-off invitation · proxy boundaries and large CSV save · browser generated, operated and restored one tool');
   }
-  console.log('TEST-014 passed · guest trial and FAQ · anonymous and returning entry · workbench session absent from both site document requests');
+  console.log('TEST-014 passed · capability FAQ at 1360/390/320 px · guest trial · anonymous and returning entry · workbench session absent from both site document requests');
 } finally {
   for (const socket of sockets) socket.close();
   await Promise.all(children.map(async child => {
