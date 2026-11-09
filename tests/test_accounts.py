@@ -102,6 +102,27 @@ class AccountHTTP(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual((current["generation"]["remaining"], current["analysis"]["remaining"]), (2, 5))
 
+    def test_admin_page_requires_operator_session(self):
+        # TEST-017-ADMIN. Direct navigation has its own gate, in addition to the data API.
+        def page(cookie=None):
+            headers = {"Cookie": cookie} if cookie else {}
+            try:
+                response = urlopen(Request(self.base + "/admin", headers=headers), timeout=5)
+            except HTTPError as error:
+                response = error
+            with response:
+                return response.status, response.read().decode()
+
+        self.assertEqual(page()[0], 401)
+        self.assertEqual(self.register("admin-route-member", self.store.create_invite())[0], 201)
+        member, _ = self.login("admin-route-member")
+        admin, _ = self.login("trial-admin")
+        self.assertEqual(page(member)[0], 403)
+        status, html = page(admin)
+        self.assertEqual(status, 200)
+        self.assertIn("用量与额度", html)
+        self.assertIn('src="/admin.js"', html)
+
     def test_trial_admin_model_outcomes_follow_actual_dispatches(self):
         # TEST-017-STAT. Exercise provider-backed handlers rather than seeding outcome totals.
         self.assertEqual(self.register("stats-user", self.store.create_invite())[0], 201)

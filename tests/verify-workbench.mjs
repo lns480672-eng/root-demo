@@ -16,7 +16,8 @@ const liveRevision = live && process.argv.includes('--revision');
 const collectCoverage = process.argv.includes('--coverage');
 const mainOnly = process.argv.includes('--main');
 const entryFlow = process.argv.includes('--entry-flow');
-if (entryFlow && live) throw new Error('--entry-flow 使用模型替身，请移除 --live');
+const adminFlow = process.argv.includes('--admin-flow');
+if ((entryFlow || adminFlow) && live) throw new Error('选定的流程使用模型替身，请移除 --live');
 const artifactsArg = process.argv.find(arg => arg.startsWith('--artifacts='));
 let artifacts = artifactsArg?.slice('--artifacts='.length);
 const app = process.env.WORKBENCH_URL || 'http://127.0.0.1:8765';
@@ -74,7 +75,8 @@ try {
     probeUrl = 'http://127.0.0.1:' + probe.address().port;
     assert.equal((await fetch(probeUrl + '/control')).status, 200);
     const fixture = stagedFlow ? 'tests/staged_fixtures.py' : 'tests/fixtures.py';
-    const server = launch('python3', [fixture, 'fixture-key', '0', join(root, 'runs'), probeUrl]);
+    const server = launch('python3', [fixture, 'fixture-key', '0', join(root, 'runs'), probeUrl,
+      ...(adminFlow ? ['--admin-flow'] : [])]);
     const [line] = await Promise.race([once(server.stdout, 'data'), once(server, 'exit').then(() => [''])]);
     base = String(line).match(/http:\/\/127\.0\.0\.1:\d+/)?.[0];
     assert.ok(base, '工作台应启动并提供本机地址');
@@ -401,6 +403,13 @@ try {
   await cdp('Emulation.setDeviceMetricsOverride', { width: 1360, height: 980, deviceScaleFactor: 1, mobile: false });
   await cdp('Page.navigate', { url: base });
   await until(() => evaluate('document.documentElement.dataset.ready === "true"'));
+  if (adminFlow) {
+    const { verifyAdmin } = await import('./slice-admin.mjs');
+    evidence.tests.push(...await verifyAdmin({
+      evaluate, click, type, until, cdp, login, logout, visible, appRequest, screenshot,
+      stage: name => { stage = name; },
+    }));
+  }
   if (!live) {
     stage = 'account visual layout and registration feedback';
     await screenshot('account-login');

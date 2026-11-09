@@ -102,6 +102,7 @@ function render() {
   example.hidden = editing || blocked || Boolean(failure);
   byId('error').textContent = failure;
   byId('error').hidden = !failure;
+  byId('admin-entry').hidden = !session || !trial?.admin;
   const balance = byId('generation-balance');
   balance.hidden = tableMode || !trial;
   if (trial) {

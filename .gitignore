@@ -38,6 +38,9 @@
 !/workbench/assistant.css
 !/workbench/table.js
 !/workbench/table.css
+!/workbench/admin.html
+!/workbench/admin.css
+!/workbench/admin.js
 !/tests/
 /tests/*
 !/tests/fixtures.py
@@ -48,6 +51,7 @@
 !/tests/test_assistant_model.py
 !/tests/test_trial_budget.py
 !/tests/slice-csv.mjs
+!/tests/slice-admin.mjs
 !/tests/slice-assistant.mjs
 !/tests/slice-create-recovery.mjs
 !/tests/verify-webrtc-isolation.mjs

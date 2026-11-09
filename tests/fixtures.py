@@ -135,5 +135,12 @@ store = Store(runs / "workspace.sqlite3")
 store.create_invite("fixture-invite", uses=2)
 store.create_invite("fixture-expired-invite", hours=-1)
 store.create_invite("fixture-used-invite", uses=0, hours=-1)
+admin_names = ()
+if "--admin-flow" in sys.argv[5:]:
+    admin_names = ("qa-trial-admin",)
+    for username in (*admin_names, "qa-trial-member"):
+        store.register({"username": username, "password": "root-browser-test-only!",
+                        "invite": store.create_invite()})
 workbench.serve(sys.argv[1], int(sys.argv[2]), runs, generation_limits=(100, 500),
-                analysis_limits=(100, 500), analysis_provider=assistant_fixture.provider)
+                analysis_limits=(100, 500), analysis_provider=assistant_fixture.provider,
+                admin_usernames=admin_names)

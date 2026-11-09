@@ -24,9 +24,13 @@ from accounts import ApiError, InviteError, SESSION_SECONDS, Store, TABLE_STORAG
 from trial_budget import TrialBudget
 
 ROOT = Path(__file__).resolve().parent
+ADMIN = "/admin"
 STATIC = {
     "/": ("index.html", "text/html; charset=utf-8"),
     "/updates": ("index.html", "text/html; charset=utf-8"),
+    ADMIN: ("admin.html", "text/html; charset=utf-8"),
+    "/admin.css": ("admin.css", "text/css; charset=utf-8"),
+    "/admin.js": ("admin.js", "text/javascript; charset=utf-8"),
     "/workbench.css": ("workbench.css", "text/css; charset=utf-8"),
     "/entry.js": ("entry.js", "text/javascript; charset=utf-8"),
     "/assistant.js": ("assistant.js", "text/javascript; charset=utf-8"),
@@ -228,9 +232,12 @@ def serve(key, port, runs=generate.RUNS, *, generation_limits=(5, 30), analysis_
 
         def handle_get(self):
             if self.path in assets:
+                if self.path == ADMIN:
+                    with store.connection() as db:
+                        budget.require_admin(db, self.cookie_token(), None)
                 _, mime = STATIC[self.path]
                 self.send_bytes(200, assets[self.path], mime,
-                                SHELL_POLICY if self.path in ("/", "/updates") else None)
+                                SHELL_POLICY if self.path in ("/", "/updates", ADMIN) else None)
             elif self.path == "/api/config":
                 config = {"configured": bool(key), "build": build}
                 if staged:
