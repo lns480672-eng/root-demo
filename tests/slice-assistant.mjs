@@ -82,9 +82,27 @@ export async function verifyAssistant({
     answer.selectedIndex = 1;
     answer.dispatchEvent(new Event("change", {bubbles: true}));
   })()`);
+  stage('assistant preserves the selected answer after invalid upstream JSON and retries once');
+  const answer = '#assistant-questions select';
+  const selected = await input(answer);
+  const trialBefore = (await appRequest('/api/trial')).body;
+  await click('#assistant-organize');
+  await waitStatus('模型返回的分析不完整');
+  assert.equal(await visible(answer), true);
+  assert.equal(await input(answer), selected);
+  assert.equal(await input(idea), ambiguous + '希望能先看异常。');
+  const afterFailure = (await appRequest('/api/trial')).body;
+  assert.equal(afterFailure.analysis.used - trialBefore.analysis.used, 1);
+  assert.equal(afterFailure.analysis.totalUsed - trialBefore.analysis.totalUsed, 1);
+  assert.deepEqual(afterFailure.generation, trialBefore.generation);
   await click('#assistant-organize');
   await until(() => visible(draft));
+  assert.ok((await input(draft)).includes(selected));
   assert.match(await input(draft), /周报汇总/);
+  const afterRetry = (await appRequest('/api/trial')).body;
+  assert.equal(afterRetry.analysis.used - afterFailure.analysis.used, 1);
+  assert.equal(afterRetry.analysis.totalUsed - afterFailure.analysis.totalUsed, 1);
+  assert.deepEqual(afterRetry.generation, trialBefore.generation);
 
   stage('clear idea opens a draft, saving survives a lost response and a conflict preserves the edit');
   await click('#assistant-edit-idea');
@@ -181,6 +199,7 @@ export async function verifyAssistant({
   assert.equal((await activeTool()).id, initial.id);
   return {id: 'TEST-012/013', result: 'passed',
     lateResponseIgnored: true, clearAndAmbiguousPaths: true, twoDirections: true,
+    invalidAnswersRecovered: true, analysisChargesForFailureAndRetry: 2,
     lostReceiptRecovered: true, conflictRetainsEdit: true, comparisonRetainsEdit: true, generationDuringHandoff: 0,
     draftSurvivesLogin: true, crossAccountReadAndWrite: 404};
 }

@@ -99,6 +99,42 @@ class AssistantProviderTest(unittest.TestCase):
                     assistant_model.analyze(IDEA, KEY, Mock())
             self.assertEqual(failure.exception.code, "invalid_analysis_result")
 
+    def test_answers_requests_only_the_draft_shape(self):
+        request = {**IDEA, "step": "answers", "direction": DIRECTION,
+                   "questions": [QUESTION], "answers": ["按项目"]}
+        with patch.object(assistant_model, "_exchange", return_value=upstream(DRAFT)) as exchange:
+            self.assertEqual(assistant_model.analyze(request, KEY, Mock()), DRAFT)
+        body = json.loads(exchange.call_args.args[0])["body"]
+        self.assertEqual(json.loads(body["messages"][1]["content"]), request)
+        system = body["messages"][0]["content"]
+        self.assertIn('"kind":"draft"', system)
+        self.assertNotIn('"kind":"questions"', system)
+        self.assertNotIn('"kind":"directions"', system)
+
+    def test_invalid_response_receipt_distinguishes_failure_without_logging_content(self):
+        malformed = upstream(DRAFT)
+        completion = json.loads(malformed["body"])
+        completion["choices"][0]["message"]["content"] = "invalid-json-" + KEY
+        malformed["body"] = json.dumps(completion)
+        for response, phase, reason in (
+            ({"status": 200, "body": "not-an-envelope"}, "provider_envelope", None),
+            (upstream(DRAFT, finish="length"), "finish_reason", "length"),
+            (upstream(DRAFT, finish=KEY), "finish_reason", "other"),
+            (malformed, "content_json", None),
+            (upstream({**DRAFT, "extra": KEY}), "content_schema", "invalid shape"),
+            (upstream({**DRAFT, "text": KEY}), "credential_echo", None),
+        ):
+            with self.subTest(phase=phase):
+                record = Mock()
+                with patch.object(assistant_model, "_exchange", return_value=response):
+                    with self.assertRaises(ApiError) as failure:
+                        assistant_model.analyze(IDEA, KEY, Mock(), record=record)
+                self.assertEqual(failure.exception.code, "invalid_analysis_result")
+                receipt = record.call_args.args[0]
+                self.assertEqual(receipt.get("validation_stage"), phase)
+                self.assertEqual(receipt.get("validation_reason"), reason)
+                self.assertNotIn(KEY, json.dumps(receipt))
+
     def test_maps_balance_rate_and_timeout_without_retry(self):
         for envelope, code in (
             ({"status": 402}, "analysis_balance"),

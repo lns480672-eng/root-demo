@@ -5,6 +5,7 @@ import sys
 import time
 import urllib.error
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import generate
@@ -129,7 +130,30 @@ def fixture(requirement, key):
 generate.request_completion = fixture
 import workbench
 import assistant_fixture
+import assistant_model
 
+default_analysis = assistant_fixture.provider
+answer_attempts = 0
+
+
+def analysis(data, key, admit, *, record=None):
+    if data.get("step") != "answers" or not data.get("idea", "").endswith("希望能先看异常。"):
+        return default_analysis(data, key, admit, record=record)
+    draft = assistant_fixture.analyze(data)
+
+    def exchange(payload, reserve):
+        global answer_attempts
+        reserve()
+        answer_attempts += 1
+        content = '{"kind":"draft","text":' if answer_attempts == 1 else json.dumps(draft)
+        return {"status": 200, "body": json.dumps({"choices": [
+            {"finish_reason": "stop", "message": {"content": content}},
+        ]})}
+
+    with patch.object(assistant_model, "_exchange", exchange):
+        return assistant_model.analyze(data, key, admit, record=record)
+
+assistant_fixture.provider = analysis
 runs = Path(sys.argv[3])
 store = Store(runs / "workspace.sqlite3")
 store.create_invite("fixture-invite", uses=2)
