@@ -146,11 +146,11 @@ def _prepare_worker(child, payload, deadline):
         raise _transport_error()
 
 
-def _exchange(payload, admit):
+def _exchange(payload, admit, *, wall_seconds=None):
     # Keep the key in the pipe. Inherit only proxy and TLS settings.
     env_names = {"https_proxy", "http_proxy", "no_proxy", "all_proxy", "ssl_cert_file", "ssl_cert_dir"}
     env = {name: value for name, value in os.environ.items() if name.lower() in env_names}
-    deadline = time.monotonic() + WALL_SECONDS
+    deadline = time.monotonic() + (WALL_SECONDS if wall_seconds is None else wall_seconds)
     try:
         child = subprocess.Popen(
             WORKER_COMMAND, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
@@ -269,7 +269,7 @@ def _worker():
     if sys.stdin.buffer.read(1) != b"G":
         return
     try:
-        with opener.open(request, timeout=WALL_SECONDS) as response:
+        with opener.open(request, timeout=payload.get("wall_seconds", WALL_SECONDS)) as response:
             body = response.read(OUTPUT_BYTES + 1)
             result = {"status": response.status, "body": body.decode() if len(body) <= OUTPUT_BYTES else ""}
     except urllib.error.HTTPError as error:
