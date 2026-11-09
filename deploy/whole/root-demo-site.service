@@ -1,0 +1,19 @@
+[Unit]
+Description=ROOT product site
+After=network.target
+
+[Service]
+DynamicUser=yes
+WorkingDirectory=/opt/root-demo/whole/current
+ExecStart=/usr/bin/python3 -B public_site.py --port 8788 --workbench-url https://workbench.example.invalid/
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+TasksMax=32
+MemoryMax=128M
+
+[Install]
+WantedBy=multi-user.target

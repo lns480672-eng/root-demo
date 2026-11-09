@@ -1,0 +1,18 @@
+[Unit]
+Description=ROOT public authentication rate limit
+After=network.target
+
+[Service]
+DynamicUser=yes
+ExecStart=/usr/bin/python3 -B /opt/root-demo/whole/current/deploy/whole/auth_gate.py
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+TasksMax=48
+MemoryMax=96M
+
+[Install]
+WantedBy=multi-user.target

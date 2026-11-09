@@ -1,0 +1,26 @@
+[Unit]
+Description=ROOT full workbench
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=root-demo
+Group=root-demo
+WorkingDirectory=/opt/root-demo/whole/current
+EnvironmentFile=/etc/root-demo/workbench.env
+EnvironmentFile=/etc/root-demo/whole.env
+StateDirectory=root-demo-whole
+StateDirectoryMode=0700
+UMask=0077
+ExecStart=/usr/bin/python3 -B workbench.py --port 8774 --runs-dir /var/lib/root-demo-whole
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+TasksMax=192
+MemoryMax=640M
+
+[Install]
+WantedBy=multi-user.target

@@ -245,6 +245,16 @@ try {
         ['需求助手', '直接开发', '我的工具'].every(name => document.body.textContent.includes(name))];
     })()`);
     assert.deepEqual(layout, [workbench + '/', workbench + '/', true, true, true]);
+    const announcement = await evaluate(`(() => {
+      const notice = document.querySelector('#root-site-roadmap');
+      if (!notice?.checkVisibility()) return null;
+      const bounds = notice.getBoundingClientRect();
+      return { text: notice.textContent, fits: bounds.left >= 0 && bounds.right <= innerWidth };
+    })()`);
+    assert.ok(announcement, `开发计划公告在 ${width} px 应直接可见`);
+    assert.ok(announcement.fits, `开发计划公告在 ${width} px 应完整适配`);
+    assert.match(announcement.text, /Demo[\s\S]*单页[\s\S]*多页[\s\S]*后续[\s\S]*预计 11 月底更新进度/);
+
     const invitation = await evaluate(`(() => {
       const question = [...document.querySelectorAll('.faq summary')]
         .find(summary => summary.textContent.trim() === '邀请码从哪里获取？');
