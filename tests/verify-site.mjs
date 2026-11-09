@@ -284,7 +284,8 @@ try {
     })()`);
     assert.ok(capabilities.every(answer => answer?.visible), `${width} px 应能展开并完整阅读工具能力、保存、限制与发布问答`);
     const [tools, storage, limits, publishing] = capabilities.map(answer => answer.text);
-    assert.match(tools, /清单、跟进看板、计算器.*CSV.*XLSX.*第一个工作表/);
+    assert.match(tools, /^把你的文字需求做成可操作的网页工具。.*登记和筛选记录.*跟踪进度.*按自己的规则做测算/);
+    assert.match(tools, /带表头的 CSV 或 XLSX.*确认字段.*第一个工作表/);
     assert.match(storage, /登录工作台.*保存到你的账号.*我的工具.*官网试用.*刷新后会恢复原样/);
     assert.match(limits, /暂不支持通用数据库、附件存储和多人共享编辑/);
     assert.match(limits, /暂不支持音视频播放、录音和语音功能.*摄像头、麦克风、蓝牙或 USB 设备/);
