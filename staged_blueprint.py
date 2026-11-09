@@ -31,15 +31,16 @@ script 是普通 JavaScript 源码，勿含 script 标签、HTML 注释或 Markd
 宿主已创建 #root-program 容器并提供标题与基础样式，markup 不要重复创建容器。正文中的小于号用 &lt;。优先实现可操作功能。"""
 TYPES = {"text", "date", "integer", "choice"}
 RULES = {
-    "spec": """阅读需求，选择能完整实现核心目标的计划。仅输出 JSON 规格。
-默认使用程序计划 {"kind":"program","title":"工具名","goal":"简明、可验证的目标"}。
-只有当用户明确需要持久保存一组彼此独立的记录，并围绕该记录集合操作时，才用记录计划。
-例如：摄氏华氏换算只显示一个计算结果，温度和单位是控件，不是持久记录，必须使用 program。
-例如：求职投递看板需要长期保存多个岗位卡片，并分栏、跨栏移动或备份，使用记录计划。
-记录计划的形状是 {"title":"工具名","fields":[{"id":"英文小写 snake_case","label":"中文字段名","type":"text|date|integer|choice","required":true,"options":[]}]}。
-保留 choice 选项原文和顺序，至少两个选项；其他类型的 options 为空；integer 是非负整数；链接用 text。
-用户明确需要联网或跨账号协作等宿主无法实现的核心能力时，才返回 {"unsupported":true}。
-本阶段只产出规格，无需写实现。""",
+    "spec": """本阶段只写 JSON 规格。先判断核心结果是什么，再选能保留业务功能的计划。
+如果核心结果是用户反复新增并持久保存的一组独立记录，并要求对这些记录筛选、汇总、导出、编辑或分栏，必须选 ledger。
+例如「每次借用是一笔，记录器材、数量、日期；按器材筛选、合计数量、导出 CSV」属于 ledger。
+例如「投递卡片按阶段分栏，能移动、编辑、删除和备份」属于 ledger。
+ledger 的形状是 {"kind":"ledger","title":"工具名","fields":[{"id":"英文小写 snake_case","label":"中文字段名","type":"text|date|integer|choice","required":true,"options":[]}]}。
+ledger 的 choice 选项保留原文和顺序，至少两个；其余类型 options 为空；integer 是非负整数；链接用 text。
+如果核心是输入得到单个计算结果、临时交互或其他本地操作，没有上述多记录集合，则用 {"kind":"program","title":"工具名","goal":"简明、可验证的目标"}。
+例如「摄氏和华氏双向换算」属于 program，输入值和选择项是控件，不是持久记录。
+只有明确要求联网或跨账号协作等宿主无法实现的核心能力时，才返回 {"unsupported":true}。
+只输出选定形状，不输出解释或实现。""",
     "entry": """{"form":["field_id"],"columns":["field_id"],"sort":{"field":"field_id","direction":"desc"},
 "edit_choice":{"field":"field_id","initial":"选项原文"}}。
 form 按录入顺序列出字段，默认状态由 edit_choice 设置，不要把该字段列入 form。columns 为实际显示的完整明细。
@@ -93,7 +94,8 @@ def validate_spec(value):
         require(isinstance(goal, str) and goal.isprintable() and 0 < len(goal.strip()) <= 240,
                 "bad_program_goal")
         return
-    keys(value, "title", "fields")
+    keys(value, "title", "fields", optional=("kind",))
+    require(value.get("kind", "ledger") == "ledger", "bad_spec_kind")
     require(label(value["title"]), "bad_title")
     fields = value["fields"]
     require(isinstance(fields, list) and 1 <= len(fields) <= 12, "bad_fields")
