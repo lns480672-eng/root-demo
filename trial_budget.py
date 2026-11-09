@@ -28,10 +28,11 @@ def budget_view(own, limit, total, total_limit):
 
 class TrialBudget:
     def __init__(self, store, runs, generation_limits=(5, 30), analysis_limits=(6, 60),
-                 admin_usernames=(), clock=time.time):
+                 admin_usernames=(), clock=time.time, admin_session_required=False):
         self.store = store
         self.pause_file = Path(runs) / "generation.paused"
         self.clock = clock
+        self.admin_session_required = admin_session_required
         names = frozenset(name.strip().lower() for name in admin_usernames)
         if any(not USERNAME.fullmatch(name) for name in names):
             raise ValueError("管理员用户名配置无效。")
@@ -281,7 +282,7 @@ class TrialBudget:
         return row is not None and row["account"] == user["id"]
 
     def require_admin(self, db, token, marker):
-        user = self.store.session(db, token, marker)
+        user = self.store.session(db, token, marker, admin=self.admin_session_required)
         if not self.is_admin(db, user):
             raise ApiError(403, "admin_required", "需要管理员权限。")
         return user["username"]

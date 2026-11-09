@@ -91,10 +91,10 @@ get('password-form').addEventListener('submit', async event => {
   try {
     await request('/api/admin/password', { currentPassword: get('current-password').value, newPassword });
     event.target.reset();
-    location.replace('/');
+    location.reload();
   } catch (error) {
     feedback.textContent = error.knownRejection ? error.message
-      : '暂时无法确认修改结果。请返回工作台，用新密码重新登录核对。';
+      : '暂时无法确认修改结果。请重新打开后台，用新密码登录核对。';
   } finally {
     submit.disabled = false;
   }
@@ -286,8 +286,7 @@ async function load(afterAction = false) {
   retryLoad.disabled = true;
   try {
     if (!identity) {
-      const current = await request('/api/session');
-      if (!current.user) throw new Error('请返回工作台重新登录。');
+      const current = await request('/api/admin/session');
       identity = current;
       try {
         pending = JSON.parse(sessionStorage.getItem(pendingKey()));
@@ -305,9 +304,15 @@ async function load(afterAction = false) {
     state = await request('/api/trial/admin');
     render();
     backend.hidden = false;
+    get('admin-logout').disabled = false;
     get('load-feedback').hidden = true;
     if (pending) get('action-feedback').textContent = '上次操作的结果未确认，请核对。';
   } catch (error) {
+    if (error.authorizationChanged) {
+      try { sessionStorage.setItem('root:admin-expired', '1'); } catch {}
+      location.reload();
+      return;
+    }
     backend.hidden = true;
     get('load-feedback').hidden = false;
     const prefix = afterAction ? '操作已保存，但额度与记录刷新失败。' : '用量与额度加载失败。';
@@ -337,7 +342,7 @@ async function applyAction(data, fieldError) {
       remember(null);
       (fieldError || feedback).textContent = error.message;
     } else if (error.authorizationChanged) {
-      feedback.textContent = '登录会话或权限已变化。请返回工作台重新登录，再确认上次操作。';
+      feedback.textContent = '登录会话或权限已变化。请重新打开后台登录，再确认上次操作。';
     } else {
       feedback.textContent = '暂时无法确认操作结果，请点击「确认上次操作」。';
     }
@@ -359,6 +364,22 @@ toggle.addEventListener('click', () => {
 confirmAction.addEventListener('close', () => {
   if (confirmAction.returnValue === 'apply') applyAction({ action: state.paused ? 'resume' : 'pause' });
 });
+get('admin-logout').addEventListener('click', async () => {
+  const button = get('admin-logout');
+  button.disabled = true;
+  try {
+    await request('/api/admin/logout', {});
+    location.reload();
+  } catch (error) {
+    if (error.authorizationChanged) {
+      location.reload();
+      return;
+    }
+    get('action-feedback').textContent = '暂时无法确认退出结果，请重试。';
+    button.disabled = false;
+  }
+});
+
 retryLoad.addEventListener('click', () => load());
 retryAction.addEventListener('click', () => applyAction());
 inviteGenerate.addEventListener('click', issueInvite);

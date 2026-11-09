@@ -33,6 +33,7 @@ STATIC = {
     ADMIN: ("admin.html", "text/html; charset=utf-8"),
     "/admin.css": ("admin.css", "text/css; charset=utf-8"),
     "/admin.js": ("admin.js", "text/javascript; charset=utf-8"),
+    "/admin-login.js": ("admin-login.js", "text/javascript; charset=utf-8"),
     "/admin-setup.js": ("admin-setup.js", "text/javascript; charset=utf-8"),
     "/workbench.css": ("workbench.css", "text/css; charset=utf-8"),
     "/entry.js": ("entry.js", "text/javascript; charset=utf-8"),
@@ -59,6 +60,10 @@ STAGED_ACTION = re.compile(STAGED + r"/([a-f0-9]{32})/(resume|candidate|verify-p
 ADMIN_INVITES = "/api/admin/invites"
 ADMIN_SETUP = "/api/admin/setup"
 ADMIN_PASSWORD = "/api/admin/password"
+ADMIN_LOGIN = "/api/admin/login"
+ADMIN_SESSION = "/api/admin/session"
+ADMIN_LOGOUT = "/api/admin/logout"
+ADMIN_ACTIONS = (TRIAL_ADMIN, ADMIN_INVITES, ADMIN_SETUP, ADMIN_PASSWORD, ADMIN_LOGIN, ADMIN_LOGOUT)
 TABLE_INSPECT = "/api/table/inspect"
 TABLE_GENERATE = "/api/table/generate"
 TABLE_CONFIG = "/api/table/config"
@@ -133,8 +138,10 @@ def model_error(evidence):
     return GENERATION_ERRORS.get(evidence["status"], "DeepSeek 暂时无法完成请求，请重试。")
 
 
-def session_cookie(token, max_age=SESSION_SECONDS):
-    return f"root_session={token}; HttpOnly; SameSite=Strict; Path=/; Max-Age={max_age}"
+def session_cookie(token, max_age=SESSION_SECONDS, *, admin=False):
+    name = "root_admin" if admin else "root_session"
+    secure = "; Secure" if admin else ""
+    return f"{name}={token}; HttpOnly; SameSite=Strict; Path=/; Max-Age={max_age}{secure}"
 
 
 def serve(key, port, runs=generate.RUNS, *, generation_limits=(5, 30), analysis_limits=(6, 60),
@@ -144,7 +151,7 @@ def serve(key, port, runs=generate.RUNS, *, generation_limits=(5, 30), analysis_
     model_lock = threading.Lock()
     store = Store(runs / "workspace.sqlite3")
     budget = TrialBudget(store, runs, generation_limits=generation_limits, analysis_limits=analysis_limits,
-                         admin_usernames=admin_usernames)
+                         admin_usernames=admin_usernames, admin_session_required=True)
     table_limits = table_limits or table_import.TableLimits()
 
     def stage_receipt(task, dispatch, receipt):
@@ -189,7 +196,8 @@ def serve(key, port, runs=generate.RUNS, *, generation_limits=(5, 30), analysis_
     assets = {url: (ROOT / "workbench" / name).read_bytes()
               for url, (name, _) in STATIC.items()}
     setup_page = (ROOT / "workbench" / "admin-setup.html").read_bytes()
-    build = build_id({**assets, "admin-setup.html": setup_page})
+    login_page = (ROOT / "workbench" / "admin-login.html").read_bytes()
+    build = build_id({**assets, "admin-setup.html": setup_page, "admin-login.html": login_page})
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, format, *args):
@@ -208,8 +216,7 @@ def serve(key, port, runs=generate.RUNS, *, generation_limits=(5, 30), analysis_
                 self.send_header("Content-Security-Policy", policy)
                 paths = (*STATIC, "/api/config", "/api/releases", "/api/session", "/api/register", "/api/login", "/api/logout",
                          "/api/generate", "/api/tools", "/api/tools/*", DRAFTS, DRAFTS + "/*", ANALYZE, CLAIM_ANALYSIS_DRAFT,
-                         TABLE_INSPECT, TABLE_GENERATE, TABLE_CONFIG, TRIAL, TRIAL_ADMIN, ADMIN_INVITES,
-                         ADMIN_SETUP, ADMIN_PASSWORD)
+                         TABLE_INSPECT, TABLE_GENERATE, TABLE_CONFIG, TRIAL, ADMIN_SESSION, *ADMIN_ACTIONS)
                 if staged:
                     paths += (STAGED, STAGED + "/*")
                 allowed = " ".join(f'"http://{host}{path}"' for path in paths)
@@ -232,10 +239,10 @@ def serve(key, port, runs=generate.RUNS, *, generation_limits=(5, 30), analysis_
             self.error(403, "invalid_host", "请使用启动时显示的本机地址。")
             return False
 
-        def cookie_token(self):
+        def cookie_token(self, *, admin=False):
             try:
                 cookies = SimpleCookie(self.headers.get("Cookie", ""))
-                value = cookies["root_session"].value
+                value = cookies["root_admin" if admin else "root_session"].value
                 return value if re.fullmatch(r"[A-Za-z0-9_-]{43}", value) else ""
             except (CookieError, KeyError):
                 return ""
@@ -266,7 +273,13 @@ def serve(key, port, runs=generate.RUNS, *, generation_limits=(5, 30), analysis_
                         if not admin_usernames and store.setup_available(store.setup_state(db)):
                             self.send_bytes(200, setup_page, STATIC[ADMIN][1], SHELL_POLICY)
                             return
-                        budget.require_admin(db, self.cookie_token(), None)
+                        try:
+                            budget.require_admin(db, self.cookie_token(admin=True), None)
+                        except ApiError as error:
+                            if error.code not in ("login_required", "admin_required"):
+                                raise
+                            self.send_bytes(200, login_page, STATIC[ADMIN][1], SHELL_POLICY)
+                            return
                 _, mime = STATIC[self.path]
                 self.send_bytes(200, assets[self.path], mime,
                                 SHELL_POLICY if self.path in ("/", "/updates", ADMIN) else None)
@@ -306,8 +319,14 @@ def serve(key, port, runs=generate.RUNS, *, generation_limits=(5, 30), analysis_
                 self.send_json(200, {"tasks":staged.list(self.cookie_token(), self.marker(), history=True)})
             elif staged and (match := STAGED_TASK.fullmatch(self.path)):
                 self.send_json(200, {"task":staged.status(self.cookie_token(), self.marker(), match[1])})
+            elif self.path == ADMIN_SESSION:
+                with store.connection() as db:
+                    token = self.cookie_token(admin=True)
+                    budget.require_admin(db, token, None)
+                    session = store.session(db, token, admin=True)
+                self.send_json(200, {"user": session["username"], "marker": session["marker"]})
             elif self.path == TRIAL_ADMIN:
-                self.send_json(200, budget.admin_state(self.cookie_token(), self.marker()))
+                self.send_json(200, budget.admin_state(self.cookie_token(admin=True), self.marker()))
             elif self.path == TABLE_CONFIG:
                 with store.connection() as db:
                     store.session(db, self.cookie_token(), self.marker())
@@ -381,7 +400,18 @@ def serve(key, port, runs=generate.RUNS, *, generation_limits=(5, 30), analysis_
                 self.handle_error(error)
 
         def handle_action(self, data):
-            token = self.cookie_token()
+            token = self.cookie_token(admin=self.path in ADMIN_ACTIONS)
+            if self.path == ADMIN_LOGIN:
+                new_token = store.login(data, token, authorize=budget.is_admin)
+                with store.connection() as db:
+                    session = store.session(db, new_token, admin=True)
+                self.send_json(200, {"user": session["username"], "marker": session["marker"]},
+                               session_cookie(new_token, admin=True))
+                return
+            if self.path == ADMIN_LOGOUT:
+                store.logout(token, self.marker(), admin=True)
+                self.send_json(200, {"ok": True}, session_cookie("", 0, admin=True))
+                return
             if self.path == "/api/register":
                 new_token, identity = store.register(data, token)
                 self.send_json(201, identity, session_cookie(new_token))
@@ -421,11 +451,11 @@ def serve(key, port, runs=generate.RUNS, *, generation_limits=(5, 30), analysis_
                 if admin_usernames:
                     raise ApiError(409, "setup_closed", "管理员已配置，请登录。")
                 new_token, identity = store.setup_admin(data, token)
-                self.send_json(201, identity, session_cookie(new_token))
+                self.send_json(201, identity, session_cookie(new_token, admin=True))
                 return
             if self.path == ADMIN_PASSWORD:
                 store.change_admin_password(data, token, self.marker(), budget.require_admin)
-                self.send_json(200, {"ok": True}, session_cookie("", 0))
+                self.send_json(200, {"ok": True}, session_cookie("", 0, admin=True))
                 return
             if staged and (match := STAGED_ACTION.fullmatch(self.path)):
                 marker = self.marker()

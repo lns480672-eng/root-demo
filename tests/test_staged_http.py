@@ -207,10 +207,10 @@ class StagedHTTPFixture(unittest.TestCase):
         return cookie.split(";")[0], user["marker"]
 
     def admin_generation(self):
-        code, _, cookie = self.request("/api/login", {"username":"staged-operator", "password":"test-only-password"})
+        code, _, cookie = self.request("/api/admin/login", {"username":"staged-operator", "password":"test-only-password"})
         self.assertEqual(code, 200)
         auth = (cookie.split(";")[0], "")
-        code, session, _ = self.request("/api/session", auth=auth)
+        code, session, _ = self.request("/api/admin/session", auth=auth)
         self.assertEqual(code, 200)
         code, view, _ = self.request("/api/trial/admin", auth=(auth[0], session["marker"]))
         self.assertEqual(code, 200)
@@ -884,10 +884,10 @@ class StagedHTTP(StagedHTTPFixture):
 
     def test_paused_generation_cannot_create_jobs_or_repositories(self):
         owner = self.account("staged-paused-owner")
-        status, _, cookie = self.request("/api/login", {"username":"staged-operator", "password":"test-only-password"})
+        status, _, cookie = self.request("/api/admin/login", {"username":"staged-operator", "password":"test-only-password"})
         self.assertEqual(status, 200)
         cookie = cookie.split(";")[0]
-        session = self.request("/api/session", auth=(cookie, ""))[1]
+        session = self.request("/api/admin/session", auth=(cookie, ""))[1]
         admin = (cookie, session["marker"])
         self.assertEqual(self.request("/api/trial/admin", {"action":"pause"}, admin)[0], 200)
         try:

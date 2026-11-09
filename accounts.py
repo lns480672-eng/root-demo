@@ -5,11 +5,15 @@ import json
 import re
 import secrets
 import sqlite3
+import threading
 import time
 from contextlib import closing, contextmanager
 
 SESSION_SECONDS = 12 * 60 * 60
 ADMIN_SETUP_SECONDS = 60 * 60
+LOGIN_ATTEMPT_WINDOW = 60
+LOGIN_ATTEMPT_LIMIT = 12
+LOGIN_ATTEMPT_BUCKETS = 1024
 USERNAME = re.compile(r"[a-z0-9_-]{3,32}")
 TOOL_STORAGE_BYTES = 256 * 1024
 TABLE_STORAGE_BYTES = 8 * 1024 * 1024
@@ -66,6 +70,8 @@ class Store:
         path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         path.touch(mode=0o600, exist_ok=True)
         self.path = path
+        self.login_attempts = {}
+        self.login_attempt_lock = threading.Lock()
         with self.connection() as db:
             db.executescript("""
                 CREATE TABLE IF NOT EXISTS accounts (
@@ -83,6 +89,10 @@ class Store:
                         OR (account IS NOT NULL AND digest IS NULL AND expires IS NULL))
                 );
                 CREATE TABLE IF NOT EXISTS sessions (
+                    digest TEXT PRIMARY KEY, account INTEGER NOT NULL REFERENCES accounts(id),
+                    marker TEXT NOT NULL, expires INTEGER NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS admin_sessions (
                     digest TEXT PRIMARY KEY, account INTEGER NOT NULL REFERENCES accounts(id),
                     marker TEXT NOT NULL, expires INTEGER NOT NULL
                 );
@@ -196,7 +206,7 @@ class Store:
             account = db.execute("INSERT INTO accounts(username,salt,password_hash) VALUES (?,?,?)",
                                  (name, salt, hashed)).lastrowid
             db.execute("UPDATE admin_setup SET account=?,digest=NULL,expires=NULL WHERE singleton=1", (account,))
-            token, marker = self.create_session(db, account, previous_token)
+            token, marker = self.create_session(db, account, previous_token, admin=True)
         return token, {"user": name, "marker": marker, "latest": None}
 
     def register(self, data, previous_token=""):
@@ -234,18 +244,34 @@ class Store:
             token, marker = self.create_session(db, account.lastrowid, previous_token)
         return token, {"user": name, "marker": marker, "latest": None}
 
-    def login(self, data, previous_token):
+    def login(self, data, previous_token, *, authorize=None):
         name, password = credentials(data)
+        # The same password can be verified from either entry point. Bound memory
+        # and prevent switching entry points from resetting the attempt budget.
+        bucket = hash(name) % LOGIN_ATTEMPT_BUCKETS
+        now = time.monotonic_ns()
+        with self.login_attempt_lock:
+            recent = [t for t in self.login_attempts.get(bucket, ())
+                      if now - t < LOGIN_ATTEMPT_WINDOW * 1_000_000_000]
+            if len(recent) >= LOGIN_ATTEMPT_LIMIT:
+                raise ApiError(429, "login_rate_limit", "登录尝试过多，请稍后再试。")
+            self.login_attempts[bucket] = [*recent, now]
+        failure = ApiError(401, "login_failed", "账号或密码不正确，或该账号没有管理员权限。"
+                           if authorize else "用户名或密码错误。")
         with self.connection() as db:
             account = db.execute("SELECT * FROM accounts WHERE username=?", (name,)).fetchone()
         hashed = password_hash(password, account["salt"] if account else bytes(16))
         if not hmac.compare_digest(hashed, account["password_hash"] if account else bytes(32)):
-            raise ApiError(401, "login_failed", "用户名或密码错误。")
+            raise failure
         with self.connection(write=True) as db:
             current = db.execute("SELECT password_hash FROM accounts WHERE id=?", (account["id"],)).fetchone()
             if current is None or not hmac.compare_digest(hashed, current["password_hash"]):
-                raise ApiError(401, "login_failed", "用户名或密码错误。")
-            token, _ = self.create_session(db, account["id"], previous_token)
+                raise failure
+            if authorize and not authorize(db, account):
+                raise failure
+            token, _ = self.create_session(db, account["id"], previous_token, admin=authorize is not None)
+        with self.login_attempt_lock:
+            self.login_attempts[bucket] = [t for t in self.login_attempts[bucket] if t != now]
         return token
 
     def change_admin_password(self, data, token, marker, require_admin):
@@ -270,19 +296,22 @@ class Store:
             if not updated.rowcount:
                 raise ApiError(409, "session_changed", "密码已变更，请重新登录。")
             db.execute("DELETE FROM sessions WHERE account=?", (account["id"],))
+            db.execute("DELETE FROM admin_sessions WHERE account=?", (account["id"],))
 
     @staticmethod
-    def create_session(db, account_id, previous_token):
+    def create_session(db, account_id, previous_token, *, admin=False):
+        table = "admin_sessions" if admin else "sessions"
         token, marker = secrets.token_urlsafe(32), secrets.token_urlsafe(18)
         now = int(time.time())
-        db.execute("DELETE FROM sessions WHERE digest=? OR expires<=?", (digest(previous_token), now))
-        db.execute("INSERT INTO sessions VALUES (?,?,?,?)", (digest(token), account_id, marker, now + SESSION_SECONDS))
+        db.execute(f"DELETE FROM {table} WHERE digest=? OR expires<=?", (digest(previous_token), now))
+        db.execute(f"INSERT INTO {table} VALUES (?,?,?,?)", (digest(token), account_id, marker, now + SESSION_SECONDS))
         return token, marker
 
-    def session(self, db, token, marker=None):
+    def session(self, db, token, marker=None, *, admin=False):
+        table = "admin_sessions" if admin else "sessions"
         row = db.execute(
-            "SELECT accounts.id, username, marker, latest_tool FROM sessions "
-            "JOIN accounts ON accounts.id=sessions.account WHERE digest=? AND expires>?",
+            f"SELECT accounts.id, username, marker, latest_tool FROM {table} "
+            f"JOIN accounts ON accounts.id={table}.account WHERE digest=? AND expires>?",
             (digest(token), int(time.time())),
         ).fetchone()
         if row is None:
@@ -291,10 +320,11 @@ class Store:
             raise ApiError(409, "session_changed", "浏览器会话已变更，请重新打开工作台。")
         return row
 
-    def logout(self, token, marker):
+    def logout(self, token, marker, *, admin=False):
+        table = "admin_sessions" if admin else "sessions"
         with self.connection(write=True) as db:
-            self.session(db, token, marker)
-            db.execute("DELETE FROM sessions WHERE digest=?", (digest(token),))
+            self.session(db, token, marker, admin=admin)
+            db.execute(f"DELETE FROM {table} WHERE digest=?", (digest(token),))
 
     def list_requirement_drafts(self, token, marker):
         with self.connection() as db:

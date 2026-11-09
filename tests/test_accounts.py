@@ -80,7 +80,7 @@ class AccountHTTP(unittest.TestCase):
 
     def test_trial_quotas_pause_and_admin_authorization(self):
         self.assertEqual(self.register("trial-user", self.store.create_invite())[0], 201)
-        admin, admin_marker = self.login("trial-admin")
+        admin, admin_marker = self.login("trial-admin", admin=True)
         user, marker = self.login("trial-user")
         balance = "/api/trial"
         manage = "/api/trial/admin"
@@ -88,8 +88,8 @@ class AccountHTTP(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(initial["generation"]["remaining"], 5)
         self.assertEqual(initial["analysis"]["remaining"], 6)
-        self.assertEqual(self.request(manage, cookie=user, marker=marker)[0], 403)
-        self.assertEqual(self.request(manage, {"action": "pause"}, user, marker)[0], 403)
+        self.assertEqual(self.request(manage, cookie=user, marker=marker)[0], 401)
+        self.assertEqual(self.request(manage, {"action": "pause"}, user, marker)[0], 401)
         self.assertEqual(self.request(manage, {"action": "pause"}, admin, admin_marker)[0], 200)
         self.assertEqual(self.request("/api/generate", {"requirement": "空耗测试"}, user, marker)[1]["code"], "model_paused")
         analysis = {"step": "start", "idea": "做一个项目工具，可以登记并保存进度。",
@@ -128,11 +128,11 @@ class AccountHTTP(unittest.TestCase):
             with response:
                 return response.status, response.read().decode()
 
-        self.assertEqual(page()[0], 401)
+        self.assertIn("管理员登录", page()[1])
         self.assertEqual(self.register("admin-route-member", self.store.create_invite())[0], 201)
         member, _ = self.login("admin-route-member")
-        admin, _ = self.login("trial-admin")
-        self.assertEqual(page(member)[0], 403)
+        admin, _ = self.login("trial-admin", admin=True)
+        self.assertIn("管理员登录", page(member)[1])
         status, html = page(admin)
         self.assertEqual(status, 200)
         self.assertIn("用量与额度", html)
@@ -141,7 +141,7 @@ class AccountHTTP(unittest.TestCase):
     def test_trial_admin_model_outcomes_follow_actual_dispatches(self):
         # TEST-017-STAT. Exercise provider-backed handlers rather than seeding outcome totals.
         self.assertEqual(self.register("stats-user", self.store.create_invite())[0], 201)
-        admin, admin_marker = self.login("trial-admin")
+        admin, admin_marker = self.login("trial-admin", admin=True)
         user, marker = self.login("stats-user")
         manage = "/api/trial/admin"
         generate = "/api/generate"
@@ -162,7 +162,7 @@ class AccountHTTP(unittest.TestCase):
             return item["used"], item["completed"], item["failed"]
 
         initial = snapshot()
-        self.assertEqual(self.request(manage, cookie=user, marker=marker)[0], 403)
+        self.assertEqual(self.request(manage, cookie=user, marker=marker)[0], 401)
         self.assertEqual(self.request(manage, {"action": "pause"}, admin, admin_marker)[0], 200)
         self.addCleanup(self.request, manage, {"action": "resume"}, admin, admin_marker)
         self.assertEqual(self.request(generate, {"requirement": "不应派发"}, user, marker)[0], 503)
@@ -423,15 +423,16 @@ class AccountHTTP(unittest.TestCase):
             "username": name, "password": "fixture-test-password!", "invite": invite,
         })[:2]
 
-    def login(self, name):
-        status, _, cookie = self.request("/api/login", {
+    def login(self, name, *, admin=False):
+        prefix = "/api/admin" if admin else "/api"
+        status, _, cookie = self.request(prefix + "/login", {
             "username": name, "password": "fixture-test-password!",
         })
         self.assertEqual(status, 200)
         self.assertIn("HttpOnly", cookie)
         self.assertIn("SameSite=Strict", cookie)
         cookie = cookie.split(";", 1)[0]
-        _, state, _ = self.request("/api/session", cookie=cookie)
+        _, state, _ = self.request(prefix + "/session", cookie=cookie)
         self.assertEqual(state["user"], name)
         return cookie, state["marker"]
 
@@ -493,8 +494,8 @@ class AccountHTTP(unittest.TestCase):
         self.assertEqual(self.request(path, data)[0], 401)
         self.assertEqual(self.register("invite-non-admin", self.store.create_invite())[0], 201)
         user, user_marker = self.login("invite-non-admin")
-        self.assertEqual(self.request(path, data, user, user_marker)[0], 403)
-        admin, marker = self.login("trial-admin")
+        self.assertEqual(self.request(path, data, user, user_marker)[0], 401)
+        admin, marker = self.login("trial-admin", admin=True)
         self.assertEqual(self.request(path, data, admin, "stale-marker")[0], 409)
         self.assertEqual(self.request(path, {"requestId":"invalid"}, admin, marker)[0], 400)
         wrong_origin = Request(self.base + path, json.dumps(data).encode(), {
@@ -570,7 +571,7 @@ class AccountHTTP(unittest.TestCase):
     def test_admin_invite_issuance_rolls_back_if_audit_cannot_be_written(self):
         path = "/api/admin/invites"
         data = {"requestId": str(uuid4())}
-        admin, marker = self.login("trial-admin")
+        admin, marker = self.login("trial-admin", admin=True)
         with self.store.connection(write=True) as db:
             before = db.execute("SELECT count(*) FROM invites").fetchone()[0]
             db.execute("""

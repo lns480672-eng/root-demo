@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; form-action 'none'; base-uri 'none'">
+<title>管理员登录 · ROOT</title>
+<style>
+  :root {
+    color-scheme: light;
+    --bg: #f1f2f8;
+    --paper: #fff;
+    --soft: #f7f8fc;
+    --ink: #1b1c22;
+    --muted: #50566a;
+    --line: #dce0eb;
+    --blue: #35558f;
+    --wash: #eef2fb;
+    --good: #245c47;
+    --good-bg: #e8f3ed;
+    --warn: #7d4427;
+    --warn-bg: #fbefe4;
+    font: 15px/1.55 -apple-system, BlinkMacSystemFont, "PingFang SC", system-ui, sans-serif;
+    color: var(--ink);
+    background: var(--bg);
+  }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  body { margin: 0; }
+  h1, h2, h3, p, dl, dd { margin: 0; }
+  button, input, select { font: inherit; }
+  button, select { min-height: 44px; }
+  button {
+    border: 1px solid var(--line);
+    border-radius: 100px;
+    background: var(--paper);
+    color: var(--ink);
+    padding: 8px 16px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  button:hover { border-color: var(--blue); background: var(--soft); }
+  button:disabled { color: var(--muted); background: var(--soft); cursor: default; }
+  button:disabled:hover { border-color: var(--line); }
+  .primary { background: var(--ink); color: white; border-color: var(--ink); }
+  .primary:hover { background: #323946; color: white; }
+  a { color: var(--blue); text-underline-offset: 3px; }
+  :focus-visible { outline: 3px solid #6b8ed3; outline-offset: 3px; }
+  .shell { max-width: 1160px; width: calc(100% - 2 * clamp(14px, 4vw, 60px)); margin: 22px auto 40px; }
+  .masthead {
+    min-height: 66px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px 24px;
+    flex-wrap: wrap;
+    padding: 8px 14px 8px 24px;
+    border: 1px solid var(--line);
+    border-radius: 18px;
+    background: var(--paper);
+  }
+  .identity, .actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .wordmark { font-weight: 750; letter-spacing: .22em; }
+  .mark { width: 8px; height: 8px; background: #7590cc; border-radius: 2px; }
+  .role-tag { border-left: 1px solid var(--line); padding-left: 10px; color: var(--muted); font-size: 13px; }
+  .workbench-link {
+    display: inline-flex;
+    align-items: center;
+    min-height: 44px;
+    padding: 8px 16px;
+    border: 1px solid var(--line);
+    border-radius: 100px;
+    color: var(--ink);
+    font-weight: 600;
+    text-decoration: none;
+  }
+  .workbench-link:hover { border-color: var(--blue); background: var(--soft); }
+  select, input {
+    color: var(--ink);
+    background: var(--paper);
+    border: 1px solid #aeb9d0;
+    border-radius: 10px;
+    padding: 8px 11px;
+    min-height: 44px;
+  }
+  .intro { padding: 0 0 20px; }
+  .intro h1 { font: 650 clamp(30px, 4vw, 42px)/1.14 "Songti SC", STSong, serif; letter-spacing: -.035em; }
+  .intro p, .workbench-view p { color: var(--muted); margin-top: 9px; }
+  .panel { background: var(--paper); border: 1px solid var(--line); border-radius: 21px; min-width: 0; }
+  .notice { margin-top: 12px; color: var(--good); font-weight: 600; }
+.credential-panel { max-width: 620px; margin: 18px auto 0; padding: clamp(18px, 4vw, 36px); }
+.credential-form { display: grid; gap: 8px; max-width: 480px; margin-top: 18px; }
+.credential-form label { font-weight: 600; margin-top: 6px; }
+.credential-form input { width: 100%; min-width: 0; }
+.credential-form button { justify-self: start; }
+  .notice { color: var(--warn); }
+  .preview { margin: 18px auto; max-width: 520px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .preview select { width: auto; }
+</style>
+</head>
+<body>
+<div class="shell">
+  <header class="masthead">
+    <div class="identity"><span class="wordmark">ROOT</span><span class="mark" aria-hidden="true"></span><span class="role-tag">管理后台</span></div>
+    <a class="workbench-link" href="#workbench">返回工作台</a>
+  </header>
+  <main class="panel credential-panel" aria-labelledby="login-title">
+    <div class="intro">
+      <h1 id="login-title">管理员登录</h1>
+      <p>使用管理员账号进入后台，管理邀请码和用量。</p>
+    </div>
+    <form class="credential-form">
+      <label for="username">管理员用户名</label>
+      <input id="username" autocomplete="off" placeholder="预览用表单" required>
+      <label for="password">管理员密码</label>
+      <input id="password" type="password" autocomplete="off" required>
+      <p id="feedback" class="notice" role="status"></p>
+      <button id="submit" class="primary" type="submit">登录后台</button>
+    </form>
+  </main>
+  <div class="preview">
+    <label for="demo">预览状态</label>
+    <select id="demo">
+      <option value="">默认</option>
+      <option value="error">凭据错误</option>
+      <option value="expired">登录过期</option>
+      <option value="loading">正在登录</option>
+    </select>
+    <span>本地设计稿，请勿输入真实密码。</span>
+  </div>
+</div>
+<script>
+  const demo = document.getElementById('demo');
+  const feedback = document.getElementById('feedback');
+  const submit = document.getElementById('submit');
+  const messages = {
+    error: '账号或密码不正确，或该账号没有管理员权限。',
+    expired: '后台登录已过期，请重新登录。',
+    loading: '正在登录…',
+  };
+  demo.addEventListener('change', () => {
+    feedback.textContent = messages[demo.value] || '';
+    submit.disabled = demo.value === 'loading';
+  });
+  document.querySelector('form').addEventListener('submit', event => {
+    event.preventDefault();
+    document.getElementById('password').value = '';
+    demo.value = 'error';
+    demo.dispatchEvent(new Event('change'));
+  });
+</script>
+</body>
+</html>

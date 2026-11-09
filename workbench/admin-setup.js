@@ -36,7 +36,7 @@ form.addEventListener('submit', async event => {
     history.replaceState(null, '', '/admin#invites');
     location.reload();
   } catch {
-    feedback.textContent = '暂时无法确认设置结果。若初始化码已失效，请返回工作台用刚设置的账号登录。';
+    feedback.textContent = '暂时无法确认设置结果。若初始化码已失效，请重新打开后台，用刚设置的账号登录。';
   } finally {
     submit.disabled = false;
   }

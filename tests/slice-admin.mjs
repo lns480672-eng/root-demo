@@ -10,6 +10,12 @@ export async function verifyAdmin({evaluate, click, pointerClick, type, until, c
     if (!await visible('#admin-entry')) await click('#account-name');
     await until(() => visible('#admin-entry'));
     await click('#admin-entry');
+    await until(async () => await visible('#backend') || await visible('#admin-login-form'));
+    if (await visible('#admin-login-form')) {
+      await type('#admin-username', admin);
+      await type('#admin-password', 'root-browser-test-only!');
+      await click('#admin-login-submit');
+    }
     await until(() => visible('#backend'));
   };
   const close = async () => {
@@ -30,14 +36,16 @@ export async function verifyAdmin({evaluate, click, pointerClick, type, until, c
   assert.match(await text('#generation-failure'), /暂无已结束调用/);
   assert.match(await text('#analysis-failure'), /暂无已结束调用/);
   assert.match(await text('#current-operator'), /qa-trial-admin/);
+  await click('#admin-logout');
+  await until(() => visible('#admin-login-form'));
   await close();
   await logout();
 
   stage('AC-017 normal account denies administrative URL and populates real endpoint stats');
   await login(member);
   assert.equal(await visible('#admin-entry'), false);
-  assert.equal(await evaluate('fetch("/admin#accounts").then(response => response.status)'), 403);
-  assert.equal((await appRequest(adminPath)).status, 403);
+  assert.equal(await evaluate('fetch("/admin#accounts").then(response => response.status)'), 200);
+  assert.equal((await appRequest(adminPath)).status, 401);
   assert.equal((await appRequest('/api/generate', {requirement: '做一个读书清单'})).status, 200);
   assert.equal((await appRequest('/api/generate', {requirement: '回归：模型超时'})).status, 502);
   const offered = await appRequest('/api/assistant/analyze', {
@@ -49,10 +57,11 @@ export async function verifyAdmin({evaluate, click, pointerClick, type, until, c
 
   stage('AC-017 DOM reflects two separately calculated real failure rates');
   await login(admin);
-  const stats = (await appRequest(adminPath)).body;
+  await open();
+  const stats = await evaluate(`fetch('/api/trial/admin', {headers: {'X-Root-Session': identity.marker}})
+    .then(response => response.json())`);
   assert.equal(stats.generation.failureRate, 0.5);
   assert.equal(stats.analysis.failureRate, 0);
-  await open();
   assert.match(await text('#generation-failure'), /50%.*1 失败 \/ 2 已结束/);
   assert.match(await text('#analysis-failure'), /0%.*0 失败 \/ 1 已结束/);
   assert.match(await text('#analysis-total'), /1.*次/);
@@ -91,13 +100,13 @@ export async function verifyAdmin({evaluate, click, pointerClick, type, until, c
   await type('.top-up:not([hidden]) input', '2');
   await click('.top-up:not([hidden]) [type=submit]');
   await until(() => visible('#retry-action'));
-  const relogged = await evaluate(`fetch('/api/login', {
+  const relogged = await evaluate(`fetch('/api/admin/login', {
     method: 'POST', headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({username: ${JSON.stringify(admin)}, password: 'root-browser-test-only!'}),
   }).then(response => response.status)`);
   assert.equal(relogged, 200);
   await click('#retry-action');
-  await until(async () => /会话已变更|重新登录/.test(await text('#action-feedback')));
+  await until(async () => /会话或权限已变化/.test(await text('#action-feedback')));
   assert.equal(await visible('#retry-action'), true, '失效会话无法确认上一次操作，必须保留原请求号');
   await cdp('Page.reload', { ignoreCache: true });
   await until(() => visible('#retry-action'));
@@ -229,6 +238,8 @@ export async function verifyAdmin({evaluate, click, pointerClick, type, until, c
   // The code stays in test memory and is never emitted in screenshots or test results.
   stage('AC-019 register a fresh session with the copied code');
   const copied = await evaluate('navigator.clipboard.readText()');
+  await click('#admin-logout');
+  await until(() => visible('#admin-login-form'));
   await close();
   await logout();
   await click('#auth-mode');
@@ -238,8 +249,8 @@ export async function verifyAdmin({evaluate, click, pointerClick, type, until, c
   await click('#auth-submit');
   await until(() => evaluate('document.querySelector("#account-name")?.textContent === "qa-issued-reviewer"'));
   assert.equal(await visible('#admin-entry'), false);
-  assert.equal(await evaluate('fetch("/admin#invites").then(response => response.status)'), 403);
-  assert.equal((await appRequest('/api/admin/invites', {requestId: crypto.randomUUID()})).status, 403);
+  assert.equal(await evaluate('fetch("/admin#invites").then(response => response.status)'), 200);
+  assert.equal((await appRequest('/api/admin/invites', {requestId: crypto.randomUUID()})).status, 401);
   await logout();
   await click('#auth-mode');
   await type('#invite', copied);
