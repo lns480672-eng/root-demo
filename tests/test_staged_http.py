@@ -51,6 +51,24 @@ def stages(stage, requirement, prior, key, admit, record):
             "markup":'<p id="answer"></p>', "script":'document.querySelector("#answer").textContent="5";'}
         record({"stage":stage,"status":"ok","dispatched":True})
         return json.dumps(content).encode()
+    if requirement.startswith("登记"):
+        legacy = requirement.startswith("登记旧任务")
+        csv = requirement.startswith("登记并导出")
+        backup = csv or requirement.startswith("登记并备份")
+        fixtures = {
+            **modules,
+            "spec":spec if legacy else {**spec, "kind":"ledger", "modules":["export"] if csv else []},
+            "entry":{**modules["entry"], "backup":backup},
+            "filters":{"search":[], "exact":[], "date":None},
+            "summary":{"count":None, "sum":None, "group":None},
+            "export":modules["export"] if csv else {"columns":[], "label":None},
+        }
+        if legacy and stage == "export" and requirement not in failed:
+            failed.add(requirement)
+            record({"stage":stage,"status":"invalid_staged_result","dispatched":True})
+            raise ApiError(502, "invalid_staged_result", "旧版导出步骤失败")
+        record({"stage":stage,"status":"ok","dispatched":True})
+        return json.dumps(fixtures[stage]).encode()
     success = stage != "summary" or requirement in failed
     record({"stage":stage,"status":"ok" if success else "fixture_failed","dispatched":True})
     if not success:
@@ -145,6 +163,53 @@ class StagedHTTP(unittest.TestCase):
         self.wait_task(user, response["task"]["id"], "unsupported")
         after = self.request("/api/trial", auth=user)[1]["generation"]["totalUsed"]
         self.assertEqual(after - before, 3)
+
+    def test_ledger_dispatches_only_requested_modules_and_preserves_backup_permission(self):
+        owner = self.account("staged-ledger-modules")
+        for requirement, expected, backup in (
+            ("登记记录，仅录入、列表和保存，不要筛选、统计或导出",
+             ["spec", "entry", "assemble"], False),
+            ("登记并备份 JSON，支持导入恢复，无需 CSV",
+             ["spec", "entry", "assemble"], True),
+            ("登记并导出 CSV，也支持 JSON 备份恢复",
+             ["spec", "entry", "export", "assemble"], True),
+        ):
+            with self.subTest(requirement=requirement):
+                before = self.request("/api/trial", auth=owner)[1]["generation"]
+                status, response, _ = self.gen(owner, requirement)
+                self.assertEqual(status, 202)
+                task = response["task"]["id"]
+                self.assertEqual(self.wait_task(owner, task, "complete")["steps"], expected)
+                path = "/api/staged/" + task
+                status, candidate, _ = self.request(path + "/candidate", {}, owner)
+                self.assertEqual(status, 200)
+                self.assertEqual(candidate.get("stagedBackup", False), backup)
+                payload = {**candidate["staged"], "toolId":candidate["id"], "entries":[]}
+                self.assertEqual(self.request(path + "/publish", payload, owner)[0], 200)
+                after = self.request("/api/trial", auth=owner)[1]["generation"]
+                self.assertEqual(after["used"] - before["used"], 1)
+                self.assertEqual(after["totalUsed"] - before["totalUsed"], len(expected) - 1)
+
+    def test_legacy_ledger_resumes_its_existing_export_checkpoint_without_adding_export(self):
+        owner = self.account("staged-legacy-modules")
+        status, response, _ = self.gen(owner, "登记旧任务，只录入、列表和保存")
+        self.assertEqual(status, 202)
+        task = response["task"]["id"]
+        path = "/api/staged/" + task
+        failed = self.wait_task(owner, task, "failed")
+        self.assertEqual(failed["completed"], ["spec", "entry", "filters", "summary"])
+        self.assertEqual(failed["stage"], "export")
+        before = self.request("/api/trial", auth=owner)[1]["generation"]
+        self.assertEqual(self.request(path + "/resume", {}, owner)[0], 202)
+        completed = self.wait_task(owner, task, "complete")
+        self.assertEqual(completed["steps"], failed["steps"])
+        status, candidate, _ = self.request(path + "/candidate", {}, owner)
+        self.assertEqual(status, 200)
+        self.assertNotIn("stagedBackup", candidate)
+        self.assertIn('"export":{"columns":[],"label":null}', candidate["html"])
+        after = self.request("/api/trial", auth=owner)[1]["generation"]
+        self.assertEqual(after["used"], before["used"])
+        self.assertEqual(after["totalUsed"] - before["totalUsed"], 1)
 
     def test_task_resume_and_atomic_replayable_publication(self):
         owner = self.account("staged-owner")

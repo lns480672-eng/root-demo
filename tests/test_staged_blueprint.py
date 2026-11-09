@@ -49,6 +49,33 @@ def envelope(content, *, finish="stop", request_id="response-1", usage=None):
 
 
 class StageArtifactTests(unittest.TestCase):
+    def test_ledger_runs_only_the_requested_optional_modules(self):
+        files = artifacts()
+        spec = json.loads(files["spec.json"])
+        for modules, expected in (
+            ([], ("spec", "entry", "assemble")),
+            (["summary", "filters"], ("spec", "entry", "filters", "summary", "assemble")),
+            (["export"], ("spec", "entry", "export", "assemble")),
+        ):
+            with self.subTest(modules=modules):
+                planned = json.dumps({**spec, "kind": "ledger", "modules": modules}).encode()
+                self.assertEqual(blueprint.stage_plan(planned), expected)
+                parts = {stage + ".json": files[stage + ".json"] for stage in expected[1:-1]}
+                parts["spec.json"] = planned
+                blueprint.validate("assemble", blueprint.assemble(parts), parts)
+        for modules in (["unknown"], ["export", "export"], "export"):
+            with self.subTest(invalid=modules), self.assertRaisesRegex(ValueError, "bad_ledger_modules"):
+                blueprint.stage_plan(json.dumps({**spec, "modules": modules}).encode())
+
+    def test_requested_csv_must_have_columns_even_with_json_backup(self):
+        files = artifacts()
+        spec = json.loads(files["spec.json"])
+        files["spec.json"] = json.dumps({**spec, "modules": ["export"]}).encode()
+        entry = json.loads(files["entry.json"])
+        files["entry.json"] = json.dumps({**entry, "backup": True}).encode()
+        with self.assertRaisesRegex(ValueError, "bad_empty_ledger_module"):
+            blueprint.validate("export", b'{"columns":[],"label":null}', files)
+
     def test_accepts_one_blueprint_and_requires_exact_assembly(self):
         files = artifacts()
         html = blueprint.assemble(files)
@@ -101,8 +128,11 @@ class StageArtifactTests(unittest.TestCase):
         blueprint.validate("assemble", html, files)
         self.assertTrue(blueprint.permits_backup(files))
         self.assertFalse(blueprint.permits_backup(artifacts()))
-        with self.assertRaisesRegex(ValueError, "bad_export_without_backup"):
-            blueprint.validate("export", files["export.json"], artifacts())
+        # Old committed plans retain the export checkpoint even when they need neither export nor backup.
+        legacy = artifacts()
+        legacy["export.json"] = files["export.json"]
+        self.assertEqual(blueprint.stage_plan(legacy["spec.json"]), blueprint.STAGES)
+        blueprint.validate("assemble", blueprint.assemble(legacy), legacy)
         for update, error in (
             ({"board": "delay"}, "bad_field_reference"),
             ({"board": "status", "edit_choice": None}, "bad_board_choice"),
@@ -156,6 +186,14 @@ class StageArtifactTests(unittest.TestCase):
 
 
 class StageProviderTests(unittest.TestCase):
+    def test_new_ledger_spec_cannot_fall_back_to_a_legacy_plan(self):
+        legacy = artifacts()["spec.json"]
+        with patch.object(assistant_model, "_exchange", return_value=envelope(legacy.decode())):
+            with self.assertRaises(ApiError) as failure:
+                blueprint.provide("spec", "只录入并保存", {}, "fixture-secret", Mock())
+        self.assertEqual(failure.exception.code, "invalid_staged_result")
+        self.assertEqual(blueprint.stage_plan(legacy), blueprint.STAGES)
+
     def test_requests_one_json_module_and_records_only_sanitized_evidence(self):
         files = artifacts()
         admitted = Mock()

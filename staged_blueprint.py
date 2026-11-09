@@ -12,7 +12,8 @@ from accounts import ApiError
 from generate import MODEL
 
 
-STAGES = ("spec", "entry", "filters", "summary", "export", "assemble")
+OPTIONAL_MODULES = ("filters", "summary", "export")
+STAGES = ("spec", "entry", *OPTIONAL_MODULES, "assemble")
 RUNTIME = Path(__file__).resolve().parent / "workbench" / "staged-runtime.js"
 STAGE_SECONDS = 45
 MAX_ARTIFACT_BYTES = 12 * 1024
@@ -32,10 +33,14 @@ script 是普通 JavaScript 源码，勿含 script 标签、HTML 注释或 Markd
 TYPES = {"text", "date", "integer", "choice"}
 RULES = {
     "spec": """本阶段只写 JSON 规格。先判断核心结果是什么，再选能保留业务功能的计划。
-如果核心结果是用户反复新增并持久保存的一组独立记录，并要求对这些记录筛选、汇总、导出、编辑或分栏，必须选 ledger。
+如果核心结果是用户反复新增、查看或持久保存的一组独立记录，用 ledger，即使只需录入和明细。
 例如「每次借用是一笔，记录器材、数量、日期；按器材筛选、合计数量、导出 CSV」属于 ledger。
 例如「投递卡片按阶段分栏，能移动、编辑、删除和备份」属于 ledger。
-ledger 的形状是 {"kind":"ledger","title":"工具名","fields":[{"id":"英文小写 snake_case","label":"中文字段名","type":"text|date|integer|choice","required":true,"options":[]}]}。
+ledger 的形状是 {"kind":"ledger","title":"工具名","fields":[{"id":"英文小写 snake_case","label":"中文字段名","type":"text|date|integer|choice","required":true,"options":[]}],"modules":[]}。
+modules 是必填数组，只列实际需要的附加模块：filters（筛选）、summary（统计）、export（CSV 导出）。
+用户明确排除的能力不可列入，录入、明细、编辑、分栏和 JSON 备份均由 entry 实现。
+例如「只需新增、列表、刷新后保留，不要筛选、统计或导出」用 modules=[]；
+「导出 CSV 并支持 JSON 备份恢复」用 modules=["export"]；「只要 JSON 备份恢复」用 modules=[]。
 ledger 的 choice 选项保留原文和顺序，至少两个；其余类型 options 为空；integer 是非负整数；链接用 text。
 如果核心是输入得到单个计算结果、临时交互或其他本地操作，没有上述多记录集合，则用 {"kind":"program","title":"工具名","goal":"简明、可验证的目标"}。
 例如「摄氏和华氏双向换算」属于 program，输入值和选择项是控件，不是持久记录。
@@ -55,7 +60,7 @@ search 指定关键词实际匹配的文本字段，exact 指定精确筛选字�
 "group":{"field":"text_or_choice_field_id","label":"分组汇总的中文显示名"}}。
 统计必须使用当前筛选结果。有分组时对每组计算 sum 对应字段。需求无对应项时用 null。""",
     "export": """{"columns":["field_id"],"label":"生成 CSV 的按钮名"}。
-按需求选择顺序与列；要求全部时应包含规格里每个字段。只导出当前筛选结果。只需要 JSON 备份时，返回 {"columns":[],"label":null}。""",
+按需求选择顺序与列；要求全部时应包含规格里每个字段。只导出当前筛选结果。""",
 }
 
 
@@ -94,8 +99,12 @@ def validate_spec(value):
         require(isinstance(goal, str) and goal.isprintable() and 0 < len(goal.strip()) <= 240,
                 "bad_program_goal")
         return
-    keys(value, "title", "fields", optional=("kind",))
+    keys(value, "title", "fields", optional=("kind", "modules"))
     require(value.get("kind", "ledger") == "ledger", "bad_spec_kind")
+    if "modules" in value:
+        modules = value["modules"]
+        require(unique_strings(modules, len(OPTIONAL_MODULES)) and set(modules) <= set(OPTIONAL_MODULES),
+                "bad_ledger_modules")
     require(label(value["title"]), "bad_title")
     fields = value["fields"]
     require(isinstance(fields, list) and 1 <= len(fields) <= 12, "bad_fields")
@@ -188,7 +197,10 @@ def stage_plan(spec_bytes):
     """Resolve the next stages from a validated, committed model specification."""
     spec = read_artifact(spec_bytes)
     validate_spec(spec)
-    return staged_program.PLAN if spec.get("kind") == "program" else STAGES
+    if spec.get("kind") == "program":
+        return staged_program.PLAN
+    modules = spec.get("modules", OPTIONAL_MODULES)
+    return ("spec", "entry", *(stage for stage in OPTIONAL_MODULES if stage in modules), "assemble")
 
 
 def validate(stage, payload, previous):
@@ -205,9 +217,10 @@ def validate(stage, payload, previous):
         staged_program.validate(read_artifact(payload, limit=staged_program.MAX_ARTIFACT_BYTES))
         return
     value = read_artifact(payload)
-    validate_module(stage, value, read_artifact(spec_bytes))
-    if stage == "export" and not value["columns"]:
-        require(permits_backup(previous), "bad_export_without_backup")
+    spec = read_artifact(spec_bytes)
+    validate_module(stage, value, spec)
+    if stage in OPTIONAL_MODULES and "modules" in spec:
+        require(any(value.values()), "bad_empty_ledger_module")
 
 
 def permits_backup(previous):
@@ -231,6 +244,9 @@ def assemble(previous):
         payload = previous.get(stage + ".json")
         validate(stage, payload, previous)
         config[stage] = read_artifact(payload)
+    config.setdefault("filters", {"search": [], "exact": [], "date": None})
+    config.setdefault("summary", {"count": None, "sum": None, "group": None})
+    config.setdefault("export", {"columns": [], "label": None})
     data = json.dumps(config, ensure_ascii=True, sort_keys=True, separators=(",", ":")).replace("<", "\\u003c")
     title = html.escape(config["spec"]["title"])
     shell = RUNTIME.read_text(encoding="utf-8")
@@ -315,10 +331,9 @@ def provide(stage, requirement, previous, key, admit, record=None, *, revision_c
                                        "分栏展示和阶段移动不是统计。没有统计需求时三项全部为 null。")
             request["numeric_fields"] = [field["id"] for field in spec["fields"] if field["type"] == "integer"]
         if stage == "export":
-            request["current_task"] = (
-                "只设计 CSV，返回恰好两个键：columns 和 label。其他功能已由独立阶段实现。"
-                "已启用 JSON 备份且用户未明确要求 CSV 时，用空 columns 和 null label。"
-            )
+            request["current_task"] = "只设计 CSV，返回恰好两个键：columns 和 label。JSON 备份由 entry 实现。"
+            if "modules" not in spec:
+                request["current_task"] += "这是旧版计划保留的步骤。需求不需要 CSV 时，返回空 columns 和 null label。"
             request["allowed_columns"] = [field["id"] for field in spec["fields"]]
             request["backup_available"] = "entry.json" in previous and permits_backup(previous)
         if revision_context is not None:
@@ -335,6 +350,7 @@ def provide(stage, requirement, previous, key, admit, record=None, *, revision_c
         if revision_context is not None:
             system += ("\n这是修改现有工具。保持 revision_source.kind 对应的计划类型。"
                        "只修改需求指定的行为，沿用旧配置与实现中其余功能和数据格式。"
+                       "台账规格以 revision_source.active_modules 为基础，只按修改需求增减模块。"
                        "台账字段 ID、类型和已有选项必须保留，新增字段只能可选。"
                        "程序继续用旧 localStorage 键与数据格式，初始化读取、显示已有记录，不得覆盖。")
         body = {
@@ -361,6 +377,9 @@ def provide(stage, requirement, previous, key, admit, record=None, *, revision_c
             raise
         result = _decode_response(envelope, key, evidence, limit=output_limit)
         validate(stage, result, previous)
+        if stage == "spec":
+            spec = read_artifact(result)
+            require(spec.get("kind") == "program" or "modules" in spec, "bad_missing_ledger_modules")
         if accept is not None:
             accept(result)
         evidence["status"] = "ok"

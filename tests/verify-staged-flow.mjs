@@ -172,10 +172,73 @@ export async function verifyStagedFlow(ctx) {
   const receipts = (await readFile(join(root, 'runs', 'staged-usage.jsonl'), 'utf8')).trim().split('\n').map(JSON.parse);
   evidence.runs = receipts.filter(item => item.task === first.id);
   assert.equal(evidence.runs.filter(item => item.stage === 'spec').length, 1);
-  assert.deepEqual(evidence.runs.filter(item => item.status === 'ok').map(item => item.stage), ['spec','entry','filters','summary','export']);
+  const expected = stagedLive ? ['spec','entry'] : ['spec','entry','filters','summary','export'];
+  assert.deepEqual(evidence.runs.filter(item => item.status === 'ok').map(item => item.stage), expected);
   if (stagedLive) assert.ok(evidence.runs.every(item => item.request_id && item.usage?.total_tokens > 0));
   evidence.tests.push('刷新恢复同一看板和状态，父页与外部探针隔离');
   await screenshot('staged-board-restored');
+}
+
+export async function verifyStagedRegistration(ctx) {
+  const { cdp, evaluate, until, base, click, visible, appRequest, login, generate,
+    activeTool, accountA, root, stored, evidence, screenshot } = ctx;
+  const input = '做一个公益活动雨具归还登记。每条填写物品编号（必填文本）、数量（必填非负整数）、归还日期（必填日期）。' +
+    '只需新增、查看记录和刷新后保留，不需要筛选、统计或导出。';
+  await cdp('Page.navigate', {url:base});
+  await login(accountA, true);
+  if (await visible('#workspace-guide')) await click('#guide-skip');
+  const before = (await appRequest('/api/trial')).body;
+  await evaluate('window.holdFixturePreview = true; window.releaseFixturePreview = undefined');
+  await generate(input);
+  const task = await until(async () => {
+    const {body} = await appRequest('/api/staged');
+    const current = body.tasks?.find(item => item.requirement === input);
+    if (['failed','unsupported','exhausted'].includes(current?.state)) {
+      throw new Error('登记生成失败 ' + current.stage + ' / ' + current.reason);
+    }
+    return current?.state === 'complete' && await evaluate('typeof window.releaseFixturePreview === "function"') && current;
+  }, 105000);
+  assert.deepEqual(task.steps, ['spec','entry','assemble']);
+  assert.deepEqual(task.completed, task.steps);
+  await evaluate('window.releaseFixturePreview()');
+  const tool = await activeTool();
+  const frame = expression => evaluate(expression, tool.context);
+  assert.deepEqual(await frame('["filters","summary","export"].map(id => document.getElementById(id).hidden)'),
+    [true,true,true]);
+  assert.equal(await evaluate('document.querySelector("#preview iframe[data-tool]").getAttribute("sandbox")'),
+    'allow-scripts allow-forms');
+  const fields = await frame('Array.from(document.querySelectorAll("#entry input"), item => [item.type,item.required])');
+  assert.deepEqual(fields.sort(), [['date',true],['number',true],['text',true]]);
+  await frame(`(() => {
+    document.querySelector('#entry input[type="text"]').value = 'QA-伞-001';
+    document.querySelector('#entry input[type="number"]').value = '0';
+    document.querySelector('#entry input[type="date"]').value = '2026-11-09';
+  })()`);
+  await click('#add-record', tool.context);
+  const cells = await frame('Array.from(document.querySelectorAll("#records tbody td"), cell => cell.textContent)');
+  assert.deepEqual(cells.sort(), ['0','2026-11-09','QA-伞-001']);
+  await until(async () => JSON.stringify((await stored(tool.id)).entries).includes('QA-伞-001'));
+  await cdp('Page.reload');
+  await until(() => evaluate('document.documentElement.dataset.ready === "true"'));
+  const restored = await activeTool();
+  assert.equal(restored.id, tool.id);
+  assert.match(await evaluate('document.querySelector("#records tbody").textContent', restored.context), /QA-伞-001/);
+  const published = (await appRequest(taskPath + task.id)).body.task;
+  assert.equal(published.toolId, tool.id);
+  const after = (await appRequest('/api/trial')).body;
+  assert.deepEqual(after.analysis, before.analysis);
+  const personal = after.generation.used - before.generation.used;
+  const dispatched = after.generation.totalUsed - before.generation.totalUsed;
+  assert.equal(personal, 1);
+  assert.equal(dispatched, 2);
+  const receipts = (await readFile(join(root, 'runs', 'staged-usage.jsonl'),'utf8')).trim().split('\n').map(JSON.parse);
+  evidence.runs = receipts.filter(item => item.task === task.id);
+  assert.deepEqual(evidence.runs.map(item => item.stage), ['spec','entry']);
+  if (process.env.ROOT_STAGED_LIVE === '1') {
+    assert.ok(evidence.runs.every(item => item.request_id && item.usage?.total_tokens > 0));
+  }
+  evidence.tests.push({ id:'ROOT-GEN-IA-04', steps:task.steps, toolId:tool.id, restored:true, personal, dispatched });
+  await screenshot('staged-registration-restored');
 }
 
 export async function verifyStagedCalculator(ctx) {

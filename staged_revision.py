@@ -171,6 +171,11 @@ def check(stage, payload, base):
 def provide(stage, requirement, previous, key, admit, record, *, base):
     """Generate one revision stage from source-only context and check before success."""
     context = {"kind":base["kind"], "storageKeys":base["storageKeys"]}
+    if stage == "spec" and base["kind"] == "ledger":
+        context["active_modules"] = [
+            module for module in blueprint.OPTIONAL_MODULES
+            if any(base["source"].get(module, {}).values())
+        ]
     if stage in base["source"]:
         context["prior_stage"] = base["source"][stage]
     return blueprint.provide(stage, requirement, previous, key, admit, record,

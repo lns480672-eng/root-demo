@@ -51,6 +51,19 @@ render();
     if live:
         return staged_blueprint.provide(stage, requirement, prior, key, admit, record)
     admit()
+    if requirement.startswith("做一个公益活动雨具归还登记"):
+        fields = [
+            {"id":"item", "label":"物品编号", "type":"text", "required":True, "options":[]},
+            {"id":"quantity", "label":"数量", "type":"integer", "required":True, "options":[]},
+            {"id":"date", "label":"归还日期", "type":"date", "required":True, "options":[]},
+        ]
+        ids = [field["id"] for field in fields]
+        registration = {
+            "spec":{"kind":"ledger", "title":"雨具归还登记", "fields":fields, "modules":[]},
+            "entry":{"form":ids, "columns":ids, "sort":None, "edit_choice":None},
+        }
+        record({"stage":stage,"status":"ok","dispatched":True})
+        return json.dumps(registration[stage], ensure_ascii=False).encode()
     if stage == "entry" and requirement not in failed:
         failed.add(requirement)
         record({"stage":stage, "status":"fixture_failed", "dispatched":True})
