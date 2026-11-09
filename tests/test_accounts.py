@@ -91,7 +91,8 @@ class AccountHTTP(unittest.TestCase):
         self.assertEqual(self.request(manage, {"action": "pause"}, user, marker)[0], 403)
         self.assertEqual(self.request(manage, {"action": "pause"}, admin, admin_marker)[0], 200)
         self.assertEqual(self.request("/api/generate", {"requirement": "空耗测试"}, user, marker)[1]["code"], "model_paused")
-        analysis = {"step": "start", "idea": "记录项目跟进", "requestId": str(uuid4())}
+        analysis = {"step": "start", "idea": "做一个项目工具，可以登记并保存进度。",
+                    "requestId": str(uuid4()), "roundId": str(uuid4())}
         self.assertEqual(self.request("/api/assistant/analyze", analysis, user, marker)[1]["code"], "model_paused")
         draft = "/api/requirement-drafts/" + str(uuid4())
         self.assertEqual(self.request(draft, {"text": "暂停时可保存", "revision": 0}, user, marker)[0], 200)
@@ -101,8 +102,10 @@ class AccountHTTP(unittest.TestCase):
         after_failure = self.request(balance, cookie=user, marker=marker)[1]
         self.assertEqual(after_failure["generation"]["remaining"], 5)
         self.assertEqual(after_failure["generation"]["totalUsed"], initial["generation"]["totalUsed"] + 1)
-        self.assertEqual(self.request("/api/assistant/analyze", analysis, user, marker)[0], 200)
+        status, offer, _ = self.request("/api/assistant/analyze", analysis, user, marker)
+        self.assertEqual((status, offer["kind"]), (200, "draft_ready"))
         self.assertEqual(self.request("/api/assistant/analyze", analysis, user, marker)[1]["code"], "analysis_duplicate")
+        self.assertEqual(self.request("/api/assistant/claim-draft", {"offerId": offer["offerId"]}, user, marker)[0], 200)
         for _ in range(5):
             status, tool, _ = self.request("/api/generate", {"requirement": "读书清单"}, user, marker)
             self.assertEqual(status, 200)
@@ -149,7 +152,7 @@ class AccountHTTP(unittest.TestCase):
             return body
 
         def analyze_input(idea):
-            return {"step": "start", "idea": idea, "requestId": str(uuid4())}
+            return {"step": "start", "idea": idea, "requestId": str(uuid4()), "roundId": str(uuid4())}
 
         def counts(body, kind):
             item = body[kind]
@@ -239,16 +242,25 @@ class AccountHTTP(unittest.TestCase):
 
     def test_assistant_fixture_has_structured_paths_without_generation(self):
         path = "/api/assistant/analyze"
-        start = {"step": "start", "idea": "每周都要在群里问项目进度，不知道谁卡住了"}
+        start = {"step": "start", "idea": "每周都要在群里问项目进度，不知道谁卡住了", "roundId": str(uuid4())}
         self.assertEqual(self.request(path, {**start, "requestId": str(uuid4())})[0], 401)
         self.assertEqual(self.register("assistant-path", self.store.create_invite())[0], 201)
         cookie, marker = self.login("assistant-path")
         def analyze(data):
             return self.request(path, {**data, "requestId": str(uuid4())}, cookie, marker)
+
+        def claim(offer, credentials=(cookie, marker)):
+            return self.request("/api/assistant/claim-draft", {"offerId": offer["offerId"]}, *credentials)
+
+        def balance():
+            return self.request("/api/trial", cookie=cookie, marker=marker)[1]
+
+        before = balance()
         status, first, _ = analyze(start)
         self.assertEqual(status, 200)
         self.assertEqual(first["kind"], "directions")
         self.assertGreaterEqual(len(first["directions"]), 2)
+        self.assertEqual(balance()["analysis"]["used"], 0)
         results = []
         for selected in first["directions"][:2]:
             status, questions, _ = analyze({
@@ -261,14 +273,33 @@ class AccountHTTP(unittest.TestCase):
                 **start, "step": "answers", "direction": selected, "questions": prompts,
                 "answers": [item["options"][0] for item in prompts],
             })
-            self.assertEqual((status, draft["kind"]), (200, "draft"))
-            self.assertIn(selected["title"], draft["text"])
+            self.assertEqual((status, draft["kind"]), (200, "draft_ready"))
+            self.assertNotIn("text", draft)
+            if not results:
+                self.assertEqual(balance()["analysis"]["used"], 0)
+                other = self.login("trial-admin")
+                self.assertEqual(claim(draft, other)[0], 404)
+                another_session = self.login("assistant-path")
+                self.assertEqual(claim(draft, another_session)[0], 404)
+            status, delivered, _ = claim(draft)
+            self.assertEqual((status, delivered["kind"]), (200, "draft"))
+            self.assertIn(selected["title"], delivered["text"])
+            self.assertEqual(claim(draft)[1], delivered)
+            self.assertEqual(balance()["analysis"]["used"], 1)
             results.append(prompts)
         self.assertNotEqual(*results)
         status, clear, _ = analyze({
             "step": "start", "idea": "做一个读书清单，可以添加书名并标记已读，刷新后保留记录。",
+            "roundId": str(uuid4()),
         })
-        self.assertEqual((status, clear["kind"]), (200, "draft"))
+        self.assertEqual((status, clear["kind"]), (200, "draft_ready"))
+        self.assertEqual(balance()["analysis"]["used"], 1)
+        self.assertEqual(claim(clear)[0], 200)
+        after = balance()
+        self.assertEqual(after["analysis"]["used"], 2)
+        self.assertEqual(after["analysis"]["totalUsed"] - before["analysis"]["totalUsed"], 6)
+        self.assertEqual(after["generation"], before["generation"])
+        self.assertEqual(analyze({**start, "idea": "新想法"})[1]["code"], "analysis_round_changed")
         self.assertEqual(analyze({**start, "step": "answers"})[0], 400)
         self.assertEqual(self.request("/api/tools", cookie=cookie, marker=marker)[1]["items"], [])
 

@@ -1242,37 +1242,65 @@ try {
       templateGenerationRequests: 1, directGenerationRequests: 1 });
   }
   if (live && process.argv.includes('--analysis-live')) {
-    const initialBalance = (await appRequest('/api/trial')).body;
+    const balance = async () => (await appRequest('/api/trial')).body;
+    const initialBalance = await balance();
     assert.equal(initialBalance.analysisMode, 'deepseek');
     await click('#new-tool');
     await click('#idea-entry');
     const idea = '#assistant-idea-text';
-    async function analyzeIdea(value, result) {
-      await evaluate(`document.querySelector(${JSON.stringify(idea)}).value = ""`);
-      await type(idea, value);
-      await click('#assistant-analyze button');
-      await until(async () => {
+    const draft = '#assistant-draft-editor';
+    async function awaitAnalysis(...selectors) {
+      return until(async () => {
         const error = await evaluate('document.querySelector("#assistant-status.elys-error")?.textContent');
         if (error) throw new Error(error);
-        return visible(result);
+        for (const selector of selectors) if (await visible(selector)) return selector;
       }, 35000);
     }
+    async function analyzeIdea(value, result) {
+      await type(idea, value);
+      await click('#assistant-analyze button');
+      await awaitAnalysis(result);
+    }
+    async function verifyBalance(personal, dispatches) {
+      const current = await balance();
+      assert.equal(current.analysis.used - initialBalance.analysis.used, personal);
+      assert.equal(current.analysis.totalUsed - initialBalance.analysis.totalUsed, dispatches);
+      assert.deepEqual(current.generation, initialBalance.generation);
+    }
     stage = 'DeepSeek analysis of a clear idea reaches an editable draft';
-    await analyzeIdea('做一个社区图书借阅清单。记录书名和借阅人，能新增借阅并标记已归还，刷新后保留记录。',
-      '#assistant-draft-editor');
+    await analyzeIdea('做一个社区图书借阅清单。记录书名和借阅人，能新增借阅并标记已归还，刷新后保留记录。', draft);
     assert.match(await evaluate('document.querySelector("#assistant-draft-editor").value'), /借阅|归还/);
+    await verifyBalance(1, 1);
     await screenshot('live-analysis-draft');
-    await click('#assistant-edit-idea');
-    stage = 'DeepSeek analysis of a vague idea presents directions';
+    await click('#assistant-new-round');
+    stage = 'DeepSeek analysis of a vague idea charges only after delivering a draft';
     await analyzeIdea('每周都在群里追问项目进度，经常不知道哪里卡住了。', '#assistant-directions');
     const count = await evaluate('document.querySelectorAll("#assistant-directions [data-direction]").length');
     assert.ok(count >= 2 && count <= 3);
+    await verifyBalance(1, 2);
     await screenshot('live-analysis-directions');
-    const finalBalance = (await appRequest('/api/trial')).body;
-    assert.equal(finalBalance.analysis.used, initialBalance.analysis.used + 2);
-    assert.deepEqual(finalBalance.generation, initialBalance.generation);
-    evidence.tests.push({id: 'TEST-012-live', result: 'passed', clearDraft: true, directions: count,
-      analysisRequests: 2, generationBalanceUnchanged: true});
+    await click('#assistant-directions [data-direction="0"]');
+    const questions = '#assistant-questions select';
+    let dispatches = 3;
+    if (await awaitAnalysis(questions, draft) === questions) {
+      await verifyBalance(1, 3);
+      await evaluate(`for (const input of document.querySelectorAll('#assistant-questions select')) {
+        input.selectedIndex = 1;
+        input.dispatchEvent(new Event('change', {bubbles: true}));
+      }`);
+      await click('#assistant-organize');
+      await awaitAnalysis(draft);
+      dispatches += 1;
+    }
+    await verifyBalance(2, dispatches);
+    await screenshot('live-vague-analysis-draft');
+    const log = await readFile(join(resolve(process.env.WORKBENCH_RUNS_DIR || 'runs'), 'analysis-usage.jsonl'), 'utf8');
+    const calls = log.trim().split('\n').map(JSON.parse);
+    assert.equal(calls.length, dispatches);
+    assert.ok(calls.every(call => call.status === 'ok' && call.request_id && call.usage?.total_tokens > 0));
+    evidence.analysisCalls = calls;
+    evidence.tests.push({id: 'TEST-012-05-live', result: 'passed', clearDraft: true, vagueDraft: true, directions: count,
+      personalDrafts: 2, analysisRequests: dispatches, generationBalanceUnchanged: true});
   }
   const setStage = name => { stage = name; };
   const slices = process.argv.includes('--slices');

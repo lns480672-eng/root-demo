@@ -39,9 +39,11 @@ export async function verifyAdmin({evaluate, click, pointerClick, type, until, c
   assert.equal((await appRequest(adminPath)).status, 403);
   assert.equal((await appRequest('/api/generate', {requirement: '做一个读书清单'})).status, 200);
   assert.equal((await appRequest('/api/generate', {requirement: '回归：模型超时'})).status, 502);
-  assert.equal((await appRequest('/api/assistant/analyze', {
-    step: 'start', idea: '做一个项目跟进工具，可以记录进度并保存', requestId: crypto.randomUUID(),
-  })).status, 200);
+  const offered = await appRequest('/api/assistant/analyze', {
+    step: 'start', idea: '做一个项目跟进工具，可以记录进度并保存', requestId: crypto.randomUUID(), roundId: crypto.randomUUID(),
+  });
+  assert.equal(offered.status, 200);
+  assert.equal((await appRequest('/api/assistant/claim-draft', {offerId: offered.body.offerId})).status, 200);
   await logout();
 
   stage('AC-017 DOM reflects two separately calculated real failure rates');
@@ -52,6 +54,8 @@ export async function verifyAdmin({evaluate, click, pointerClick, type, until, c
   await open();
   assert.match(await text('#generation-failure'), /50%.*1 失败 \/ 2 已结束/);
   assert.match(await text('#analysis-failure'), /0%.*0 失败 \/ 1 已结束/);
+  assert.match(await text('#analysis-total'), /1.*次/);
+  assert.match(await text('#account-list'), /需求梳理 · 今日.*1 条/s);
   await screenshot('admin-desktop');
   for (const width of [700, 390, 320]) {
     await cdp('Emulation.setDeviceMetricsOverride', { width, height: 844, deviceScaleFactor: 1, mobile: true });

@@ -6,12 +6,13 @@ import secrets
 import time
 from uuid import UUID
 
-from accounts import ApiError, USERNAME
+from accounts import ApiError, USERNAME, digest
 
 
 BEIJING = timezone(timedelta(hours=8))
 MAX_COUNTER = 2**53 - 1
 INVITE_SECONDS = 24 * 60 * 60
+DRAFT_OFFER_SECONDS = 15 * 60
 
 
 def usage(used, limit):
@@ -65,6 +66,19 @@ class TrialBudget:
                     request_id TEXT NOT NULL,
                     PRIMARY KEY(account, request_id)
                 );
+                CREATE TABLE IF NOT EXISTS analysis_rounds (
+                    account INTEGER NOT NULL REFERENCES accounts(id),
+                    id TEXT NOT NULL, idea_digest TEXT NOT NULL, completed_day TEXT,
+                    PRIMARY KEY(account, id)
+                );
+                CREATE INDEX IF NOT EXISTS analysis_rounds_day ON analysis_rounds(account, completed_day);
+                CREATE TABLE IF NOT EXISTS analysis_draft_offers (
+                    account INTEGER NOT NULL, id TEXT NOT NULL,
+                    round_id TEXT NOT NULL, session_digest TEXT NOT NULL, text TEXT NOT NULL,
+                    expires REAL NOT NULL,
+                    PRIMARY KEY(account, id),
+                    FOREIGN KEY(account, round_id) REFERENCES analysis_rounds(account, id)
+                );
                 CREATE TABLE IF NOT EXISTS model_dispatches (
                     kind TEXT NOT NULL CHECK(kind IN ('generation', 'analysis')),
                     id TEXT NOT NULL,
@@ -87,11 +101,12 @@ class TrialBudget:
             self.admins = {(row["id"], row["username"]) for row in db.execute("SELECT id, username FROM accounts")
                            if row["username"] in names}
         with store.connection(write=True) as db:
+            db.execute("DELETE FROM analysis_draft_offers WHERE expires<=?", (self.clock(),))
             if "invite_digest" not in {row["name"] for row in db.execute("PRAGMA table_info(trial_audit)")}:
                 db.execute("ALTER TABLE trial_audit ADD COLUMN invite_digest TEXT REFERENCES invites(digest) ON DELETE SET NULL")
 
-    def day_window(self):
-        today = datetime.fromtimestamp(self.clock(), BEIJING).date()
+    def day_window(self, now=None):
+        today = datetime.fromtimestamp(self.clock() if now is None else now, BEIJING).date()
         reset = datetime.combine(today + timedelta(days=1), midnight(), BEIJING)
         return today.isoformat(), reset.isoformat()
 
@@ -111,10 +126,9 @@ class TrialBudget:
             SELECT accounts.username,
                    (SELECT count(*) FROM generation_success WHERE account=accounts.id) AS generation_used,
                    COALESCE(generation_grants.extra, 0) AS generation_grant,
-                   COALESCE(analysis_usage.attempts, 0) AS analysis_used
+                   (SELECT count(*) FROM analysis_rounds WHERE account=accounts.id AND completed_day=?) AS analysis_used
             FROM accounts
             LEFT JOIN generation_grants ON generation_grants.account=accounts.id
-            LEFT JOIN analysis_usage ON analysis_usage.account=accounts.id AND analysis_usage.day=?
             WHERE (? IS NULL OR accounts.id=?)
             ORDER BY accounts.username
         """, (day, account_id, account_id))
@@ -177,7 +191,7 @@ class TrialBudget:
             ON CONFLICT(account) DO UPDATE SET attempts=attempts+1
         """, (account_id,))
 
-    def reserve(self, token, marker, kind, request_id=None, *, dispatch_id=None):
+    def reserve(self, token, marker, kind, request_id=None, *, dispatch_id=None, round_id=None, idea=None):
         """Count one actual dispatch. Call only after preparing a provider request."""
         if kind not in ("generation", "analysis"):
             raise ValueError("未知的模型调用类型。")
@@ -193,12 +207,18 @@ class TrialBudget:
                 raise ApiError(409, "analysis_duplicate", "此分析请求已提交，请等待结果或重新发起。")
             self.require_dispatch_enabled(db)
             day, _ = self.day_window()
-            own = self.account_rows(db, day, account_id).fetchone()
             _, analysis_total = self.totals(db)
             if analysis_total >= self.analysis_total_limit:
                 raise ApiError(429, "analysis_total_limit", "试用的总分析额度已用完。输入和草稿仍可编辑。")
-            if own["analysis_used"] >= self.analysis_limit:
-                raise ApiError(429, "analysis_account_limit", "你的今日分析额度已用完。输入和草稿仍可编辑。")
+            idea_digest = digest(idea.strip())
+            db.execute("""
+                INSERT INTO analysis_rounds(account, id, idea_digest) VALUES (?, ?, ?)
+                ON CONFLICT(account, id) DO NOTHING
+            """, (account_id, round_id, idea_digest))
+            round_row = self.analysis_round(db, account_id, round_id)
+            if round_row["idea_digest"] != idea_digest:
+                raise ApiError(409, "analysis_round_changed", "原始想法已变化，请开始新一轮需求梳理。")
+            self.require_analysis_slot(db, account_id, day, round_row)
             self.track_dispatch(db, "analysis", dispatch_id)
             db.execute("""
                 INSERT INTO analysis_usage(account, day, attempts) VALUES (?, ?, 1)
@@ -206,6 +226,42 @@ class TrialBudget:
             """, (account_id, day))
             if request_id is not None:
                 db.execute("INSERT INTO analysis_requests VALUES (?, ?)", (account_id, request_id))
+
+    @staticmethod
+    def analysis_round(db, account_id, round_id):
+        return db.execute("SELECT * FROM analysis_rounds WHERE account=? AND id=?", (account_id, round_id)).fetchone()
+
+    def require_analysis_slot(self, db, account_id, day, round_row):
+        if round_row["completed_day"] is None and self.account_rows(db, day, account_id).fetchone()["analysis_used"] >= self.analysis_limit:
+            raise ApiError(429, "analysis_account_limit", "今日可梳理的需求条数已用完。输入和草稿仍可编辑。")
+
+    def offer_analysis_draft(self, token, marker, round_id, request_id, text):
+        with self.store.connection(write=True) as db:
+            user = self.store.session(db, token, marker)
+            now = self.clock()
+            db.execute("DELETE FROM analysis_draft_offers WHERE expires<=?", (now,))
+            db.execute("INSERT INTO analysis_draft_offers VALUES (?, ?, ?, ?, ?, ?)",
+                       (user["id"], request_id, round_id, digest(token), text, now + DRAFT_OFFER_SECONDS))
+
+    def claim_analysis_draft(self, token, marker, offer_id):
+        """Return an offered draft and charge its round at most once, in one write transaction."""
+        with self.store.connection(write=True) as db:
+            account_id = self.store.session(db, token, marker)["id"]
+            now = self.clock()
+            offer = db.execute("""
+                SELECT round_id, text FROM analysis_draft_offers
+                WHERE account=? AND id=? AND session_digest=? AND expires>?
+            """, (account_id, offer_id, digest(token), now)).fetchone()
+            if offer is None:
+                raise ApiError(404, "analysis_draft_unavailable", "这份草稿已无法找回。原想法仍可重新梳理。")
+            day, _ = self.day_window(now)
+            round_id = offer["round_id"]
+            round_row = self.analysis_round(db, account_id, round_id)
+            self.require_analysis_slot(db, account_id, day, round_row)
+            db.execute("""
+                UPDATE analysis_rounds SET completed_day=? WHERE account=? AND id=? AND completed_day IS NULL
+            """, (day, account_id, round_id))
+            return {"kind": "draft", "text": offer["text"]}
 
     def record_generation_success(self, db, account_id, run_id):
         """Charge personal quota in the same write transaction as a real-model publication."""

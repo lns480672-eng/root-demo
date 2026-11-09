@@ -193,7 +193,7 @@ async function workspaceApi(path, data, timeout) {
     }
     throw error;
   } finally {
-    if (path === '/api/assistant/analyze') refreshTrial();
+    if (path === '/api/assistant/analyze' || path === '/api/assistant/claim-draft') refreshTrial();
   }
 }
 
@@ -534,6 +534,7 @@ const tableImport = setupTableImport({
 });
 const requirementAssistant = setupRequirementAssistant({
   request: workspaceApi,
+  offerStorageKey: () => 'root:assistant-offer:' + session.marker,
   onBuild: text => {
     requirementAssistant.close();
     beginComposition(false, text);

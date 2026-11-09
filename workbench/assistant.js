@@ -1,6 +1,6 @@
 'use strict';
 
-function setupRequirementAssistant({request, onBuild, onExit}) {
+function setupRequirementAssistant({request, offerStorageKey, onBuild, onExit}) {
   const panel = document.getElementById('assistant-panel');
   const draftsPath = '/api/requirement-drafts';
   const maxIdea = 1200;
@@ -20,6 +20,8 @@ function setupRequirementAssistant({request, onBuild, onExit}) {
   let draft = null;
   let conflict = false;
   let comparison = null;
+  let round = null;
+  let pendingOffer = null;
   const inFlightAnalysis = new Set();
 
   function node(tag, attributes = {}, ...children) {
@@ -44,7 +46,8 @@ function setupRequirementAssistant({request, onBuild, onExit}) {
   const title = node('h1', {id: 'assistant-title', tabindex: '-1'}, '需求助手');
   panel.setAttribute('aria-labelledby', title.id);
   const status = node('p', {id: 'assistant-status', role: 'status', 'aria-live': 'polite'});
-  const analysisInfo = node('p', {class: 'auth-muted'}, '整理、保存和带入需求都不会自动生成工具。');
+  const quotaHelp = '一条需求首次生成可编辑草稿时扣 1 次。换方向、追问、失败重试、编辑和保存不另扣。';
+  const analysisInfo = node('p', {class: 'auth-muted'}, quotaHelp);
   const balance = node('p', {id: 'analysis-balance', class: 'auth-muted', role: 'status', hidden: ''});
   const dirty = node('p', {id: 'assistant-dirty', class: 'auth-muted'}, '有未保存的修改。');
   const [ideaLabel, idea] = field('描述你想解决的问题', 'assistant-idea-text', maxIdea, 4);
@@ -63,6 +66,17 @@ function setupRequirementAssistant({request, onBuild, onExit}) {
     if (isText(editor.value, maxDraft)) onBuild(editor.value);
   });
   const myDrafts = button('assistant-drafts', '查看我的需求', openDrafts);
+  const recoverDraft = button('assistant-recover-draft', '找回草稿', () => {
+    run('正在找回草稿…', () => claimDraft(pendingOffer), receiveDraft);
+  });
+  const newRound = button('assistant-new-round', '梳理新需求', () => {
+    round = null;
+    idea.value = '';
+    directions = [];
+    selectedDirection = null;
+    questions = [];
+    show('idea', idea);
+  });
   const editIdea = button('assistant-edit-idea', '修改原始问题', () => show('idea', idea));
   const changeDirection = button('assistant-change-direction', '换个方向', () => show('directions', directionList.firstElementChild));
   const backToDraft = button('assistant-drafts-back', '返回上一步', () => show(previousView));
@@ -92,7 +106,7 @@ function setupRequirementAssistant({request, onBuild, onExit}) {
       node('div', {}, node('p', {class: 'auth-eyebrow'}, '整理需求'), title),
       button('assistant-exit', '返回工作台', onExit)),
     analysisInfo, balance,
-    node('div', {class: 'assistant-actions assistant-nav'}, myDrafts, editIdea, changeDirection),
+    node('div', {class: 'assistant-actions assistant-nav'}, myDrafts, editIdea, changeDirection, newRound, recoverDraft),
     ...Object.values(views), status,
   );
 
@@ -107,8 +121,12 @@ function setupRequirementAssistant({request, onBuild, onExit}) {
     editIdea.hidden = view === 'idea' || view === 'drafts' || !idea.value.trim();
     changeDirection.hidden = !directions.length || !['questions', 'draft'].includes(view);
     myDrafts.disabled = view === 'draft' && saving;
-    start.disabled = pending || !isText(idea.value, maxIdea);
-    organize.disabled = pending || !questions.length || !readAnswers().every(Boolean);
+    recoverDraft.hidden = !pendingOffer;
+    recoverDraft.disabled = pending;
+    newRound.hidden = view !== 'draft' || Boolean(pendingOffer);
+    newRound.disabled = pending || saving;
+    start.disabled = pending || Boolean(pendingOffer) || !isText(idea.value, maxIdea);
+    organize.disabled = pending || Boolean(pendingOffer) || !questions.length || !readAnswers().every(Boolean);
     const canSave = !pending && !saving && isText(editor.value, maxDraft);
     save.disabled = !canSave || conflict || editor.value === draft?.savedText;
     reviewSaved.hidden = !conflict || Boolean(comparison);
@@ -139,7 +157,7 @@ function setupRequirementAssistant({request, onBuild, onExit}) {
     feedback(message);
     refresh();
     try {
-      const result = await action();
+      const result = await action(() => requestEpoch === epoch);
       if (requestEpoch !== epoch) return;
       feedback();
       apply(result);
@@ -165,21 +183,54 @@ function setupRequirementAssistant({request, onBuild, onExit}) {
     });
   }
 
+  function rememberOffer(id) {
+    pendingOffer = id;
+    try {
+      if (id) sessionStorage.setItem(offerStorageKey(), id);
+      else sessionStorage.removeItem(offerStorageKey());
+    } catch {
+      // The current tab can still retry without session storage.
+    }
+  }
+
+  async function claimDraft(id) {
+    try {
+      return await request('/api/assistant/claim-draft', {offerId: id});
+    } catch (error) {
+      if (['analysis_draft_unavailable', 'analysis_account_limit'].includes(error.code)) rememberOffer(null);
+      if (error.code === 'transport') throw new Error('暂时无法确认草稿，请点「找回草稿」。');
+      throw error;
+    }
+  }
+
+  function receiveDraft(result) {
+    if (result?.kind !== 'draft' || !isText(result.text, maxDraft)) throw invalid();
+    rememberOffer(null);
+    openEditor(result.text, null);
+  }
+
   function analyze(data) {
-    if (!isText(data.idea, maxIdea)) return;
-    const signature = JSON.stringify(data);
+    if (pendingOffer || !isText(data.idea, maxIdea)) return;
+    if (round?.idea !== data.idea) round = {idea: data.idea, id: crypto.randomUUID()};
+    const roundId = round.id;
+    const signature = JSON.stringify([roundId, data]);
     if (inFlightAnalysis.has(signature)) return;
     inFlightAnalysis.add(signature);
-    run('正在整理你的想法…', async () => {
+    run('正在整理你的想法…', async current => {
       try {
-        return await request('/api/assistant/analyze', {...data, requestId: crypto.randomUUID()});
+        const requestId = crypto.randomUUID();
+        const result = await request('/api/assistant/analyze', {...data, roundId, requestId});
+        if (result?.kind !== 'draft_ready' || !current()) return result;
+        if (result.offerId !== requestId) throw invalid();
+        rememberOffer(result.offerId);
+        return await claimDraft(result.offerId);
       } finally {
         inFlightAnalysis.delete(signature);
       }
     }, result => {
-      if (result?.kind === 'draft' && isText(result.text, maxDraft)) {
+      if (result?.kind === 'draft' && pendingOffer) {
         if (data.step === 'start') directions = [];
-        openEditor(result.text, null);
+        receiveDraft(result);
         return;
       }
       if (result?.kind === 'directions' && data.step === 'start' && isText(result.understanding, maxIdea + 80) &&
@@ -324,6 +375,11 @@ function setupRequirementAssistant({request, onBuild, onExit}) {
   return {
     open() {
       panel.hidden = false;
+      try {
+        pendingOffer ??= sessionStorage.getItem(offerStorageKey());
+      } catch {
+        // Session storage is optional.
+      }
       refresh();
       views[view].querySelector('h2').focus();
     },
@@ -333,10 +389,10 @@ function setupRequirementAssistant({request, onBuild, onExit}) {
     },
     updateTrial(trial) {
       analysisInfo.textContent = trial.analysisMode === 'fixture'
-        ? '当前使用本地模拟分析。整理、保存和带入需求都不会自动生成工具。'
-        : '分析会调用模型。编辑、保存和带入草稿都不会自动调用模型。';
+        ? '当前使用本地模拟分析。' + quotaHelp
+        : quotaHelp;
       const usage = trial.analysis;
-      balance.textContent = '今日剩余 ' + usage.remaining + ' / ' + usage.limit + ' 次'
+      balance.textContent = '今日可梳理需求 ' + usage.remaining + ' / ' + usage.limit + ' 条'
         + (trial.paused ? ' · 模型调用暂时暂停' : !usage.totalRemaining ? ' · 试用的总分析额度已用完' : '');
       balance.hidden = false;
     },

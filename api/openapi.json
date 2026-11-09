@@ -1115,7 +1115,7 @@
           "需求"
         ],
         "summary": "运行需求助手的一步分析",
-        "description": "依次提交 start、direction 或 answers。start 可直接得到 draft。direction 可得到 questions 或 draft；answers 得到 draft。每次真实派发按分析额度计次，同一账号已派发 requestId 再用返回 analysis_duplicate。",
+        "description": "每轮使用同一 roundId 和原始想法。每个实际派发使用新的 requestId 并计一次全站调用，已派发的 requestId 再用返回 analysis_duplicate。start 或 direction 可能直接返回 draft_ready，answers 成功时返回 draft_ready。方向、追问和未领取的草稿不扣个人额度。",
         "responses": {
           "200": {
             "description": "运行需求助手的一步分析",
@@ -1164,6 +1164,77 @@
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/AnalysisRequest"
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Origin"
+          }
+        ]
+      }
+    },
+    "/api/assistant/claim-draft": {
+      "post": {
+        "operationId": "claimAnalysisDraft",
+        "tags": [
+          "需求"
+        ],
+        "summary": "领取可编辑需求草稿",
+        "description": "仅同账号、同会话可领取有效回执。首次领取将该轮计入当时的北京时间自然日。回执在 15 分钟内可重放，重复领取不再扣个人次数，也不派发模型。",
+        "responses": {
+          "200": {
+            "description": "领取可编辑需求草稿",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EditableAnalysisDraft"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Http400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Http401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Http403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Http404"
+          },
+          "415": {
+            "$ref": "#/components/responses/Http415"
+          },
+          "429": {
+            "$ref": "#/components/responses/Http429"
+          },
+          "503": {
+            "$ref": "#/components/responses/Http503"
+          },
+          "default": {
+            "$ref": "#/components/responses/UnexpectedError"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "offerId": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+                  }
+                },
+                "required": [
+                  "offerId"
+                ]
               }
             }
           }
@@ -2825,12 +2896,19 @@
                 "type": "string",
                 "format": "uuid",
                 "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+              },
+              "roundId": {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                "description": "同一原始想法的梳理轮 ID。换方向、追问和重试沿用。主动开始下一轮时生成新 ID。"
               }
             },
             "required": [
               "step",
               "idea",
-              "requestId"
+              "requestId",
+              "roundId"
             ]
           },
           {
@@ -2851,13 +2929,20 @@
               },
               "direction": {
                 "$ref": "#/components/schemas/AnalysisDirection"
+              },
+              "roundId": {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                "description": "同一原始想法的梳理轮 ID。换方向、追问和重试沿用。主动开始下一轮时生成新 ID。"
               }
             },
             "required": [
               "step",
               "idea",
               "requestId",
-              "direction"
+              "direction",
+              "roundId"
             ]
           },
           {
@@ -2897,6 +2982,12 @@
                 "minItems": 1,
                 "maxItems": 2,
                 "description": "与问题逐一对应，必须是服务端提供的选项。"
+              },
+              "roundId": {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                "description": "同一原始想法的梳理轮 ID。换方向、追问和重试沿用。主动开始下一轮时生成新 ID。"
               }
             },
             "required": [
@@ -2905,7 +2996,8 @@
               "requestId",
               "direction",
               "questions",
-              "answers"
+              "answers",
+              "roundId"
             ]
           }
         ]
@@ -2916,18 +3008,18 @@
             "type": "object",
             "properties": {
               "kind": {
-                "const": "draft"
+                "const": "draft_ready"
               },
-              "text": {
+              "offerId": {
                 "type": "string",
-                "minLength": 1,
-                "maxLength": 2000,
-                "description": "提交去掉首尾空白后的需求，长度以字符计。请移除凭据。"
+                "format": "uuid",
+                "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+                "description": "草稿领取回执。仅当前会话可领取。"
               }
             },
             "required": [
               "kind",
-              "text"
+              "offerId"
             ]
           },
           {
@@ -3297,7 +3389,8 @@
               "resetAt"
             ]
           }
-        ]
+        ],
+        "description": "used、limit 和 remaining 以每账号北京时间自然日成功梳理的需求轮数计。totalUsed、totalLimit 和 totalRemaining 以全站试用期实际分析调用次数计，包含已派发的失败。"
       },
       "TrialBalance": {
         "type": "object",
@@ -3961,6 +4054,24 @@
               }
             }
           }
+        ]
+      },
+      "EditableAnalysisDraft": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "const": "draft"
+          },
+          "text": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000,
+            "description": "提交去掉首尾空白后的需求，长度以字符计。请移除凭据。"
+          }
+        },
+        "required": [
+          "kind",
+          "text"
         ]
       }
     }

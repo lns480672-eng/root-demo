@@ -58,7 +58,7 @@
               <p class="failure-stat" id="generation-failure"></p>
             </article>
             <article class="meter">
-              <h3>分析调用</h3>
+              <h3>全站分析调用</h3>
               <p class="meter-amount" id="analysis-total"></p>
               <progress id="analysis-progress" aria-label="全站分析调用"></progress>
               <p class="meter-remaining muted meta" id="analysis-remaining"></p>
@@ -70,11 +70,11 @@
 
         <section class="admin-section" aria-labelledby="accounts-title">
           <div class="section-head">
-            <div><h2 id="accounts-title">个人试用额度</h2><p class="muted meta">生成额度按试用期统计，分析额度按北京时间零点重置。</p></div>
+            <div><h2 id="accounts-title">个人试用额度</h2><p class="muted meta">生成额度按试用期统计，需求梳理条数按北京时间零点重置。</p></div>
           </div>
-          <p class="policy">个人生成仅在工具或修订版可用并成功保存后扣 1 次。失败、超时或未成功保存不扣个人生成额度。只要已发出模型请求，就计入对应的全站用量。</p>
+          <p class="policy">个人生成仅在工具或修订版可用并成功保存后扣 1 次。失败、超时或未成功保存不扣个人生成额度。每轮需求首次产出可编辑草稿时扣个人 1 条。每次已派发的模型请求都计入相应全站用量。</p>
           <div class="accounts">
-            <div class="account-labels" aria-hidden="true"><span>账号</span><span>生成 · 试用期</span><span>分析 · 今日</span><span>操作</span></div>
+            <div class="account-labels" aria-hidden="true"><span>账号</span><span>生成 · 试用期</span><span>需求梳理 · 今日</span><span>操作</span></div>
             <div id="account-list"></div>
           </div>
         </section>
@@ -143,8 +143,8 @@
         <dl class="balance"><div><dt>已用</dt><dd class="gen-used"></dd><dt>剩余</dt><dd><strong class="gen-left"></strong></dd></div></dl>
       </div>
       <div>
-        <p class="mobile-label">分析 · 今日</p>
-        <dl class="balance"><div><dt>已用</dt><dd class="analysis-used"></dd><dt>剩余</dt><dd><strong class="analysis-left"></strong></dd></div></dl>
+        <p class="mobile-label">需求梳理 · 今日</p>
+        <dl class="balance"><div><dt>已用</dt><dd><span class="analysis-used"></span> 条</dd><dt>剩余</dt><dd><strong class="analysis-left"></strong> 条</dd></div></dl>
       </div>
       <button type="button" class="open-top-up" aria-expanded="false">补额度</button>
     </div>

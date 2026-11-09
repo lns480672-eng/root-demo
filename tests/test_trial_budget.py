@@ -92,7 +92,7 @@ class TrialBudgetTests(unittest.TestCase):
         self.budget.reserve(*self.alice, "generation", dispatch_id="valid")
         self.budget.finish_dispatch("generation", "valid", success=True)
         self.budget.finish_dispatch("generation", "valid", success=False)
-        self.budget.reserve(*self.alice, "analysis", "first-analysis", dispatch_id="failed")
+        self.analysis_dispatch(self.alice, "first-analysis", "round-1", dispatch_id="failed")
         self.budget.finish_dispatch("analysis", "failed", success=False)
         self.now += 2
         self.budget.admin_action(*self.admin, {"action": "pause"})
@@ -113,21 +113,65 @@ class TrialBudgetTests(unittest.TestCase):
         })
         self.assertEqual(restarted.balance(*self.alice)["analysis"]["used"], 0)
 
-    def test_analysis_resets_at_beijing_midnight_and_global_total_does_not_reset(self):
-        self.budget.reserve(*self.alice, "analysis", "old")
+    def analysis_dispatch(self, user, request, round_id, **kwargs):
+        self.budget.reserve(*user, "analysis", request, round_id=round_id, idea="需求", **kwargs)
+
+    def offer(self, user, request, round_id):
+        self.analysis_dispatch(user, request, round_id)
+        self.budget.offer_analysis_draft(*user, round_id, request, "可编辑草稿")
+
+    def test_analysis_charges_on_the_beijing_day_the_draft_is_claimed(self):
+        self.offer(self.alice, "old", "same-round")
         before = self.budget.balance(*self.alice)["analysis"]
-        self.assertEqual((before["remaining"], before["totalRemaining"]), (0, 1))
+        self.assertEqual((before["remaining"], before["totalRemaining"]), (1, 1))
         self.assertEqual(before["resetAt"], "2026-11-10T00:00:00+08:00")
-        self.failure("analysis_duplicate", self.budget.reserve, *self.alice, "analysis", "old")
-        self.failure("analysis_account_limit", self.budget.reserve, *self.alice, "analysis", "other")
+        self.failure("analysis_duplicate", self.analysis_dispatch, self.alice, "old", "same-round")
+
         self.now += 1
         after = self.budget.balance(*self.alice)["analysis"]
-        self.assertEqual((after["remaining"], after["totalRemaining"]), (1, 1))
         self.assertEqual(after["resetAt"], "2026-11-11T00:00:00+08:00")
-        self.failure("analysis_duplicate", self.budget.reserve, *self.alice, "analysis", "old")
-        self.budget.reserve(*self.alice, "analysis", "new")
-        self.failure("analysis_total_limit", self.budget.reserve, *self.bob, "analysis")
+        draft = self.budget.claim_analysis_draft(*self.alice, "old")
+        self.assertEqual(self.budget.claim_analysis_draft(*self.alice, "old"), draft)
+        self.assertEqual(self.budget.balance(*self.alice)["analysis"]["remaining"], 0)
+        self.failure("analysis_account_limit", self.analysis_dispatch, self.alice, "other", "another-round")
+        self.analysis_dispatch(self.alice, "followup", "same-round")
+        self.failure("analysis_total_limit", self.analysis_dispatch, self.bob, "new", "bobs-round")
         self.assertEqual(self.budget.balance(*self.bob)["generation"]["totalUsed"], 0)
+
+    def test_analysis_last_slot_and_replay_are_atomic(self):
+        self.budget = self.make_budget(analysis=(1, 10))
+        self.offer(self.alice, "offer-a", "round-a")
+        self.offer(self.alice, "offer-b", "round-b")
+
+        def claim(offer):
+            try:
+                return self.budget.claim_analysis_draft(*self.alice, offer)
+            except ApiError as error:
+                return error.code
+
+        with ThreadPoolExecutor(2) as pool:
+            outcomes = list(pool.map(claim, ("offer-a", "offer-b")))
+        winning = "offer-a" if isinstance(outcomes[0], dict) else "offer-b"
+        self.assertEqual(outcomes.count("analysis_account_limit"), 1)
+        self.assertEqual(self.budget.balance(*self.alice)["analysis"]["used"], 1)
+        self.budget = self.make_budget(analysis=(1, 10))
+        with ThreadPoolExecutor(2) as pool:
+            self.assertEqual(list(pool.map(claim, (winning, winning))), [{"kind": "draft", "text": "可编辑草稿"}] * 2)
+        self.assertEqual(self.budget.balance(*self.alice)["analysis"]["totalUsed"], 2)
+        self.now += 15 * 60
+        self.failure("analysis_draft_unavailable", self.budget.claim_analysis_draft, *self.alice, winning)
+
+    def test_legacy_analysis_dispatch_history_does_not_become_completed_requirements(self):
+        day, _ = self.budget.day_window()
+        with self.store.connection(write=True) as db:
+            alice_id = self.store.session(db, *self.alice)["id"]
+            db.execute("INSERT INTO analysis_usage VALUES (?, ?, 1)", (alice_id, day))
+        self.budget = self.make_budget()
+        current = self.budget.balance(*self.alice)["analysis"]
+        self.assertEqual((current["used"], current["totalUsed"]), (0, 1))
+        self.offer(self.alice, "draft", "new-round")
+        self.budget.claim_analysis_draft(*self.alice, "draft")
+        self.failure("analysis_total_limit", self.analysis_dispatch, self.bob, "new", "bobs-round")
 
     def test_reservation_and_publication_check_caps_atomically(self):
         budget = self.make_budget(generation=(1, 1), analysis=(3, 3))

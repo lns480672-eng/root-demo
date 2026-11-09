@@ -47,6 +47,7 @@ DRAFTS = "/api/requirement-drafts"
 UUID = r"[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}"
 DRAFT_PATH = re.compile(DRAFTS + "/(" + UUID + ")")
 ANALYZE = "/api/assistant/analyze"
+CLAIM_ANALYSIS_DRAFT = "/api/assistant/claim-draft"
 TRIAL = "/api/trial"
 TRIAL_ADMIN = "/api/trial/admin"
 STAGED = "/api/staged"
@@ -195,7 +196,7 @@ def serve(key, port, runs=generate.RUNS, *, generation_limits=(5, 30), analysis_
             if policy:
                 self.send_header("Content-Security-Policy", policy)
                 paths = (*STATIC, "/api/config", "/api/releases", "/api/session", "/api/register", "/api/login", "/api/logout",
-                         "/api/generate", "/api/tools", "/api/tools/*", DRAFTS, DRAFTS + "/*", ANALYZE,
+                         "/api/generate", "/api/tools", "/api/tools/*", DRAFTS, DRAFTS + "/*", ANALYZE, CLAIM_ANALYSIS_DRAFT,
                          TABLE_INSPECT, TABLE_GENERATE, TABLE_CONFIG, TRIAL, TRIAL_ADMIN, ADMIN_INVITES)
                 if staged:
                     paths += (STAGED, STAGED + "/*")
@@ -387,6 +388,12 @@ def serve(key, port, runs=generate.RUNS, *, generation_limits=(5, 30), analysis_
             if self.path == ANALYZE:
                 self.handle_analysis(data, token)
                 return
+            if self.path == CLAIM_ANALYSIS_DRAFT:
+                offer_id = data.get("offerId")
+                if not isinstance(offer_id, str) or not re.fullmatch(UUID, offer_id):
+                    raise ApiError(400, "invalid_analysis", "草稿回执编号无效。")
+                self.send_json(200, budget.claim_analysis_draft(token, self.marker(), offer_id))
+                return
             if self.path == TRIAL_ADMIN:
                 self.send_json(200, budget.admin_action(token, self.marker(), data))
                 return
@@ -449,8 +456,9 @@ def serve(key, port, runs=generate.RUNS, *, generation_limits=(5, 30), analysis_
             with store.connection() as db:
                 store.session(db, token, marker)
             request_id = data.get("requestId")
-            if not isinstance(request_id, str) or not re.fullmatch(UUID, request_id):
-                raise ApiError(400, "invalid_analysis", "分析请求标识无效，请重试。")
+            round_id = data.get("roundId")
+            if any(not isinstance(value, str) or not re.fullmatch(UUID, value) for value in (request_id, round_id)):
+                raise ApiError(400, "invalid_analysis", "分析请求或梳理轮标识无效，请重试。")
             if not model_lock.acquire(blocking=False):
                 raise ApiError(409, "busy", "另一个模型请求正在处理，请稍后重试。")
 
@@ -466,7 +474,8 @@ def serve(key, port, runs=generate.RUNS, *, generation_limits=(5, 30), analysis_
 
             def admit():
                 nonlocal admitted
-                budget.reserve(token, marker, "analysis", request_id=request_id, dispatch_id=dispatch_id)
+                budget.reserve(token, marker, "analysis", request_id=request_id, dispatch_id=dispatch_id,
+                               round_id=round_id, idea=data["idea"])
                 admitted = True
 
             try:
@@ -478,8 +487,12 @@ def serve(key, port, runs=generate.RUNS, *, generation_limits=(5, 30), analysis_
                     raise
                 if admitted:
                     budget.finish_dispatch("analysis", dispatch_id, success=True)
-                with store.connection() as db:
-                    store.session(db, token, marker)
+                if result["kind"] == "draft":
+                    budget.offer_analysis_draft(token, marker, round_id, request_id, result["text"])
+                    result = {"kind": "draft_ready", "offerId": request_id}
+                else:
+                    with store.connection() as db:
+                        store.session(db, token, marker)
             finally:
                 model_lock.release()
             self.send_json(200, result)
@@ -583,8 +596,8 @@ def main():
                              int(os.environ.get("ROOT_TOTAL_GENERATIONS", "30")))
         analysis_limits = (int(os.environ.get("ROOT_ACCOUNT_DAILY_ANALYSES", "6")),
                            int(os.environ.get("ROOT_TOTAL_ANALYSES", "60")))
-        if any(not 0 < account <= total for account, total in (generation_limits, analysis_limits)):
-            raise ValueError("个人额度与全站额度须为正整数，且个人额度不得超过全站额度")
+        if not 0 < generation_limits[0] <= generation_limits[1] or min(analysis_limits) <= 0:
+            raise ValueError("额度须为正整数，个人生成额度不得超过全站生成调用额度")
         table_limits = table_import.limits_from_env()
         admins = tuple(name.strip().lower() for name in os.environ.get("ROOT_TRIAL_ADMINS", "").split(",") if name.strip())
         if any(not re.fullmatch(r"[a-z0-9_-]{3,32}", name) for name in admins):
