@@ -38,19 +38,44 @@ let guideTool = null;
 let guideTarget = null;
 let trial = null;
 let trialRequest = 0;
+const validStagedId = id => typeof id === 'string' && /^[a-f0-9]{32}$/.test(id);
+const stagedSteps = {
+  spec: '理解需求', entry: '设计录入和明细', filters: '设计筛选',
+  summary: '设计统计', export: '设计导出', assemble: '组装工具',
+};
+const stagedStates = {
+  queued: '等待生成', running: '正在分阶段生成', failed: '阶段未完成', interrupted: '生成已中断',
+  complete: '等待检查预览', published: '已保存', expired: '已过期', exhausted: '已达调用上限',
+  unsupported: '暂不支持此需求',
+};
+let stagedEnabled = false;
+let stagedTasks = [];
+let selectedStagedId = null;
+let stagedAutoId = null;
+let stagedRead = 0;
+let stagedTimer = null;
+let stagedMessage = '';
+let stagedActivity = '';
+let stagedLoadError = '';
+let stagedPendingId = null;
+let stagedSubmission = null;
+let stagedGuide = null;
 
 function render() {
   const pending = ['model', 'preview', 'restore', 'sync', 'table'].includes(phase);
   const syncing = Boolean(pendingPublication);
   const pausingEdits = syncing && Boolean(pendingPublication.runId);
-  const blocked = pending || syncing;
+  const blocked = pending || syncing || Boolean(stagedPendingId);
+  const stagedTask = selectedStagedTask();
+  const returning = !editing && stagedTask?.requirement === requirement.value.trim() &&
+    ['queued', 'running', 'failed', 'interrupted', 'complete'].includes(stagedTask.state);
   const tableMode = entryMode === 'table';
   const showingSample = Boolean(sampleTemplate);
   const showingTool = Boolean(active) && !showingSample;
   product.dataset.state = pending ? 'loading' : failure ? 'failure' : active ? 'success' : 'initial';
   generate.textContent = pending ? '生成中…' : failure ? '重试' : editing ? '生成新版' : '直接生成';
   generate.disabled = !session || !configured || !networkIsolated || phase === 'startup' || blocked ||
-    tableMode || !requirement.value.trim();
+    tableMode || returning || !requirement.value.trim();
   requirement.readOnly = blocked;
   byId('new-tool').disabled = blocked;
   let currentTitle = '工具预览';
@@ -63,7 +88,7 @@ function render() {
   byId('preview-title').textContent = showingSample ? quickTemplates[sampleTemplate].title : currentTitle;
   byId('composer-title').textContent = editing ? '要怎样修改这个工具？' : '你想做什么工具？';
   byId('revise-tool').hidden = byId('tool-history').hidden = byId('publish-lock').hidden = syncing || !showingTool;
-  byId('revise-tool').disabled = pending || !configured;
+  byId('revise-tool').disabled = blocked || !configured;
   byId('tool-history').textContent = active ? '工具 v' + active.version + ' · 版本历史' : '版本历史';
   const sync = byId('sync-tool');
   sync.hidden = !syncing;
@@ -85,7 +110,7 @@ function render() {
       + (trial.paused ? ' · 模型调用暂时暂停' : !usage.totalRemaining ? ' · 试用的总生成额度已用完' : '');
   }
   byId('generation-retry-note').hidden = tableMode || !failure;
-  byId('loading').hidden = syncing || !pending;
+  byId('loading').hidden = syncing || !pending || Boolean(stagedActivity);
   byId('phase').textContent = {
     model: '正在等待 DeepSeek 响应',
     preview: '正在准备预览',
@@ -120,6 +145,7 @@ function render() {
   }
   byId('template-generate').disabled = blocked || !configured || !networkIsolated;
   byId('guide-start').disabled = blocked;
+  renderStagedTasks(blocked);
   renderGuide();
 }
 
@@ -164,6 +190,229 @@ async function workspaceApi(path, data, timeout) {
     if (path === '/api/assistant/analyze') refreshTrial();
   }
 }
+
+function stagedPendingKey() {
+  return 'root:pending-staged:' + session.user;
+}
+
+function rememberStagedPublication(id) {
+  stagedPendingId = id;
+  try {
+    if (id) sessionStorage.setItem(stagedPendingKey(), id);
+    else sessionStorage.removeItem(stagedPendingKey());
+  } catch {
+    // The server's task list can still recover the candidate without local storage.
+  }
+}
+
+function restoredStagedPublication() {
+  try {
+    const id = sessionStorage.getItem(stagedPendingKey());
+    return validStagedId(id) ? id : null;
+  } catch {
+    return null;
+  }
+}
+
+function selectedStagedTask() {
+  return stagedTasks.find(task => task.id === selectedStagedId);
+}
+
+function clearStagedSelection() {
+  selectedStagedId = stagedAutoId = null;
+  stagedMessage = '';
+}
+
+function rememberStagedTask(task) {
+  stagedRead += 1;
+  const other = stagedTasks.filter(item => item.id !== task.id);
+  stagedTasks = task.state === 'published' ? other : [task, ...other];
+}
+
+function stagedReason(task) {
+  if (!task) return '';
+  if (task.state === 'expired') return '任务已过期。可用保留的原需求重新生成。';
+  if (task.state === 'exhausted') return '已达到此任务的调用上限。可用保留的原需求重新生成。';
+  if (task.state === 'unsupported') return '此需求含当前无法分阶段生成的功能。可编辑原需求后重新生成。';
+  if (task.state === 'interrupted') return '执行中断。可从首个未完成阶段继续。';
+  return {
+    model_paused: '模型调用暂时暂停，恢复后可继续此任务。',
+    generation_account_limit: '个人生成额度已用完，补充额度后可继续。',
+    generation_total_limit: '试用的总生成额度已用完。',
+    staged_busy: '模型正在处理其他请求，请稍后继续。',
+    staged_timeout: '本阶段模型请求超时。',
+    staged_balance: '模型服务余额不足，请联系管理员。',
+    staged_rate_limit: '模型请求过多，请稍后继续。',
+    invalid_staged_result: '本阶段的模型结果未通过校验。',
+    staged_storage: '本阶段的结果未能保存。',
+  }[task.reason] || (task.state === 'failed' ? '本阶段未完成，可继续生成。' : '');
+}
+
+function renderStagedTasks(blocked) {
+  const panel = byId('staged-panel');
+  panel.hidden = !session || !stagedEnabled;
+  if (panel.hidden) return;
+  const task = selectedStagedTask();
+  const canAct = phase === 'idle' && networkIsolated && !pendingPublication;
+  const list = byId('staged-task-list');
+  const signature = JSON.stringify(stagedTasks.map(({id, requirement, state}) => [id, requirement, state]));
+  if (list.dataset.signature !== signature) {
+    list.dataset.signature = signature;
+    const focusedId = document.activeElement?.dataset.taskId;
+    list.replaceChildren(...stagedTasks.map(item => {
+      const row = document.createElement('li');
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.dataset.taskId = item.id;
+      button.textContent = (stagedStates[item.state] || '待确认') + ' · ' + item.requirement.slice(0, 70);
+      row.append(button);
+      return row;
+    }));
+    if (focusedId && !blocked) {
+      [...list.querySelectorAll('button')].find(button => button.dataset.taskId === focusedId)?.focus();
+    }
+  }
+  for (const button of list.querySelectorAll('button')) {
+    button.disabled = blocked;
+    button.setAttribute('aria-current', String(button.dataset.taskId === selectedStagedId));
+  }
+  byId('staged-list-status').textContent = stagedLoadError ||
+    (stagedTasks.length || stagedPendingId ? '' : '暂无未完成任务。');
+  const quotaBlocked = Boolean(trial && (trial.paused || !trial.generation.remaining || !trial.generation.totalRemaining));
+  byId('staged-refresh').hidden = !stagedLoadError && !(task?.resumable && quotaBlocked);
+  byId('staged-detail').hidden = !task && !stagedPendingId && !stagedActivity && !stagedMessage;
+  const status = byId('staged-status');
+  const statusText = stagedActivity || (stagedPendingId ? '保存结果待核对' : task ? stagedStates[task.state] || '' : '');
+  if (status.textContent !== statusText) status.textContent = statusText;
+  const steps = byId('staged-steps');
+  const progress = JSON.stringify([task?.completed, task?.stage]);
+  if (steps.dataset.progress !== progress) {
+    steps.dataset.progress = progress;
+    steps.replaceChildren(...(task ? Object.entries(stagedSteps).map(([name, label]) => {
+      const step = document.createElement('li');
+      const done = task.completed.includes(name);
+      step.dataset.stage = name;
+      step.toggleAttribute('data-completed', done);
+      step.textContent = label + (done ? '（已完成）' : '');
+      if (name === task.stage) step.setAttribute('aria-current', 'step');
+      return step;
+    }) : []));
+  }
+  const reason = stagedMessage || stagedReason(task);
+  const reasonNode = byId('staged-reason');
+  reasonNode.hidden = !reason;
+  reasonNode.textContent = reason;
+  const issue = byId('staged-issue');
+  issue.hidden = !task?.issue;
+  issue.textContent = task?.issue ? '问题编号 ' + task.issue : '';
+  const resume = byId('staged-resume');
+  resume.hidden = !task?.resumable || Boolean(stagedPendingId);
+  resume.disabled = !canAct || !configured || quotaBlocked;
+  const reopen = byId('staged-preview');
+  reopen.hidden = task?.state !== 'complete' || Boolean(stagedPendingId);
+  reopen.disabled = !canAct;
+  reopen.textContent = stagedMessage ? '重新预览' : '检查预览';
+  const sync = byId('staged-sync');
+  sync.hidden = !stagedPendingId;
+  sync.disabled = !canAct;
+}
+
+function scheduleStagedRefresh(delay = 850) {
+  clearTimeout(stagedTimer);
+  stagedTimer = setTimeout(refreshStagedTasks, delay);
+}
+
+async function refreshStagedTasks() {
+  if (!stagedEnabled || !session) return;
+  clearTimeout(stagedTimer);
+  const request = ++stagedRead;
+  const wasRunning = stagedTasks.some(task => ['queued', 'running'].includes(task.state));
+  try {
+    const result = await workspaceApi('/api/staged', undefined, publicationTimeout);
+    if (request !== stagedRead) return;
+    const followed = stagedAutoId;
+    let tasks = result.tasks;
+    // Published tasks leave the list. Follow the exact task if another tab saved it.
+    if (followed && !tasks.some(task => task.id === followed)) {
+      const { task } = await workspaceApi('/api/staged/' + followed, undefined, publicationTimeout);
+      if (request !== stagedRead) return;
+      tasks = [task, ...tasks];
+    }
+    stagedTasks = tasks;
+    stagedLoadError = '';
+  } catch {
+    if (request !== stagedRead) return;
+    stagedLoadError = '暂时无法读取生成任务，请重试。';
+  }
+  const task = selectedStagedTask();
+  const running = stagedTasks.some(item => ['queued', 'running'].includes(item.state));
+  render();
+  if (wasRunning && !running) refreshTrial();
+  if (['complete', 'published'].includes(task?.state) && task.id === stagedAutoId && !stagedPendingId && !pendingPublication) {
+    if (phase === 'idle') return openStagedCandidate(task);
+    scheduleStagedRefresh();
+  } else if (running || (stagedAutoId && stagedLoadError)) {
+    scheduleStagedRefresh(stagedLoadError ? 3000 : undefined);
+  }
+}
+
+byId('staged-task-list').addEventListener('click', event => {
+  const id = event.target.closest('button')?.dataset.taskId;
+  const task = stagedTasks.find(item => item.id === id);
+  if (!task || phase !== 'idle' || stagedPendingId || pendingPublication) return;
+  beginComposition(false, task.requirement);
+  selectedStagedId = id;
+  if (['queued', 'running'].includes(task.state)) stagedAutoId = id;
+  render();
+});
+
+byId('staged-refresh').addEventListener('click', () => {
+  refreshStagedTasks();
+  refreshTrial();
+});
+
+byId('staged-resume').addEventListener('click', async () => {
+  const task = selectedStagedTask();
+  if (!task?.resumable || byId('staged-resume').disabled) return;
+  stagedAutoId = task.id;
+  stagedMessage = '';
+  phase = 'model';
+  stagedActivity = '正在继续生成';
+  render();
+  try {
+    const result = await workspaceApi('/api/staged/' + task.id + '/resume', {}, publicationTimeout);
+    rememberStagedTask(result.task);
+  } catch (error) {
+    stagedMessage = error.message;
+  } finally {
+    phase = 'idle';
+    stagedActivity = '';
+    render();
+    refreshStagedTasks();
+    refreshTrial();
+  }
+});
+
+byId('staged-preview').addEventListener('click', () => {
+  const task = selectedStagedTask();
+  if (task?.state === 'complete') openStagedCandidate(task);
+});
+
+byId('staged-sync').addEventListener('click', async () => {
+  if (!stagedPendingId || byId('staged-sync').disabled) return;
+  phase = 'sync';
+  stagedActivity = '正在核对保存';
+  render();
+  try {
+    await synchronizeStagedPublication();
+  } finally {
+    phase = 'idle';
+    stagedActivity = '';
+    render();
+    refreshStagedTasks();
+    refreshTrial();
+  }
+});
 
 async function refreshTrial() {
   const request = ++trialRequest;
@@ -251,6 +500,7 @@ function hideSample() {
 }
 
 function enterQuickExperience() {
+  clearStagedSelection();
   if (entryMode === 'table') tableImport.close();
   editing = false;
   entryMode = 'fast';
@@ -281,6 +531,7 @@ const requirementAssistant = setupRequirementAssistant({
 byId('quick-entry').addEventListener('click', enterQuickExperience);
 byId('direct-entry').addEventListener('click', () => beginComposition(false, editing ? '' : requirement.value));
 byId('table-entry').addEventListener('click', () => {
+  clearStagedSelection();
   hideSample();
   editing = false;
   failure = '';
@@ -454,12 +705,14 @@ function serializeEntries(entries, limit) {
 }
 
 // Runs inside the opaque frame before any generated code. It has only this tool's snapshot.
-function initializeFrame(entries, token, parentOrigin, limit) {
+function initializeFrame(entries, token, parentOrigin, limit, backup) {
   const send = parent.postMessage.bind(parent);
   const values = new Map(entries);
   const existing = new Set(values.keys());
   const reads = new Set();
   let paused = false;
+  let restoringBackup = null;
+  let backupSequence = 0;
   const report = (type, extra = {}) => send({ token, type, ...extra }, parentOrigin);
   const reportOperation = event => {
     if (paused || !event.isTrusted) return;
@@ -477,10 +730,35 @@ function initializeFrame(entries, token, parentOrigin, limit) {
       report('storage-paused', { reads: Array.from(reads) });
     } else if (event.data.type === 'resume-storage') {
       paused = false;
+    } else if (event.data.type === 'backup-result' && restoringBackup?.request === event.data.request) {
+      const operation = restoringBackup;
+      restoringBackup = null;
+      if (event.data.error) operation.reject(new Error(event.data.error));
+      else {
+        values.set(operation.key, operation.value);
+        operation.resolve();
+      }
     }
   });
+  if (backup) {
+    Object.defineProperty(window, 'rootSaveBackup', {
+      value(key, value) {
+        if (key !== 'root-structured-records-v1' || typeof value !== 'string') {
+          return Promise.reject(new Error('备份存储格式无效。'));
+        }
+        if (paused || restoringBackup) {
+          return Promise.reject(new Error('工具正忙，请稍后重试。'));
+        }
+        return new Promise((resolve, reject) => {
+          const request = ++backupSequence;
+          restoringBackup = { request, key, value, resolve, reject };
+          report('backup-restore', { request, key, value });
+        });
+      },
+    });
+  }
   function commit(next) {
-    if (paused) throw new DOMException('正在切换工具版本，请稍后重试。', 'InvalidStateError');
+    if (paused || restoringBackup) throw new DOMException('正在保存或切换工具，请稍后重试。', 'InvalidStateError');
     const snapshot = Array.from(next);
     if (new TextEncoder().encode(JSON.stringify(snapshot)).length > limit) {
       report('quota');
@@ -537,6 +815,58 @@ function enqueueSave(frame, snapshot) {
   });
 }
 
+function enqueueBackupRestore(frame, { request, key, value }) {
+  if (!Number.isSafeInteger(request) || request < 1 || !frame.backup) return;
+  const reply = error => {
+    frame.iframe.contentWindow?.postMessage({ type: 'backup-result', token: frame.token, request, error }, '*');
+  };
+  if (frame !== active || key !== 'root-structured-records-v1' || typeof value !== 'string' ||
+      pendingPublication?.runId || frame.backupPending) {
+    reply('当前工具无法恢复备份。');
+    return;
+  }
+  let snapshot;
+  try {
+    const next = new Map(JSON.parse(frame.snapshot)).set(key, value);
+    snapshot = serializeEntries([...next], frame.storageLimit);
+  } catch {
+    reply('备份数据超出工具存储限制。');
+    return;
+  }
+  frame.backupPending = true;
+  frame.saveTail = frame.saveTail.then(async () => {
+    if (frame.saveFailed) throw new Error('此工具有未确认的数据，请重新打开后再恢复。');
+    const path = '/api/tools/' + frame.id;
+    const revision = frame.revision;
+    const payload = { revision, version: frame.version, entries: JSON.parse(snapshot) };
+    let saved;
+    try {
+      saved = await workspaceApi(path + '/data', payload, publicationTimeout);
+    } catch (error) {
+      if (error.code !== 'transport') throw error;
+      try {
+        const current = await workspaceApi(path, undefined, publicationTimeout);
+        if (current.version === frame.version && current.revision > revision &&
+            serializeEntries(current.entries, frame.storageLimit) === snapshot) saved = current;
+      } catch {
+        // No acknowledgement for the specific snapshot.
+      }
+      if (!saved) {
+        frame.saveFailed = true;
+        if (frame === active) {
+          frame.iframe.inert = true;
+          warnStorage('无法确认备份是否已保存，请从「我的工具」重新打开核对。');
+        }
+        throw new Error('无法确认备份是否已保存，请重新打开工具核对。');
+      }
+    }
+    frame.revision = saved.revision;
+    frame.snapshot = snapshot;
+  }).then(() => reply(), error => reply(error.message)).finally(() => {
+    frame.backupPending = false;
+  });
+}
+
 window.addEventListener('message', event => {
   if (event.origin !== 'null' || !event.data || typeof event.data !== 'object') return;
   const frame = [candidate, active].find(
@@ -554,6 +884,8 @@ window.addEventListener('message', event => {
       if (frame === candidate) frame.reject(new Error('无法保存新工具的数据，旧工具已保留。'));
       else warnStorage('这次更改未能保存，刷新后可能丢失。');
     }
+  } else if (type === 'backup-restore') {
+    enqueueBackupRestore(frame, event.data);
   } else if (type === 'quota') {
     if (frame === candidate) frame.reject(new Error('新工具数据超出浏览器存储限制。'));
     else warnStorage('工具存储空间已满，这次更改未保存。');
@@ -685,6 +1017,118 @@ async function synchronizePublication() {
   }
 }
 
+async function readStagedPublication(id) {
+  const { task } = await workspaceApi('/api/staged/' + id, undefined, publicationTimeout);
+  if (task.state === 'published' && validToolId(task.toolId)) {
+    return workspaceApi('/api/tools/' + task.toolId, undefined, publicationTimeout);
+  }
+  rememberStagedTask(task);
+  return null;
+}
+
+async function commitStaged(frame, tool) {
+  const { taskId, commit, sha256, nonce } = tool.staged;
+  rememberStagedPublication(taskId);
+  stagedActivity = '正在保存';
+  render();
+  try {
+    const saved = await workspaceApi('/api/staged/' + taskId + '/publish', {
+      toolId: frame.id, commit, sha256, nonce, entries: JSON.parse(frame.snapshot),
+    }, publicationTimeout);
+    rememberStagedPublication(null);
+    return saved;
+  } catch (error) {
+    if (error.code !== 'transport') {
+      if (!['session_changed', 'login_required'].includes(error.code)) rememberStagedPublication(null);
+      throw error;
+    }
+  }
+  let saved;
+  try {
+    saved = await readStagedPublication(taskId);
+  } catch {
+    throw new Error('暂时无法确认保存结果，请核对同一任务。');
+  }
+  rememberStagedPublication(null);
+  if (saved) return saved;
+  throw new Error('未查到已保存的工具，可重新检查原候选。');
+}
+
+async function finishStagedComposition(id) {
+  stagedTasks = stagedTasks.filter(task => task.id !== id);
+  if (stagedGuide === id && guideStep === 1) {
+    guideTool = active.id;
+    guideStep = 2;
+  }
+  if (stagedGuide === id) stagedGuide = null;
+  clearStagedSelection();
+  finishComposition();
+  await loadLibrary().catch(error => warnStorage(error.message));
+}
+
+async function synchronizeStagedPublication() {
+  const id = stagedPendingId;
+  if (!id) return;
+  try {
+    const saved = await readStagedPublication(id);
+    if (saved) {
+      if (active?.id !== saved.id || active.revision !== saved.revision || active.version !== saved.version) {
+        await openTool(saved, true);
+      }
+      rememberStagedPublication(null);
+      await finishStagedComposition(id);
+    } else {
+      rememberStagedPublication(null);
+      const task = stagedTasks.find(item => item.id === id);
+      if (task) requirement.value = task.requirement;
+      selectedStagedId = id;
+      compose(true);
+      stagedMessage = '未查到已保存的工具。';
+    }
+  } catch {
+    stagedMessage = '暂时无法确认保存结果，请稍后再次核对。';
+  }
+}
+
+async function openStagedCandidate(task) {
+  if (phase !== 'idle' || pendingPublication || stagedPendingId || !networkIsolated) return;
+  stagedAutoId = null;
+  selectedStagedId = task.id;
+  stagedMessage = '';
+  stagedActivity = '检查预览';
+  hideSample();
+  phase = 'preview';
+  render();
+  try {
+    let tool;
+    try {
+      if (task.state === 'published') {
+        await openTool(await workspaceApi('/api/tools/' + task.toolId, undefined, publicationTimeout), true);
+      } else {
+        tool = await workspaceApi('/api/staged/' + task.id + '/candidate', {}, publicationTimeout);
+      }
+    } catch (error) {
+      if (error.code !== 'staged_not_ready') throw error;
+      const saved = await readStagedPublication(task.id);
+      if (!saved) throw error;
+      await openTool(saved, true);
+    }
+    if (tool) {
+      if (tool.staged?.taskId !== task.id) throw new Error('候选与当前任务不匹配，无法打开预览。');
+      await openTool(tool);
+    }
+    await finishStagedComposition(task.id);
+  } catch (error) {
+    stagedMessage = error.message + (error.issue ? ' 问题编号 ' + error.issue + '。' : '');
+  } finally {
+    phase = 'idle';
+    stagedActivity = '';
+    render();
+    refreshStagedTasks();
+    refreshTrial();
+  }
+}
+
 async function openTool(tool, restore = false) {
   if (!validToolId(tool.id) || typeof tool.html !== 'string' || !/^<!doctype html>/i.test(tool.html)) {
     throw new Error('工具文件不完整，无法打开预览。');
@@ -695,20 +1139,21 @@ async function openTool(tool, restore = false) {
 
   const iframe = document.createElement('iframe');
   iframe.title = '生成的工具';
-  iframe.setAttribute('sandbox', 'allow-scripts allow-forms');
+  const backup = tool.stagedBackup === true;
+  iframe.setAttribute('sandbox', 'allow-scripts allow-forms' + (backup ? ' allow-downloads' : ''));
   iframe.referrerPolicy = 'no-referrer';
   iframe.tabIndex = -1;
   iframe.inert = true;
   const frame = {
     id: tool.id, token: crypto.randomUUID(), iframe, snapshot: original,
-    storageLimit,
+    storageLimit, backup,
     revision: tool.revision, version: tool.version, saveTail: Promise.resolve(), saveFailed: false,
   };
   const old = active;
   candidate = frame;
   const ready = new Promise((resolve, reject) => Object.assign(frame, { resolve, reject }));
   const deadline = setTimeout(() => frame.reject(new Error('准备预览超时，需求已保留。')), 5000);
-  const args = JSON.stringify([entries, frame.token, location.origin, storageLimit]).replaceAll('<', '\\u003c');
+  const args = JSON.stringify([entries, frame.token, location.origin, storageLimit, backup]).replaceAll('<', '\\u003c');
   const bootstrap = '(' + initializeFrame.toString() + ')(...' + args + ')';
   iframe.srcdoc = '<!doctype html><meta charset="utf-8">'
     + '<meta name="viewport" content="width=device-width, initial-scale=1">'
@@ -722,6 +1167,17 @@ async function openTool(tool, restore = false) {
       const saved = await publishRevision(frame, old, tool);
       savedSnapshot = frame.snapshot;
       frame.revision = saved.revision;
+    } else if (tool.staged && !restore) {
+      savedSnapshot = frame.snapshot;
+      const saved = await commitStaged(frame, tool);
+      if (saved.id !== frame.id) throw new Error('保存结果与当前候选不匹配。');
+      if (saved.version !== frame.version || serializeEntries(saved.entries, storageLimit) !== savedSnapshot ||
+          (saved.stagedBackup === true) !== backup) {
+        iframe.remove();
+        return await openTool(saved, true);
+      }
+      frame.revision = saved.revision;
+      await old?.saveTail;
     } else if (!restore) {
       savedSnapshot = frame.snapshot;
       const saved = await commitInitial(frame);
@@ -761,7 +1217,10 @@ async function openRevision(tool) {
   }
 }
 
-requirement.addEventListener('input', render);
+requirement.addEventListener('input', () => {
+  if (selectedStagedTask()?.requirement !== requirement.value.trim()) clearStagedSelection();
+  render();
+});
 example.addEventListener('click', () => {
   requirement.value = '做一个读书清单，可以输入并添加书名。刷新后保留已添加的书。';
   requirement.focus();
@@ -775,7 +1234,7 @@ function finishComposition() {
 }
 
 async function generateTable(table) {
-  if (!networkIsolated || phase !== 'idle' || pendingPublication) {
+  if (!networkIsolated || phase !== 'idle' || pendingPublication || stagedPendingId) {
     throw new Error('当前无法开启隔离预览，请检查工作台状态后重试。');
   }
   failure = '';
@@ -810,9 +1269,26 @@ form.addEventListener('submit', async event => {
   render();
   try {
     const path = editing ? '/api/tools/' + active.id + '/revise' : '/api/generate';
+    const text = requirement.value.trim();
+    if (stagedEnabled && !editing && stagedSubmission?.text !== text) {
+      stagedSubmission = { text, id: crypto.randomUUID().replaceAll('-', '') };
+    }
     const tool = await workspaceApi(path, {
-      requirement: requirement.value.trim(), version: editing ? active.version : undefined,
+      requirement: text, version: editing ? active.version : undefined,
+      requestId: stagedEnabled && !editing ? stagedSubmission.id : undefined,
     });
+    stagedSubmission = null;
+    if (stagedEnabled && tool.task) {
+      rememberStagedTask(tool.task);
+      selectedStagedId = stagedAutoId = tool.task.id;
+      if (guidedGeneration) stagedGuide = tool.task.id;
+      stagedMessage = '';
+      if (tool.task.state === 'published') {
+        rememberStagedPublication(tool.task.id);
+        await synchronizeStagedPublication();
+      }
+      return;
+    }
     phase = 'preview';
     render();
     if (editing) await openRevision(tool);
@@ -831,11 +1307,15 @@ form.addEventListener('submit', async event => {
         guideStep = 2;
       }
     }
-    else failure = error.message + (error.issue ? ' 问题编号 ' + error.issue + '。' : '');
+    else {
+      if (error.code !== 'transport') stagedSubmission = null;
+      failure = error.message + (error.issue ? ' 问题编号 ' + error.issue + '。' : '');
+    }
   } finally {
     phase = 'idle';
     render();
     refreshTrial();
+    if (stagedEnabled) refreshStagedTasks();
   }
 });
 
@@ -850,7 +1330,8 @@ byId('sync-tool').addEventListener('click', async () => {
 });
 
 async function selectTool(id) {
-  if (!networkIsolated || pendingPublication || phase !== 'idle' || !validToolId(id)) return;
+  if (!networkIsolated || pendingPublication || stagedPendingId || phase !== 'idle' || !validToolId(id)) return;
+  clearStagedSelection();
   hideSample();
   if (entryMode === 'table') tableImport.close();
   phase = 'restore';
@@ -873,6 +1354,7 @@ async function selectTool(id) {
 }
 
 function beginComposition(revise, value = '') {
+  clearStagedSelection();
   hideSample();
   if (entryMode === 'table') tableImport.close();
   editing = revise;
@@ -985,6 +1467,7 @@ window.addEventListener('focus', async () => {
       location.reload();
     } else {
       refreshTrial();
+      refreshStagedTasks();
     }
   } catch (error) {
     warnStorage(error.message);
@@ -1008,7 +1491,9 @@ async function start(registration = null) {
       startGuide();
       render();
     }
-    ({ configured } = await api('/api/config'));
+    const config = await api('/api/config');
+    configured = config.configured;
+    stagedEnabled = config.staged === true;
     await refreshTrial();
     networkIsolated = await confirmsNetworkPolicy();
     if (!networkIsolated) {
@@ -1025,11 +1510,24 @@ async function start(registration = null) {
         phase = 'sync';
         render();
         await synchronizePublication();
-      } else if (latest) {
-        phase = 'idle';
-        await selectTool(latest);
+      } else {
+        const previousStagePublication = stagedEnabled ? restoredStagedPublication() : null;
+        if (latest) {
+          phase = 'idle';
+          await selectTool(latest);
+        }
+        if (previousStagePublication) {
+          stagedPendingId = previousStagePublication;
+          selectedStagedId = previousStagePublication;
+          phase = 'sync';
+          stagedActivity = '正在核对保存';
+          render();
+          await synchronizeStagedPublication();
+          stagedActivity = '';
+        }
       }
     }
+    if (stagedEnabled) await refreshStagedTasks();
   } catch (error) {
     if (!session) {
       identityResolved = true;

@@ -170,6 +170,23 @@
           </div>
           <p id="generation-retry-note" class="auth-muted" hidden>生成失败不扣个人次数。</p>
         </form>
+        <section id="staged-panel" class="staged-panel" aria-labelledby="staged-title" hidden>
+          <h3 id="staged-title">生成任务</h3>
+          <p id="staged-list-status" class="auth-muted" role="status"></p>
+          <ul id="staged-task-list" aria-label="尚可查看的生成任务"></ul>
+          <div id="staged-detail" class="staged-detail" hidden>
+            <p id="staged-status" role="status"></p>
+            <ol id="staged-steps" aria-label="分阶段生成进度"></ol>
+            <p id="staged-reason" class="elys-error" hidden></p>
+            <p id="staged-issue" class="auth-muted" hidden></p>
+          </div>
+          <div class="entry-actions">
+            <button id="staged-resume" type="button" hidden>继续生成</button>
+            <button id="staged-preview" type="button" hidden>检查预览</button>
+            <button id="staged-sync" type="button" hidden>核对保存</button>
+            <button id="staged-refresh" type="button" hidden>重新读取任务</button>
+          </div>
+        </section>
         <div id="loading" class="elys-loading" role="status" hidden>
           <p id="phase"></p>
           <ol aria-label="生成阶段">

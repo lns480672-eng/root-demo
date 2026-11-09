@@ -434,3 +434,22 @@ button:enabled { cursor: pointer; }
 @media (pointer: coarse) {
   .auth-panel :is(input, #auth-submit) { min-height: 44px; }
 }
+
+.staged-panel {
+  margin-block-start: 18px;
+  border: 1px solid var(--elys-line);
+  border-radius: 13px;
+  padding: 12px;
+  background: var(--elys-white);
+}
+.staged-panel h3 { font-size: 15px; }
+.staged-panel :is(ul, ol) { padding: 0; list-style: none; }
+.staged-panel ul { margin: 8px 0; display: grid; gap: 5px; }
+.staged-panel li button { inline-size: 100%; border-radius: 9px; text-align: start; overflow-wrap: anywhere; white-space: normal; }
+.staged-panel li button[aria-current="true"] { border-color: #506bb7; color: #38539c; }
+.staged-detail { display: grid; gap: 5px; padding-block-start: 8px; border-top: 1px solid var(--elys-line); }
+.staged-detail ol { display: flex; flex-wrap: wrap; gap: 5px 11px; color: var(--elys-muted); }
+.staged-detail li[data-completed] { color: #245c47; }
+.staged-detail li[aria-current="step"] { font-weight: 700; color: #38539c; }
+.staged-panel .entry-actions:has(button:not([hidden])) { margin-block-start: 9px; }
+.staged-panel .entry-actions:not(:has(button:not([hidden]))) { display: none; }
