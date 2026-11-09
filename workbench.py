@@ -7,6 +7,7 @@ import os
 import re
 import sqlite3
 import threading
+from html.parser import HTMLParser
 from http.cookies import CookieError, SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -32,6 +33,35 @@ GENERATION_ERRORS = {
     "credential_in_output": "模型输出未通过安全检查，需求已保留。",
     "request_failed": "模型请求未完成，请检查网络后重试。",
 }
+
+
+class ToolTitle(HTMLParser):
+    """Read a display label from generated HTML without running it."""
+
+    def __init__(self):
+        super().__init__()
+        self.field = None
+        self.parts = {}
+
+    def handle_starttag(self, tag, attrs):
+        if tag in ("title", "h1") and tag not in self.parts:
+            self.parts[tag] = []
+            self.field = tag
+
+    def handle_endtag(self, tag):
+        if tag == self.field:
+            self.field = None
+
+    def handle_data(self, data):
+        if self.field:
+            self.parts[self.field].append(data)
+
+    def label(self, fallback):
+        for tag in ("title", "h1"):
+            label = " ".join("".join(self.parts.get(tag, ())).split())
+            if label:
+                return label
+        return fallback
 
 
 def build_id(assets):
@@ -152,12 +182,14 @@ def serve(key, port, runs=generate.RUNS):
                 self.error(404, "not_found", "页面不存在。")
 
         def send_tool(self, tool_id, entries, revision):
-            try:
-                html = (runs / tool_id / "app.html").read_text(encoding="utf-8")
-            except (OSError, UnicodeError):
-                self.error(404, "tool_unavailable", "此工具不可用。")
-                return
+            html = self.read_tool_html(tool_id)
             self.send_json(200, {"id": tool_id, "html": html, "entries": entries, "revision": revision})
+
+        def read_tool_html(self, tool_id):
+            try:
+                return (runs / tool_id / "app.html").read_text(encoding="utf-8")
+            except (OSError, UnicodeError):
+                raise ApiError(404, "tool_unavailable", "此工具不可用。") from None
 
         def do_POST(self):
             if not self.valid_host():
@@ -226,8 +258,16 @@ def serve(key, port, runs=generate.RUNS):
             finally:
                 generation_lock.release()
             if evidence["status"] == "generated":
-                store.draft(token, self.marker(), run.name, requirement)
-                self.send_tool(run.name, [], 0)
+                html = self.read_tool_html(run.name)
+                title = ToolTitle()
+                try:
+                    title.feed(html)
+                    label = title.label(requirement)
+                except AssertionError:
+                    # HTMLParser may reject malformed declarations that the browser tolerates.
+                    label = requirement
+                store.draft(token, self.marker(), run.name, label)
+                self.send_json(200, {"id": run.name, "html": html, "entries": [], "revision": 0})
             else:
                 self.error(502, evidence["status"], model_error(evidence))
 

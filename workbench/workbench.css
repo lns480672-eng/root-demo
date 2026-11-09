@@ -64,6 +64,8 @@ button:enabled { cursor: pointer; }
   .elys-workspace {
     display: grid;
     grid-template-columns: minmax(0, .76fr) minmax(0, 1.24fr);
+    grid-template-areas: "library preview" "composer preview";
+    grid-template-rows: auto 1fr;
     gap: clamp(20px, 3.4vw, 34px);
     margin-block-start: clamp(21px, 3.6vw, 37px);
   }
@@ -71,13 +73,13 @@ button:enabled { cursor: pointer; }
     min-width: 0;
     padding: 10px 0 20px clamp(0px, 1.4vw, 14px);
   }
-  :is(.elys-composer h1, .elys-empty h3) {
+  :is(#composer-title, .elys-empty h3) {
     font-family: var(--elys-serif);
     font-weight: 750;
     line-height: 1.2;
     letter-spacing: -.045em;
   }
-  .elys-composer h1 { font-size: clamp(24px, 3.7vw, 39px); }
+  #composer-title { font-size: clamp(21px, 3vw, 28px); }
   .elys-intro { margin-block-start: 10px; color: var(--elys-muted); }
   .elys-requirement { margin-block-start: 28px; }
   .elys-product label { display: block; font-size: 13px; font-weight: 650; }
@@ -206,16 +208,62 @@ button:enabled { cursor: pointer; }
 
 .account { margin-inline-start: auto; display: flex; align-items: center; gap: .75rem; min-width: 0; }
 .account span { overflow: hidden; text-overflow: ellipsis; }
-.auth-panel { width: min(100%, 26rem); margin: 2rem auto 3rem; padding: 1.5rem;
-  background: var(--elys-white); border: 1px solid var(--elys-line); border-radius: 16px; }
-.auth-panel label { margin-top: .75rem; }
-.auth-panel input { margin-top: .25rem; }
-#auth-status { margin-top: .75rem; min-height: 1.6em; }
-.tool-library { margin-top: 1.75rem; padding-top: 1rem; border-top: 1px solid var(--elys-line); }
+.auth-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.14fr) minmax(0, .86fr);
+  align-items: center;
+  gap: clamp(24px, 5vw, 66px);
+  padding: clamp(27px, 5vw, 64px) clamp(10px, 4vw, 50px);
+}
+.auth-eyebrow { color: #506bb7; font: 650 11px/1.5 system-ui, sans-serif; letter-spacing: .17em; }
+.auth-muted, .auth-hint { color: var(--elys-muted); }
+.auth-hint { font-size: 12px; }
+.auth-intro h1 { margin: 16px 0 12px; font: 600 clamp(32px, 4.7vw, 54px)/1.15 var(--elys-serif); letter-spacing: -.04em; }
+.auth-intro > .auth-muted { max-width: 24em; }
+.auth-illustration {
+  margin-top: 24px;
+  padding: 14px 16px 8px;
+  border: 1px solid var(--elys-line);
+  border-radius: 14px;
+  background: var(--elys-white);
+}
+.auth-illustration > div { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 0; }
+.auth-illustration > div + div { border-top: 1px solid var(--elys-line); }
+.auth-panel {
+  min-width: 0;
+  padding: clamp(17px, 3.1vw, 32px);
+  border: 1px solid var(--elys-line);
+  border-radius: 20px;
+  background: var(--elys-white);
+}
+.auth-panel h2, .tool-library h1, .elys-preview-header h2 {
+  font: 600 clamp(24px, 3.3vw, 33px)/1.2 var(--elys-serif);
+}
+.auth-panel h2, .tool-library header { margin-bottom: 7px; }
+#auth-form { display: grid; gap: 12px; margin-top: 20px; }
+.auth-field { display: grid; gap: 6px; }
+.auth-panel :is(input, #auth-submit) { min-height: 40px; }
+.auth-panel input[aria-invalid="true"] { border-color: var(--elys-error); }
+#auth-status:empty { display: none; }
+.elys-product :is(#auth-submit, #auth-mode, #new-tool, #tool-list button) { border-radius: 8px; }
+#auth-mode { margin-top: 12px; background: var(--elys-white); color: var(--elys-ink); }
+.elys-composer { grid-area: composer; padding-top: 16px; border-top: 1px solid var(--elys-line); }
+.tool-library { grid-area: library; min-width: 0; padding: 9px 2px; }
 .tool-library header { display: flex; align-items: center; justify-content: space-between; gap: .5rem; }
-.tool-library h2 { font-size: 1rem; }
 #library-empty { margin-top: .75rem; color: var(--elys-muted); }
-#tool-list { list-style: none; padding: 0; margin: .75rem 0 0; display: grid;
-  grid-template-columns: minmax(0, 1fr); gap: .4rem; }
-#tool-list button { display: block; width: 100%; text-align: left; overflow: hidden; text-overflow: ellipsis; }
-#tool-list button[aria-current="true"] { background: #dfe6ff; }
+#tool-list { list-style: none; padding: 0; margin: 19px 0 0; display: grid;
+  grid-template-columns: minmax(0, 1fr); gap: 7px; }
+#tool-list button { display: block; width: 100%; text-align: left; overflow: hidden; text-overflow: ellipsis;
+  padding: 10px 12px; background: var(--elys-white); border-color: var(--elys-line); color: var(--elys-ink); }
+#tool-list button[aria-current="true"] { border-color: #506bb7; background: #f0f2fe; }
+.elys-preview { grid-area: preview; min-height: 320px; }
+.elys-preview-header h2 { flex-basis: 100%; margin-top: 6px; overflow-wrap: anywhere; }
+@media (max-width: 650px) {
+  .auth-layout { grid-template-columns: minmax(0, 1fr); gap: 17px; padding: 23px 0 0; }
+  .auth-intro h1 { margin: 8px 0; }
+  .auth-illustration { display: none; }
+  .elys-workspace { grid-template-areas: "library" "preview" "composer"; grid-template-rows: auto; gap: 17px; }
+}
+@media (pointer: coarse) {
+  .auth-panel :is(input, #auth-submit) { min-height: 44px; }
+}

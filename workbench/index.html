@@ -18,27 +18,71 @@
         <button id="logout" type="button">退出登录</button>
       </div>
     </header>
-    <section id="auth" class="auth-panel" hidden aria-labelledby="auth-title">
-      <h1 id="auth-title">登录工作台</h1>
-      <form id="auth-form">
-        <label for="username">用户名</label>
-        <input id="username" autocomplete="username" maxlength="32" required>
-        <label for="password">密码</label>
-        <input id="password" type="password" autocomplete="current-password" maxlength="128" required>
-        <div id="invite-field" hidden>
-          <label for="invite">邀请码</label>
-          <input id="invite" maxlength="128" autocomplete="off">
+    <section id="auth" class="auth-layout" hidden aria-labelledby="auth-intro-title">
+      <div id="auth-intro" class="auth-intro">
+        <p class="auth-eyebrow">ROOT / WORKSPACE</p>
+        <h1 id="auth-intro-title">打开你的工作台</h1>
+        <p class="auth-muted">生成的小工具和使用记录保存在账号里，重新登录就能接着用。</p>
+        <div class="auth-illustration" aria-hidden="true">
+          <p class="auth-eyebrow">工作台示意</p>
+          <div><span>交付跟进板</span><span class="auth-muted">3 项待办</span></div>
+          <div><span>周末预算</span><span class="auth-muted">2 项支出</span></div>
         </div>
-        <p id="auth-status" role="status"></p>
-        <div class="elys-actions">
-          <button id="auth-mode" type="button">凭邀请码注册</button>
+      </div>
+      <div class="auth-panel">
+        <h2 id="auth-title">登录</h2>
+        <p id="auth-description" class="auth-muted">登录后打开你的工具和记录。</p>
+        <form id="auth-form" aria-labelledby="auth-title">
+          <div class="auth-field" id="invite-field" hidden>
+            <label for="invite">邀请码</label>
+            <input id="invite" maxlength="128" autocomplete="off" placeholder="输入评审邀请码" aria-describedby="invite-error">
+            <p id="invite-error" class="elys-error" role="alert" hidden></p>
+          </div>
+          <div class="auth-field">
+            <label for="username">用户名</label>
+            <input id="username" autocomplete="username" maxlength="32" placeholder="输入用户名" aria-describedby="username-hint username-error" required>
+            <p id="username-hint" class="auth-hint" hidden>3–32 位英文字母、数字、连字符（-）或下划线（_）。</p>
+            <p id="username-error" class="elys-error" role="alert" hidden></p>
+          </div>
+          <div class="auth-field">
+            <label for="password">密码</label>
+            <input id="password" type="password" autocomplete="current-password" maxlength="128" placeholder="输入密码" aria-describedby="password-hint password-error" required>
+            <p id="password-hint" class="auth-hint" hidden>12–128 个字符。</p>
+            <p id="password-error" class="elys-error" role="alert" hidden></p>
+          </div>
+          <p id="auth-status" role="status"></p>
           <button id="auth-submit" class="elys-primary" type="submit">登录</button>
-        </div>
-      </form>
+        </form>
+        <button id="auth-mode" type="button">凭邀请码注册</button>
+      </div>
     </section>
     <div id="workspace" class="elys-workspace" hidden>
+      <section class="tool-library" aria-labelledby="library-title">
+        <header>
+          <h1 id="library-title">我的工具</h1>
+          <button id="new-tool" type="button">新建工具</button>
+        </header>
+        <p class="auth-muted">选一个工具，接着上次的记录继续用。</p>
+        <p id="library-empty">成功生成的工具会显示在这里。</p>
+        <ul id="tool-list" aria-label="已保存的工具"></ul>
+      </section>
+      <section class="elys-preview" aria-labelledby="preview-title">
+        <header class="elys-preview-header">
+          <p class="auth-eyebrow" aria-hidden="true">工具预览</p>
+          <span id="preview-status" class="elys-status" role="status">待生成</span>
+          <h2 id="preview-title">工具预览</h2>
+        </header>
+        <div id="empty" class="elys-empty">
+          <h3 id="empty-title">还没有生成工具</h3>
+          <p id="empty-copy">输入需求后，工具会在这里出现。</p>
+        </div>
+        <div id="preview" class="preview-frames"></div>
+        <footer class="elys-preview-footer">
+          隔离预览 <span id="storage-warning" class="elys-error" role="status" hidden></span>
+        </footer>
+      </section>
       <section class="elys-composer" aria-labelledby="composer-title">
-        <h1 id="composer-title">你想做什么工具？</h1>
+        <h2 id="composer-title">你想做什么工具？</h2>
         <p class="elys-intro">描述工具的用途、操作和要保存的数据。</p>
         <form id="composer">
           <div class="elys-requirement">
@@ -59,28 +103,6 @@
           </ol>
         </div>
         <p id="config" class="elys-config" role="status" hidden></p>
-        <section class="tool-library" aria-labelledby="library-title">
-          <header>
-            <h2 id="library-title">我的工具</h2>
-            <button id="new-tool" type="button">新建工具</button>
-          </header>
-          <p id="library-empty">成功生成的工具会显示在这里。</p>
-          <ul id="tool-list"></ul>
-        </section>
-      </section>
-      <section class="elys-preview" aria-labelledby="preview-title">
-        <header class="elys-preview-header">
-          <h2 id="preview-title">工具预览</h2>
-          <span id="preview-status" class="elys-status" role="status">待生成</span>
-        </header>
-        <div id="empty" class="elys-empty">
-          <h3 id="empty-title">还没有生成工具</h3>
-          <p id="empty-copy">输入需求后，工具会在这里出现。</p>
-        </div>
-        <div id="preview" class="preview-frames"></div>
-        <footer class="elys-preview-footer">
-          隔离预览 <span id="storage-warning" class="elys-error" role="status" hidden></span>
-        </footer>
       </section>
     </div>
   </main>

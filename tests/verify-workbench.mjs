@@ -274,6 +274,11 @@ try {
       const tool = await activeTool();
       return tool.id === id && tool;
     });
+    await until(() => evaluate(`(() => {
+      const item = document.querySelector('#tool-list button[data-id="${id}"]');
+      return item.getAttribute('aria-current') === 'true' &&
+        document.querySelector('#preview-title').textContent === item.textContent;
+    })()`));
     return selected;
   }
 
@@ -306,6 +311,55 @@ try {
   await cdp('Emulation.setDeviceMetricsOverride', { width: 1360, height: 980, deviceScaleFactor: 1, mobile: false });
   await cdp('Page.navigate', { url: base });
   await until(() => evaluate('document.documentElement.dataset.ready === "true"'));
+  if (!live) {
+    stage = 'account visual layout and registration feedback';
+    await screenshot('account-login');
+    await click('#auth-mode');
+    assert.deepEqual(await evaluate(
+      'Array.from(document.querySelectorAll("#auth-form input"), input => input.id)'
+    ), ['invite', 'username', 'password']);
+    assert.equal(await evaluate(`['username', 'password'].every(id => {
+      const field = document.getElementById(id);
+      const hint = document.getElementById(id + '-hint');
+      return hint?.checkVisibility() && field.getAttribute('aria-describedby').includes(hint.id);
+    })`), true, '提交前可见且关联到各字段的注册格式提示');
+    await screenshot('account-register');
+    await type('#invite', 'invalid-fixture-invite');
+    await type('#username', 'bad name');
+    await type('#password', 'short');
+    await click('#auth-submit');
+    await until(() => evaluate('document.querySelector("#username").getAttribute("aria-invalid") === "true"'));
+    await evaluate('document.querySelector("#username").value = ""');
+    await type('#username', 'visual-probe');
+    await click('#auth-submit');
+    await until(() => evaluate('document.querySelector("#password").getAttribute("aria-invalid") === "true"'));
+    await evaluate('document.querySelector("#password").value = ""');
+    await type('#password', password);
+    await click('#auth-submit');
+    await until(() => evaluate('document.querySelector("#invite").getAttribute("aria-invalid") === "true"'));
+    assert.equal(await evaluate('document.querySelector("#invite").value'), 'invalid-fixture-invite');
+    assert.equal(await evaluate('document.querySelector("#username").value'), 'visual-probe');
+    assert.equal(await evaluate('document.querySelector("#password").value'), password);
+    await screenshot('account-invalid-invite');
+    await cdp('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
+    await cdp('Emulation.setTouchEmulationEnabled', { enabled: true });
+    assert.deepEqual(await evaluate(`({
+      illustration: document.querySelector('.auth-illustration').checkVisibility(),
+      belowTitle: document.querySelector('#auth-form').getBoundingClientRect().top >
+        document.querySelector('#auth-intro').getBoundingClientRect().bottom,
+      overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
+    })`), { illustration: false, belowTitle: true, overflow: false });
+    assert.equal(await evaluate(`matchMedia('(pointer: coarse)').matches &&
+      [...document.querySelectorAll('#auth-form input, #auth-submit')]
+        .every(element => element.getBoundingClientRect().height >= 44)`), true);
+    await screenshot('account-narrow');
+    await cdp('Emulation.setTouchEmulationEnabled', { enabled: false });
+    await cdp('Emulation.setDeviceMetricsOverride', { width: 1360, height: 980, deviceScaleFactor: 1, mobile: false });
+    await evaluate('document.querySelector("#invite").value = ""');
+    await click('#auth-mode');
+    evidence.tests.push({ id: 'account-visual-feedback', result: 'passed',
+      fieldErrors: ['username', 'password', 'invite'], narrowWidth: 390 });
+  }
   stage = 'register and log in via workbench';
   await login(accountA, true);
   evidence.tests.push({ id: 'TEST-004', result: 'passed', flow: ['invite registration', 'login'] });
@@ -530,10 +584,12 @@ try {
       await cdp('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
       const layout = await evaluate(`({
         singleColumn: document.querySelector('.elys-preview').getBoundingClientRect().top >
-          document.querySelector('.elys-composer').getBoundingClientRect().bottom,
+          document.querySelector('.tool-library').getBoundingClientRect().bottom,
+        composerBelow: document.querySelector('.elys-composer').getBoundingClientRect().top >
+          document.querySelector('.elys-preview').getBoundingClientRect().bottom,
         overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
       })`);
-      assert.deepEqual(layout, { singleColumn: true, overflow: false });
+      assert.deepEqual(layout, { singleColumn: true, composerBelow: true, overflow: false });
       await screenshot('narrow-budget');
       evidence.tests.push({ id: 'narrow-viewport', result: 'passed', width: 390 });
 
@@ -571,6 +627,8 @@ try {
       assert.equal(tool.id, first.id);
       assert.match(await evaluate('document.querySelector("#list").innerText', tool.context), /独立浏览器保存的书/);
       assert.deepEqual((await library()).items.map(item => item.id).sort(), [first.id, second.id].sort());
+      assert.deepEqual((await library()).items.map(item => item.title).sort(),
+        ['读书清单', '搬家预算计算器'].sort());
       tool = await selectHistory(second.id);
       assert.equal(await evaluate('document.querySelector("#total").innerText.trim()', tool.context), '405');
 

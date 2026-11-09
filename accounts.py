@@ -27,10 +27,12 @@ def credentials(data, registering=False):
     name = data.get("username")
     password = data.get("password")
     name = name.strip().lower() if isinstance(name, str) else ""
-    if not USERNAME.fullmatch(name) or not isinstance(password, str) or not (
-        (12 if registering else 1) <= len(password) <= 128
-    ):
-        raise ApiError(400, "invalid_credentials", "用户名须为 3–32 位字母、数字或 - _，注册密码须为 12–128 字符。")
+    if not USERNAME.fullmatch(name):
+        raise ApiError(400, "invalid_username", "请输入 3–32 位英文字母、数字、连字符或下划线。")
+    minimum = 12 if registering else 1
+    if not isinstance(password, str) or not minimum <= len(password) <= 128:
+        message = "请输入 12–128 个字符。" if registering else "请输入你的密码。"
+        raise ApiError(400, "invalid_password", message)
     return name, password
 
 
@@ -83,7 +85,7 @@ class Store:
     def register(self, data):
         name, password = credentials(data, registering=True)
         invite = data.get("invite")
-        error = ApiError(400, "invalid_invite", "邀请码缺失、无效或已用完。")
+        error = ApiError(400, "invalid_invite", "邀请码无效、已过期或已用完，请确认后再试。")
         if not isinstance(invite, str) or not 1 <= len(invite.strip()) <= 128:
             raise error
         code = digest(invite.strip())

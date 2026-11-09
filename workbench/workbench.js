@@ -28,10 +28,14 @@ function render() {
   generate.disabled = !session || !configured || !networkIsolated || phase === 'startup' || pending || !requirement.value.trim();
   requirement.readOnly = pending;
   byId('new-tool').disabled = pending;
+  let currentTitle = '工具预览';
   for (const button of byId('tool-list').querySelectorAll('button')) {
     button.disabled = pending || !networkIsolated;
-    button.setAttribute('aria-current', String(button.dataset.id === active?.id));
+    const selected = button.dataset.id === active?.id;
+    button.setAttribute('aria-current', String(selected));
+    if (selected) currentTitle = button.textContent;
   }
+  byId('preview-title').textContent = currentTitle;
   example.hidden = pending || Boolean(failure);
   byId('error').textContent = failure;
   byId('error').hidden = !failure;
@@ -324,12 +328,36 @@ byId('new-tool').addEventListener('click', () => {
 
 function authMode(next) {
   registering = next;
-  byId('auth-title').textContent = next ? '凭邀请注册' : '登录工作台';
-  byId('auth-submit').textContent = next ? '注册' : '登录';
-  byId('auth-mode').textContent = next ? '已有账号，去登录' : '凭邀请码注册';
+  byId('auth-title').textContent = next ? '邀请注册' : '登录';
+  byId('auth-description').textContent = next ? '凭邀请码创建你的工作台账号。' : '登录后打开你的工具和记录。';
+  byId('auth-submit').textContent = next ? '创建账号' : '登录';
+  byId('auth-mode').textContent = next ? '已有账号？去登录' : '凭邀请码注册';
   byId('invite-field').hidden = !next;
+  byId('invite').required = next;
+  byId('username-hint').hidden = byId('password-hint').hidden = !next;
   byId('password').autocomplete = next ? 'new-password' : 'current-password';
+  clearAuthErrors();
+}
+
+const authFields = ['invite', 'username', 'password'];
+
+function setAuthError(field, message = '') {
+  const input = byId(field);
+  const feedback = byId(field + '-error');
+  if (message) input.setAttribute('aria-invalid', 'true');
+  else input.removeAttribute('aria-invalid');
+  feedback.textContent = message;
+  feedback.hidden = !message;
+}
+
+function clearAuthErrors() {
+  for (const field of authFields) setAuthError(field);
   byId('auth-status').textContent = '';
+  byId('auth-status').classList.remove('elys-error');
+}
+
+for (const field of authFields) {
+  byId(field).addEventListener('input', () => setAuthError(field));
 }
 
 byId('auth-mode').addEventListener('click', () => authMode(!registering));
@@ -339,7 +367,7 @@ byId('auth-form').addEventListener('submit', async event => {
   if (submit.disabled) return;
   const isRegistration = registering;
   submit.disabled = byId('auth-mode').disabled = true;
-  byId('auth-status').textContent = '';
+  clearAuthErrors();
   const password = byId('password');
   try {
     await api(isRegistration ? '/api/register' : '/api/login', post({
@@ -356,7 +384,19 @@ byId('auth-form').addEventListener('submit', async event => {
       location.reload();
     }
   } catch (error) {
-    byId('auth-status').textContent = error.message;
+    const field = {
+      invalid_invite: 'invite',
+      invalid_username: 'username',
+      username_taken: 'username',
+      invalid_password: 'password',
+    }[error.code];
+    if (field) {
+      setAuthError(field, error.message);
+      byId(field).focus();
+    } else {
+      byId('auth-status').classList.add('elys-error');
+      byId('auth-status').textContent = error.message;
+    }
   } finally {
     submit.disabled = byId('auth-mode').disabled = false;
   }
