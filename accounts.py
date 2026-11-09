@@ -306,10 +306,14 @@ class Store:
             user = self.session(db, token, marker)
             row = self.owned_tool(db, user, tool_id)
             self.require_version(version, row["version"])
-            db.execute("INSERT INTO revision_drafts VALUES (?,?,?,?)", (run_id, tool_id, version, note))
-            if model:
-                db.execute("INSERT INTO model_candidates VALUES (?,?)", (run_id, tool_id))
+            self.insert_revision_draft(db, row, run_id, note, model=model)
             return dict(row)
+
+    @staticmethod
+    def insert_revision_draft(db, row, run_id, note, *, model=False):
+        db.execute("INSERT INTO revision_drafts VALUES (?,?,?,?)", (run_id, row["id"], row["version"], note))
+        if model:
+            db.execute("INSERT INTO model_candidates VALUES (?,?)", (run_id, row["id"]))
 
     def resolve_publication(self, token, marker, tool_id, run_id):
         if not isinstance(run_id, str):

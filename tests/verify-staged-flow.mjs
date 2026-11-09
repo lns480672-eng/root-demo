@@ -222,3 +222,74 @@ export async function verifyStagedCalculator(ctx) {
   evidence.tests.push('统一生成任务走两次真实模型调用并发布，100℃→212℉ 和 32℉→0℃ 均正确');
   await screenshot('staged-calculator');
 }
+
+export async function verifyStagedRevision(ctx) {
+  const { cdp, evaluate, until, base, click, type, visible, appRequest, login, generate,
+    activeTool, accountA, root, evidence, screenshot, stored, anotherBrowser } = ctx;
+  const change = '在现有读书清单增加书名关键词筛选。保留已有的添加书名和显示书单功能，'
+    + '沿用 books 存储键及字符串数组格式。新增关键词输入框 id=search，输入时筛选现有书单。';
+  await cdp('Page.navigate', {url:base});
+  await login(accountA, true);
+  if (await visible('#workspace-guide')) await click('#guide-skip');
+  await generate('做一份简单读书清单，新增书名并保存。');
+  const old = await activeTool();
+  const toolPath = '/api/tools/' + old.id;
+  async function add(title, context = old.context) {
+    await evaluate('document.querySelector("#book").value=""', context);
+    await type('#book', title, context);
+    await click('#add', context);
+    await until(async () => JSON.stringify((await stored(old.id)).entries).includes(title));
+  }
+  await add('甲 旧版已有');
+  await click('#revise-tool');
+  await evaluate('window.holdFixturePreview = true; window.releaseFixturePreview = undefined');
+  await generate(change);
+  const task = await until(async () => {
+    const {body} = await appRequest('/api/staged');
+    return body.tasks?.find(item => item.requirement === change);
+  }, 90000);
+  assert.equal(task.baseToolId, old.id);
+  assert.equal(task.baseVersion, 1);
+  await add('乙 生成期间写入');
+  await until(async () => {
+    const current = (await appRequest(taskPath + task.id)).body.task;
+    if (['failed','unsupported'].includes(current.state)) {
+      throw new Error('真模型修订失败 ' + current.stage + ' / ' + current.reason);
+    }
+    return evaluate('typeof window.releaseFixturePreview === "function"');
+  }, 90000);
+  await anotherBrowser('staged-revision-second', async () => {
+    await cdp('Page.navigate', {url:base});
+    await login(accountA);
+    const other = await activeTool();
+    assert.equal(other.id, old.id);
+    await add('丙 候选之后写入', other.context);
+  });
+  assert.equal((await appRequest(toolPath + '/versions')).body.current, 1);
+  await evaluate('window.releaseFixturePreview()');
+  await until(() => evaluate('document.querySelector("#staged-preview")?.checkVisibility() && !document.querySelector("#staged-preview").disabled'));
+  assert.equal((await activeTool()).loader, old.loader);
+  assert.match(JSON.stringify((await stored(old.id)).entries), /丙 候选之后写入/);
+  await click('#staged-preview');
+  const revised = await until(async () => {
+    const current = await activeTool().catch(() => null);
+    return current && current.id === old.id && current.loader !== old.loader && current;
+  }, 15000);
+  assert.equal((await appRequest(toolPath + '/versions')).body.current, 2);
+  const text = () => evaluate('document.querySelector("#list").textContent', revised.context);
+  for (const name of ['甲 旧版已有','乙 生成期间写入','丙 候选之后写入']) assert.ok((await text()).includes(name));
+  await type('#search', '乙', revised.context);
+  assert.match(await text(), /乙 生成期间写入/);
+  assert.doesNotMatch(await text(), /甲|丙/);
+  await cdp('Page.reload');
+  await until(() => evaluate('document.documentElement.dataset.ready === "true"'));
+  assert.equal((await activeTool()).id, old.id);
+  assert.equal((await appRequest(toolPath + '/versions')).body.current, 2);
+  const receipts = (await readFile(join(root, 'runs', 'staged-usage.jsonl'),'utf8')).trim().split('\n').map(JSON.parse);
+  evidence.runs = receipts.filter(item => item.task === task.id);
+  assert.deepEqual(evidence.runs.map(item => item.stage), ['spec','implementation']);
+  assert.ok(evidence.runs.every(item => item.request_id && item.usage?.total_tokens > 0));
+  evidence.tests.push('同一工具走统一修改任务，生成及候选准备后另一会话仍实际写入，过时快照拒绝，复用同一候选重开后新版保留三笔记录');
+  evidence.tests.push('新版关键词筛选实际生效，刷新恢复同工具及版本，重新预览没有重派发模型');
+  await screenshot('staged-revision-restored');
+}

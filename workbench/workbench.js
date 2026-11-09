@@ -1039,6 +1039,7 @@ async function commitStaged(frame, tool) {
   try {
     const saved = await workspaceApi('/api/staged/' + taskId + '/publish', {
       toolId: frame.id, commit, sha256, nonce, entries: JSON.parse(frame.snapshot),
+      runId: tool.runId, revision: tool.runId ? frame.revision : undefined,
     }, publicationTimeout);
     rememberStagedPublication(null);
     return saved;
@@ -1084,6 +1085,7 @@ async function synchronizeStagedPublication() {
       await finishStagedComposition(id);
     } else {
       rememberStagedPublication(null);
+      if (active?.iframe.inert) resumeStorage(active);
       const task = stagedTasks.find(item => item.id === id);
       if (task) requirement.value = task.requirement;
       selectedStagedId = id;
@@ -1168,11 +1170,12 @@ async function openTool(tool, restore = false) {
     preview.append(iframe);
     await ready;
     let savedSnapshot = original;
-    if (tool.runId) {
-      const saved = await publishRevision(frame, old, tool);
-      savedSnapshot = frame.snapshot;
-      frame.revision = saved.revision;
-    } else if (tool.staged && !restore) {
+    if (tool.staged && !restore) {
+      if (tool.runId && old?.id === frame.id) {
+        await pauseStorage(old);
+        await old.saveTail;
+        if (old.saveFailed) throw new Error('旧版还有未保存的修改，请先解决保存问题再试。');
+      }
       savedSnapshot = frame.snapshot;
       const saved = await commitStaged(frame, tool);
       if (saved.id !== frame.id) throw new Error('保存结果与当前候选不匹配。');
@@ -1183,6 +1186,10 @@ async function openTool(tool, restore = false) {
       }
       frame.revision = saved.revision;
       await old?.saveTail;
+    } else if (tool.runId) {
+      const saved = await publishRevision(frame, old, tool);
+      savedSnapshot = frame.snapshot;
+      frame.revision = saved.revision;
     } else if (!restore) {
       savedSnapshot = frame.snapshot;
       const saved = await commitInitial(frame);
@@ -1205,7 +1212,9 @@ async function openTool(tool, restore = false) {
     clearTimeout(deadline);
     if (active !== frame) {
       iframe.remove();
-      if (tool.runId && !pendingPublication && old.iframe.inert && old.iframe.isConnected) resumeStorage(old);
+      if (tool.runId && !pendingPublication && !stagedPendingId && old?.iframe.inert && old.iframe.isConnected) {
+        resumeStorage(old);
+      }
     }
     candidate = null;
   }

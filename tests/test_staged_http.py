@@ -62,8 +62,12 @@ generate.request_completion = ordinary
 runs = Path(sys.argv[1])
 store = Store(runs / "workspace.sqlite3")
 store.register({"username":"staged-operator","password":"test-only-password","invite":store.create_invite()})
+def revise(stage, requirement, prior, key, admit, record, *, base):
+    assert "persisted-marker" not in json.dumps(base, ensure_ascii=False)
+    return stages(stage, requirement, prior, key, admit, record)
+
 workbench.serve("fixture-key", 0, runs, staged_enabled=True, staged_provider=stages,
-                admin_usernames=("staged-operator",))
+                staged_revision_provider=revise, admin_usernames=("staged-operator",))
 """
 
 
@@ -198,3 +202,48 @@ class StagedHTTP(unittest.TestCase):
         final_admin = self.admin_generation()
         self.assertEqual((final_admin["completed"] - initial_admin["completed"],
                           final_admin["failed"] - initial_admin["failed"]), (6, 1))
+
+    def test_revision_uses_latest_data_and_replays_published_version(self):
+        owner = self.account("staged-revision")
+        status, response, _ = self.gen(owner, "计算两个数字")
+        self.assertEqual(status, 202)
+        first = response["task"]["id"]
+        self.wait_task(owner, first, "complete")
+        path = "/api/staged/" + first
+        candidate = self.request(path + "/candidate", {}, owner)[1]
+        initial = {**candidate["staged"], "toolId":candidate["id"], "entries":[["history","persisted-marker"]]}
+        self.assertEqual(self.request(path + "/publish", initial, owner)[0], 200)
+        tool = "/api/tools/" + candidate["id"]
+        data = {"requirement":"计算两个数并展示结果的运算历史", "version":1, "requestId":uuid4().hex}
+        code, result, _ = self.request(tool + "/revise", data, owner)
+        self.assertEqual(code, 202)
+        revision = result["task"]["id"]
+        self.assertEqual(result["task"]["baseToolId"], candidate["id"])
+        self.assertEqual(result["task"]["baseVersion"], 1)
+        second_data = {**data, "requestId":uuid4().hex}
+        competing = self.request(tool + "/revise", second_data, owner)[1]["task"]["id"]
+        self.wait_task(owner, revision, "complete")
+        self.wait_task(owner, competing, "complete")
+        rev_path = "/api/staged/" + revision
+        revised = self.request(rev_path + "/candidate", {}, owner)[1]
+        self.assertEqual((revised["id"], revised["version"], revised["revision"]), (candidate["id"], 2, 1))
+        self.assertEqual(revised["entries"], [["history","persisted-marker"]])
+        self.assertNotEqual(revised["runId"], revised["id"])
+        self.assertEqual(self.request(tool + "/versions", auth=owner)[1]["current"], 1)
+        changes = [["history","persisted-marker"],["new","written while generating"]]
+        self.assertEqual(self.request(tool + "/data", {"entries":changes,"revision":1,"version":1}, owner)[0], 200)
+        payload = {**revised["staged"], "toolId":revised["id"], "runId":revised["runId"],
+                   "entries":revised["entries"], "revision":revised["revision"]}
+        self.assertEqual(self.request(rev_path + "/publish", payload, owner)[1]["code"], "revision_conflict")
+        newest = self.request(rev_path + "/candidate", {}, owner)[1]
+        self.assertEqual(newest["staged"], revised["staged"])
+        self.assertEqual(newest["entries"], changes)
+        payload.update(revision=newest["revision"], entries=newest["entries"])
+        published = self.request(rev_path + "/publish", payload, owner)
+        self.assertEqual(published[0], 200)
+        self.assertEqual((published[1]["id"], published[1]["version"], published[1]["entries"]),
+                         (candidate["id"], 2, changes))
+        self.assertEqual(self.request(rev_path + "/publish", payload, owner)[1], published[1])
+        self.assertEqual(self.request(tool + "/revise", data, owner)[1]["task"]["id"], revision)
+        self.assertEqual(self.request("/api/staged/" + competing + "/candidate", {}, owner)[1]["code"], "version_conflict")
+        self.assertEqual(self.request("/api/trial", auth=owner)[1]["generation"]["used"], 2)

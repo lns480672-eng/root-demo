@@ -33,12 +33,14 @@ def filename(stage):
 
 class StagedJobs:
     def __init__(self, store, budget, runs, blueprint, *, clock=time.time, record=None,
-                 max_attempts=MAX_ATTEMPTS, lease_seconds=LEASE_SECONDS, retain_seconds=RETAIN_SECONDS):
+                 max_attempts=MAX_ATTEMPTS, lease_seconds=LEASE_SECONDS, retain_seconds=RETAIN_SECONDS,
+                 revision=None):
         self.store = store
         self.budget = budget
         self.runs = Path(runs)
         self.root = self.runs / "staged-repositories"
         self.blueprint = blueprint
+        self.revision = revision
         self.clock = clock
         self.record = record
         self.max_attempts = max_attempts
@@ -59,6 +61,10 @@ class StagedJobs:
                     id TEXT PRIMARY KEY, task TEXT NOT NULL REFERENCES staged_jobs(id),
                     stage INTEGER NOT NULL, fence INTEGER NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS staged_revisions (
+                    task TEXT PRIMARY KEY REFERENCES staged_jobs(id), tool_id TEXT NOT NULL REFERENCES tools(id),
+                    base_version INTEGER NOT NULL, source_digest TEXT NOT NULL, context TEXT NOT NULL
+                );
                 CREATE TABLE IF NOT EXISTS staged_candidates (
                     task TEXT PRIMARY KEY REFERENCES staged_jobs(id), tool_id TEXT NOT NULL UNIQUE,
                     commit_id TEXT NOT NULL, digest TEXT NOT NULL, nonce TEXT NOT NULL
@@ -72,6 +78,8 @@ class StagedJobs:
                 db.execute("ALTER TABLE staged_jobs ADD COLUMN failure TEXT")
             if "plan" not in columns:
                 db.execute("ALTER TABLE staged_jobs ADD COLUMN plan TEXT")
+            if "repo_id" not in columns:
+                db.execute("ALTER TABLE staged_jobs ADD COLUMN repo_id TEXT")
 
     @staticmethod
     def unavailable():
@@ -116,8 +124,12 @@ class StagedJobs:
                   "steps":list(steps), "completed":list(steps[:done]), "stage":steps[done] if done < len(steps) else None,
                   "issue":row["issue"], "reason":row["failure"],
                   "resumable":state in ("queued", "failed", "interrupted")}
-        if state == "published" and db is not None:
-            result["toolId"] = self.candidate_record(db, row["id"])["tool_id"]
+        if db is not None:
+            revision = self.revision_record(db, row["id"])
+            if revision:
+                result.update(baseToolId=revision["tool_id"], baseVersion=revision["base_version"])
+            if state == "published":
+                result["toolId"] = revision["tool_id"] if revision else self.candidate_record(db, row["id"])["tool_id"]
         return result
 
     def status(self, token, marker, identifier=None):
@@ -126,7 +138,7 @@ class StagedJobs:
                 return self.view(self.owned(db, token, marker, identifier), db)
             owner = self.store.session(db, token, marker)["id"]
             row = self.latest(db, owner)
-            return self.view(row) if row else None
+            return self.view(row, db) if row else None
 
     def list(self, token, marker):
         with self.store.connection() as db:
@@ -135,9 +147,9 @@ class StagedJobs:
                 SELECT * FROM staged_jobs WHERE owner=? AND state!='published'
                 ORDER BY updated_at DESC, expires DESC LIMIT 30
             """, (owner,)).fetchall()
-            return [self.view(row) for row in rows]
+            return [self.view(row, db) for row in rows]
 
-    def create(self, token, marker, requirement, request_id):
+    def create(self, token, marker, requirement, request_id, *, tool_id=None, version=None):
         if (not isinstance(request_id, str) or not IDENTIFIER.fullmatch(request_id)
                 or not isinstance(requirement, str) or not 0 < len(requirement.strip()) <= 2000):
             raise ApiError(400, "staged_input", "生成请求编号或需求无效。")
@@ -147,17 +159,56 @@ class StagedJobs:
             existing = db.execute("SELECT * FROM staged_jobs WHERE owner=? AND request_id=?",
                                   (owner, request_id)).fetchone()
             if existing is not None:
-                if existing["requirement"] != requirement:
-                    raise ApiError(409, "staged_request_changed", "同一请求编号的需求不能变更。")
+                revision = self.revision_record(db, existing["id"])
+                if (existing["requirement"] != requirement or bool(revision) != bool(tool_id)
+                        or (revision and (revision["tool_id"], revision["base_version"]) != (tool_id, version))):
+                    raise ApiError(409, "staged_request_changed", "同一请求编号的需求或版本不能变更。")
                 return self.view(existing, db)
             identifier = uuid.uuid4().hex
+            repo_id, head = None, ZERO
+            if tool_id:
+                row = self.store.owned_tool(db, {"id":owner}, tool_id)
+                self.store.require_version(version, row["version"])
+                repo_id, head, source_digest, context = self.revision_source(db, row)
             db.execute("""
-                INSERT INTO staged_jobs(id,owner,request_id,requirement,head,expires,updated_at) VALUES (?,?,?,?,?,?,?)
-            """, (identifier, owner, request_id, requirement, ZERO, self.clock() + self.retain_seconds, self.clock()))
-            return self.view(self.row(db, identifier))
+                INSERT INTO staged_jobs(id,owner,request_id,requirement,head,expires,updated_at,repo_id)
+                VALUES (?,?,?,?,?,?,?,?)
+            """, (identifier, owner, request_id, requirement, head,
+                  self.clock() + self.retain_seconds, self.clock(), repo_id))
+            if tool_id:
+                db.execute("INSERT INTO staged_revisions VALUES (?,?,?,?,?)",
+                           (identifier, tool_id, version, source_digest, encoded(context).decode()))
+            return self.view(self.row(db, identifier), db)
+
+    @staticmethod
+    def revision_record(db, identifier):
+        return db.execute("SELECT * FROM staged_revisions WHERE task=?", (identifier,)).fetchone()
+
+    def revision_context(self, identifier):
+        with self.store.connection() as db:
+            row = self.revision_record(db, identifier)
+            return json.loads(row["context"]) if row else None
+
+    def revision_source(self, db, tool):
+        source = db.execute("""
+            SELECT job.*, c.digest FROM staged_jobs job JOIN staged_candidates c ON c.task=job.id
+            WHERE c.tool_id=? AND c.commit_id=job.head AND job.state='published'
+        """, (tool["run_id"],)).fetchone()
+        try:
+            if source:
+                files = self.files(source)
+                require_digest = digest(files["app.html"])
+                if require_digest != source["digest"]:
+                    raise ValueError("revision source mismatch")
+                context = self.revision.prepare(files)
+                return source["repo_id"] or source["id"], source["head"], require_digest, context
+            html = (self.runs / tool["run_id"] / "app.html").read_bytes()
+            return None, ZERO, digest(html), self.revision.prepare({}, html)
+        except (ApiError, ValueError, OSError, subprocess.SubprocessError):
+            raise ApiError(422, "staged_revision_source", "这个旧版本暂时无法安全地分阶段修改，原工具与记录仍可用。") from None
 
     def repo(self, row):
-        return self.root / (row["id"] + ".git")
+        return self.root / ((row["repo_id"] or row["id"]) + ".git")
 
     def git(self, row, *arguments, content=None, check=True):
         env = {"PATH":os.environ.get("PATH", os.defpath), "GIT_CONFIG_GLOBAL":os.devnull,
@@ -194,6 +245,11 @@ class StagedJobs:
                    (next_stage, oid, "complete" if complete else "running",
                     0 if complete else self.clock() + self.lease_seconds, self.clock(), json.dumps(steps), row["id"]))
 
+    def check_revision(self, db, row, stage, content):
+        revision = self.revision_record(db, row["id"])
+        if revision:
+            self.revision.check(stage, content, json.loads(revision["context"]))
+
     def recover(self, db, row):
         tip = self.tip(row)
         if tip in (ZERO, row["head"]):
@@ -203,6 +259,7 @@ class StagedJobs:
         name = filename(stage)
         content = self.read(row, tip, name)
         self.blueprint.validate(stage, content, prior)
+        self.check_revision(db, row, stage, content)
         parent = [] if row["head"] == ZERO else [row["head"]]
         parents = self.git(row, "rev-list", "--parents", "-n", "1", tip).decode().split()[1:]
         actual = json.loads(self.read(row, tip, "manifest.json"))
@@ -224,9 +281,11 @@ class StagedJobs:
                 row = self.row(db, identifier)
                 if row["state"] == "complete":
                     return None
-            else:
+            elif row["head"] == ZERO:
                 self.repo(row).mkdir(parents=True, mode=0o700, exist_ok=True)
                 self.git(row, "init", "--bare", "--object-format=sha1", "--template=")
+            else:
+                self.git(row, "cat-file", "-e", row["head"] + "^{commit}")
             fence = row["fence"] + 1
             db.execute("UPDATE staged_jobs SET state='running',fence=?,lease_until=?,issue=NULL,failure=NULL,updated_at=? WHERE id=?",
                        (fence, self.clock() + self.lease_seconds, self.clock(), identifier))
@@ -253,6 +312,7 @@ class StagedJobs:
         self.blueprint.validate(stage, content, prior)
         with self.store.connection(write=True) as db:
             row = self.worker(db, identifier, fence, index)
+            self.check_revision(db, row, stage, content)
             files = {**prior, filename(stage):content,
                      "manifest.json":encoded(self.manifest(row, stage, prior, content))}
             entries = []
@@ -336,6 +396,12 @@ class StagedJobs:
                 raise ApiError(409, "staged_candidate_changed", "候选已变化，请重新准备预览。")
             result = {"id":candidate["tool_id"], "html":html.decode(), "entries":[], "revision":0, "version":1,
                       "staged":{**identity, "nonce":candidate["nonce"]}}
+            revision = self.revision_record(db, identifier)
+            if revision:
+                current = self.store.owned_tool(db, {"id":row["owner"]}, revision["tool_id"])
+                self.store.require_version(revision["base_version"], current["version"])
+                result.update(id=current["id"], runId=candidate["tool_id"], entries=json.loads(current["entries"]),
+                              revision=current["revision"], version=current["version"] + 1)
             if self.permits_backup(row):
                 result["stagedBackup"] = True
             return result
@@ -361,8 +427,11 @@ class StagedJobs:
         with self.store.connection(write=True) as db:
             row = self.owned(db, token, marker, identifier)
             candidate = self.candidate_record(db, identifier)
+            revision = self.revision_record(db, identifier)
+            result_id = revision["tool_id"] if revision else candidate["tool_id"] if candidate else None
             if (candidate is None or candidate["commit_id"] != row["head"]
-                    or candidate["tool_id"] != data.get("toolId") or candidate["nonce"] != data.get("nonce")
+                    or result_id != data.get("toolId") or (revision and candidate["tool_id"] != data.get("runId"))
+                    or candidate["nonce"] != data.get("nonce")
                     or candidate["digest"] != identity["sha256"] or identity["sha256"] != data.get("sha256")
                     or identity["commit"] != data.get("commit")):
                 raise ApiError(409, "staged_candidate_changed", "候选和预览快照不匹配，请重新准备预览。")
@@ -372,8 +441,11 @@ class StagedJobs:
             owner = {"id":row["owner"]}
             tool_id = candidate["tool_id"]
             if state == "complete":
-                spec = json.loads(self.read(row, row["head"], "spec.json"))
-                title = " ".join(spec["title"].split())[:48]
+                if revision:
+                    current = self.store.owned_tool(db, owner, result_id)
+                    self.store.require_version(revision["base_version"], current["version"])
+                    if type(data.get("revision")) is not int or data["revision"] != current["revision"]:
+                        raise ApiError(409, "revision_conflict", "已有更新的数据，请用最新记录重新准备预览。")
                 run = self.runs / tool_id
                 path = run / "app.pending"
                 try:
@@ -381,8 +453,14 @@ class StagedJobs:
                     path.replace(run / "app.html")
                 except OSError:
                     raise ApiError(503, "staged_save_failed", "候选尚未保存，可重新检查预览后继续。") from None
-                self.store.insert_draft(db, row["owner"], tool_id, title, pack_entries([]), model=True)
-                tool = self.store.owned_tool(db, owner, tool_id, published=False)
-                self.store.commit_initial(db, tool, data.get("entries"), self.budget.record_generation_success)
+                if revision:
+                    self.store.insert_revision_draft(db, current, tool_id, row["requirement"], model=True)
+                    self.store.publish_revision(db, current, data, self.budget.record_generation_success)
+                else:
+                    spec = json.loads(self.read(row, row["head"], "spec.json"))
+                    title = " ".join(spec["title"].split())[:48]
+                    self.store.insert_draft(db, row["owner"], tool_id, title, pack_entries([]), model=True)
+                    tool = self.store.owned_tool(db, owner, tool_id, published=False)
+                    self.store.commit_initial(db, tool, data.get("entries"), self.budget.record_generation_success)
                 db.execute("UPDATE staged_jobs SET state='published' WHERE id=?", (identifier,))
-            return self.store.owned_tool(db, owner, tool_id)
+            return self.store.owned_tool(db, owner, result_id)

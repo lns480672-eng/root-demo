@@ -7,6 +7,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from accounts import ApiError, Store
 import staged_blueprint
+import staged_revision
 import workbench
 
 stages = ["待投递", "已投递", "简历筛选", "面试中", "已发offer", "已结束"]
@@ -65,4 +66,4 @@ if not key:
 runs = Path(sys.argv[3])
 Store(runs / "workspace.sqlite3").create_invite("fixture-invite", uses=2)
 workbench.serve(key, int(sys.argv[2]), runs, staged_enabled=True,
-                staged_provider=staged)
+                staged_provider=staged, staged_revision_provider=staged_revision.provide)

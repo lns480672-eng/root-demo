@@ -1,6 +1,6 @@
 // TEST-001 / TEST-002 / TEST-004 / TEST-005 / TEST-006. Default uses a deterministic provider fixture. --live uses DeepSeek.
 import assert from 'node:assert/strict';
-import { verifyStagedFlow, verifyStagedCalculator } from './verify-staged-flow.mjs';
+import { verifyStagedFlow, verifyStagedCalculator, verifyStagedRevision } from './verify-staged-flow.mjs';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { createServer } from 'node:http';
@@ -395,10 +395,24 @@ try {
   if (stagedFlow) {
     evidence.mode = process.env.ROOT_STAGED_LIVE === '1' ? 'deepseek-staged' : 'fixture-staged';
     const calculator = process.env.ROOT_STAGED_CALCULATOR === '1';
-    stage = calculator ? 'staged workbench calculator' : 'staged workbench board flow';
-    const verify = calculator ? verifyStagedCalculator : verifyStagedFlow;
+    const revision = process.env.ROOT_STAGED_REVISION === '1';
+    stage = revision ? 'staged workbench revision' : calculator ? 'staged workbench calculator' : 'staged workbench board flow';
+    const verify = revision ? verifyStagedRevision : calculator ? verifyStagedCalculator : verifyStagedFlow;
+    const anotherBrowser = async (name, action) => {
+      const original = socket;
+      socket = await connectBrowser(join(root, name));
+      try {
+        await cdp('Target.setAutoAttach', {autoAttach:true, waitForDebuggerOnStart:false, flatten:true});
+        await cdp('Page.enable');
+        await cdp('Runtime.enable');
+        return await action();
+      } finally {
+        socket = original;
+      }
+    };
     await verify({ cdp, evaluate, until, base, click, pointerClick, type, visible, appRequest, login,
-      generate, activeTool, accountA, root, probeUrl, probeRequests, probeControls, library, stored, evidence, screenshot });
+      generate, activeTool, accountA, root, probeUrl, probeRequests, probeControls, library, stored,
+      evidence, screenshot, anotherBrowser });
   } else {
   await cdp('Emulation.setDeviceMetricsOverride', { width: 1360, height: 980, deviceScaleFactor: 1, mobile: false });
   await cdp('Page.navigate', { url: base });
