@@ -31,13 +31,15 @@ script 是普通 JavaScript 源码，勿含 script 标签、HTML 注释或 Markd
 宿主已创建 #root-program 容器并提供标题与基础样式，markup 不要重复创建容器。正文中的小于号用 &lt;。优先实现可操作功能。"""
 TYPES = {"text", "date", "integer", "choice"}
 RULES = {
-    "spec": """本阶段为任何需求选择一个计划，并输出相应 JSON。选择依据是核心功能和数据结构，不能只凭请求长度。
-记录为核心且需录入、状态流转、筛选、汇总或备份时选结构化台账：
-{"title":"工具名","fields":[{"id":"英文小写 snake_case","label":"中文字段名","type":"text|date|integer|choice","required":true,"options":[]}]}。
-按需求保留 choice 选项原文和顺序，至少两个选项；其他字段的 options 为空；integer 是非负整数。链接用 text 保存。
-计算器、换算器、计时器等以本地计算或交互为主的工具选一个程序实现阶段：
-{"kind":"program","title":"工具名","goal":"一段明确可验证的目标"}。
-本阶段只产出选定的规格，禁止输出实现。无需为短任务跳过阶段。""",
+    "spec": """阅读需求，选择能完整实现核心目标的计划。仅输出 JSON 规格。
+默认使用程序计划 {"kind":"program","title":"工具名","goal":"简明、可验证的目标"}。
+只有当用户明确需要持久保存一组彼此独立的记录，并围绕该记录集合操作时，才用记录计划。
+例如：摄氏华氏换算只显示一个计算结果，温度和单位是控件，不是持久记录，必须使用 program。
+例如：求职投递看板需要长期保存多个岗位卡片，并分栏、跨栏移动或备份，使用记录计划。
+记录计划的形状是 {"title":"工具名","fields":[{"id":"英文小写 snake_case","label":"中文字段名","type":"text|date|integer|choice","required":true,"options":[]}]}。
+保留 choice 选项原文和顺序，至少两个选项；其他类型的 options 为空；integer 是非负整数；链接用 text。
+用户明确需要联网或跨账号协作等宿主无法实现的核心能力时，才返回 {"unsupported":true}。
+本阶段只产出规格，无需写实现。""",
     "entry": """{"form":["field_id"],"columns":["field_id"],"sort":{"field":"field_id","direction":"desc"},
 "edit_choice":{"field":"field_id","initial":"选项原文"}}。
 form 按录入顺序列出字段，默认状态由 edit_choice 设置，不要把该字段列入 form。columns 为实际显示的完整明细。
@@ -322,8 +324,10 @@ def provide(stage, requirement, previous, key, admit, record=None):
             raise ApiError(400, "invalid_staged_requirement", "请输入有效需求并移除凭据。")
         if stage == "implementation":
             system, tokens, output_limit = IMPLEMENTATION_SYSTEM, 3200, staged_program.MAX_ARTIFACT_BYTES
+        elif stage == "spec":
+            system, tokens, output_limit = RULES["spec"], 1200, MAX_ARTIFACT_BYTES
         else:
-            system, tokens, output_limit = SYSTEM + "\n" + RULES[stage], 1200 if stage == "spec" else 550, MAX_ARTIFACT_BYTES
+            system, tokens, output_limit = SYSTEM + "\n" + RULES[stage], 550, MAX_ARTIFACT_BYTES
         body = {
             "model": MODEL,
             "messages": [
