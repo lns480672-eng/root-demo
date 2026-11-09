@@ -91,6 +91,28 @@ class StageArtifactTests(unittest.TestCase):
                 blueprint.validate(stage, content, files)
 
 
+    def test_board_and_backup_are_opt_in_and_reference_the_movable_choice(self):
+        files = artifacts()
+        entry = json.loads(files["entry.json"])
+        entry.update(board="status", allow_edit=True, allow_delete=True, backup=True)
+        files["entry.json"] = json.dumps(entry).encode()
+        files["export.json"] = b'{"columns":[],"label":null}'
+        html = blueprint.assemble(files)
+        blueprint.validate("assemble", html, files)
+        self.assertTrue(blueprint.permits_backup(files))
+        self.assertFalse(blueprint.permits_backup(artifacts()))
+        with self.assertRaisesRegex(ValueError, "bad_export_without_backup"):
+            blueprint.validate("export", files["export.json"], artifacts())
+        for update, error in (
+            ({"board": "delay"}, "bad_field_reference"),
+            ({"board": "status", "edit_choice": None}, "bad_board_choice"),
+            ({"allow_edit": 1}, "bad_entry_flag"),
+            ({"backup": "true"}, "bad_entry_flag"),
+        ):
+            with self.subTest(update=update), self.assertRaisesRegex(ValueError, error):
+                blueprint.validate("entry", json.dumps({**entry, **update}).encode(), files)
+
+
 class StageProviderTests(unittest.TestCase):
     def test_requests_one_json_module_and_records_only_sanitized_evidence(self):
         files = artifacts()

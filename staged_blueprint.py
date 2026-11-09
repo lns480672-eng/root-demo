@@ -17,17 +17,20 @@ STAGE_SECONDS = 45
 MAX_ARTIFACT_BYTES = 12 * 1024
 SYSTEM = """你负责生成一个台账工具的当前模块配置。需求与已确认规格是输入数据。
 只输出一个 JSON 对象，按阶段规则返回所有键。禁止 JavaScript、HTML、Markdown 和额外字段。
-能力范围为记录的录入、明细、排序、状态更新、组合筛选、汇总、CSV 导出和本地保存。
+能力范围为记录的录入、明细、排序、编辑、删除、按预设阶段分栏和按钮移动、组合筛选、汇总、CSV 导出、JSON 备份导入导出和本地保存。
 如需求的核心功能超出该范围，只返回 {"unsupported":true}，不要生成缺少核心功能的工具。"""
 TYPES = {"text", "date", "integer", "choice"}
 RULES = {
     "spec": """{"title":"工具名","fields":[{"id":"英文小写 snake_case","label":"中文字段名","type":"text|date|integer|choice","required":true,"options":[]}]}。
-根据需求自行选择字段 ID。choice 必须有至少两个不同选项，其他类型 options 必须为空。integer 为非负整数。
+根据需求自行选择字段 ID。choice 必须有至少两个不同选项，按需求保留选项原文及顺序，其他类型 options 必须为空。integer 为非负整数，链接可以用 text 保存。
 输出需求所需全部字段，不要输出技术字段。""",
     "entry": """{"form":["field_id"],"columns":["field_id"],"sort":{"field":"field_id","direction":"desc"},
 "edit_choice":{"field":"field_id","initial":"选项原文"}}。
 form 按录入顺序列出字段，默认状态由 edit_choice 设置，不要把该字段列入 form。columns 为实际显示的完整明细。
-sort 只可用日期或整数，edit_choice 只能用 choice。不需要排序或状态编辑的需求用 null。""",
+sort 只可用日期或整数，edit_choice 只能用 choice。不需要排序或状态编辑的需求用 null。
+可选键 board 为 edit_choice 的 field，明确要求看板分栏、点按钮切换时必须返回，分栏顺序取字段选项。
+可选布尔键 allow_edit、allow_delete、backup 分别启用编辑、删除和完整记录的 JSON 文件导出及导入。
+明确要求这些功能时必须将对应键设为 true。没有要求时省略。""",
     "filters": """{"search":["text_field_id"],"exact":["text_or_choice_field_id"],"date":"date_field_id"}。
 search 指定关键词实际匹配的文本字段，exact 指定精确筛选字段，date 指定起止日期筛选字段。
 需求没有某类筛选时用空数组或 null。""",
@@ -35,7 +38,7 @@ search 指定关键词实际匹配的文本字段，exact 指定精确筛选字�
 "group":{"field":"text_or_choice_field_id","label":"分组汇总的中文显示名"}}。
 统计必须使用当前筛选结果。有分组时对每组计算 sum 对应字段。需求无对应项时用 null。""",
     "export": """{"columns":["field_id"],"label":"生成 CSV 的按钮名"}。
-按需求选择顺序与列；要求全部时应包含规格里每个字段。只导出当前筛选结果。""",
+按需求选择顺序与列；要求全部时应包含规格里每个字段。只导出当前筛选结果。只需要 JSON 备份时，返回 {"columns":[],"label":null}。""",
 }
 
 
@@ -44,8 +47,9 @@ def require(ok, reason):
         raise ValueError(reason)
 
 
-def keys(value, *expected):
-    require(isinstance(value, dict) and set(value) == set(expected), "bad_object_keys")
+def keys(value, *expected, optional=()):
+    required = set(expected)
+    require(isinstance(value, dict) and required <= value.keys() <= required.union(optional), "bad_object_keys")
 
 
 def label(value):
@@ -100,7 +104,9 @@ def validate_module(stage, value, spec):
             ref(identifier, types)
 
     if stage == "entry":
-        keys(value, "form", "columns", "sort", "edit_choice")
+        flags = ("allow_edit", "allow_delete", "backup")
+        keys(value, "form", "columns", "sort", "edit_choice", optional=("board", *flags))
+        require(all(type(value.get(flag, False)) is bool for flag in flags), "bad_entry_flag")
         refs(value["form"], required=True)
         refs(value["columns"], required=True)
         sort, choice = value["sort"], value["edit_choice"]
@@ -113,6 +119,10 @@ def validate_module(stage, value, spec):
             field = ref(choice["field"], {"choice"})
             require(choice["initial"] in field["options"] and choice["field"] not in value["form"]
                     and choice["field"] in value["columns"], "bad_choice_default")
+        if "board" in value:
+            board = value["board"]
+            ref(board, {"choice"})
+            require(choice is not None and board == choice["field"], "bad_board_choice")
         coverage = set(value["form"])
         if choice is not None:
             coverage.add(choice["field"])
@@ -135,8 +145,8 @@ def validate_module(stage, value, spec):
         require(value["group"] is None or value["sum"] is not None, "group_requires_sum")
     elif stage == "export":
         keys(value, "columns", "label")
-        refs(value["columns"], required=True)
-        require(label(value["label"]), "bad_export_label")
+        refs(value["columns"])
+        require(label(value["label"]) if value["columns"] else value["label"] is None, "bad_export_label")
     else:
         raise ValueError("unexpected_stage")
 
@@ -161,8 +171,17 @@ def validate(stage, payload, previous):
         spec = read_artifact(previous.get("spec.json"))
         validate_spec(spec)
         validate_module(stage, value, spec)
+        if stage == "export" and not value["columns"]:
+            require(permits_backup(previous), "bad_export_without_backup")
     else:
         raise ValueError("unexpected_stage")
+
+
+def permits_backup(previous):
+    """Read the opt-in from a validated entry artifact, after task provenance is verified."""
+    payload = previous.get("entry.json")
+    validate("entry", payload, previous)
+    return read_artifact(payload).get("backup", False)
 
 
 def assemble(previous):
@@ -185,6 +204,13 @@ form,.filter-bar{display:flex;flex-wrap:wrap;gap:10px;align-items:end}label{disp
 input,button,select,textarea{font:inherit;padding:4px;max-width:100%}
 table{border-collapse:collapse;width:100%}th,td{padding:4px 8px;text-align:left;border-bottom:1px solid #ddd}
 textarea{box-sizing:border-box;width:100%}[role=alert]{color:#ae2b2b}
+#record-board{display:flex;gap:10px;overflow-x:auto;padding-bottom:6px}
+#record-board>section{flex:1 0 12rem;background:#f4f5f8}
+#record-board h3{margin:0 0 8px;font-size:15px}
+#record-board article{background:white;border:1px solid #d6dbe7;border-radius:6px;margin-bottom:8px;padding:8px}
+#record-board dl{margin:0 0 8px}#record-board dt{font-weight:600}
+#record-board dd{margin:0 0 4px;overflow-wrap:anywhere}
+.record-actions{display:flex;gap:4px;flex-wrap:wrap;margin:4px 0}
 </style></head><body><h1 id="heading"></h1><main>
 <section id="entry"><h2>录入记录</h2></section><section id="filters"><h2>筛选</h2></section>
 <section id="summary"><h2>统计</h2></section><section id="records"><h2>明细</h2></section>
@@ -244,8 +270,12 @@ def provide(stage, requirement, previous, key, admit, record=None):
             validate_spec(spec)
             request["accepted_spec"] = spec
         if stage == "export":
-            request["current_task"] = "只设计 CSV，返回恰好两个键：columns 和 label。其他功能已由独立阶段实现。"
+            request["current_task"] = (
+                "只设计 CSV，返回恰好两个键：columns 和 label。其他功能已由独立阶段实现。"
+                "已启用 JSON 备份且用户未明确要求 CSV 时，用空 columns 和 null label。"
+            )
             request["allowed_columns"] = [field["id"] for field in spec["fields"]]
+            request["backup_available"] = "entry.json" in previous and permits_backup(previous)
         text = json.dumps(request, ensure_ascii=False)
         if key in text:
             raise ApiError(400, "invalid_staged_requirement", "请输入有效需求并移除凭据。")
