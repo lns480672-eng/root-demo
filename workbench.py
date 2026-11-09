@@ -15,8 +15,10 @@ from pathlib import Path
 
 import generate
 import assistant_fixture
+import assistant_model
 import table_import
-from accounts import ApiError, SESSION_SECONDS, Store
+from accounts import ApiError, SESSION_SECONDS, Store, TABLE_STORAGE_BYTES
+from trial_budget import TrialBudget
 
 ROOT = Path(__file__).resolve().parent
 STATIC = {
@@ -31,13 +33,17 @@ STATIC = {
     "/workbench.js": ("workbench.js", "text/javascript; charset=utf-8"),
 }
 TOOL_PATH = re.compile(r"/api/tools/(run-[a-z0-9_]{8})")
-TOOL_ACTION = re.compile(r"/api/tools/(run-[a-z0-9_]{8})/(commit|open|data|publish|revise|resolve-publish)")
+TOOL_ACTION = re.compile(r"/api/tools/(run-[a-z0-9_]{8})/(commit|open|data|publish|revise|resolve-publish|resolve-commit)")
 TOOL_VERSIONS = re.compile(r"/api/tools/(run-[a-z0-9_]{8})/versions")
 DRAFTS = "/api/requirement-drafts"
-DRAFT_PATH = re.compile(DRAFTS + r"/([0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})")
+UUID = r"[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}"
+DRAFT_PATH = re.compile(DRAFTS + "/(" + UUID + ")")
 ANALYZE = "/api/assistant/analyze"
+TRIAL = "/api/trial"
+TRIAL_ADMIN = "/api/trial/admin"
 TABLE_INSPECT = "/api/table/inspect"
 TABLE_GENERATE = "/api/table/generate"
+TABLE_CONFIG = "/api/table/config"
 RELEASES = (
     ("0.3", "2026-11-09", None, "支持继续修改已有工具、查看工具版本历史，并调整窄屏生成流程。"),
     ("0.2", "2026-11-09", "v4-44e3da0cae1b", "加入邀请账号、个人工具列表和跨浏览器数据恢复。"),
@@ -86,7 +92,8 @@ class ToolTitle(HTMLParser):
 
 def build_id(assets):
     digest = hashlib.sha256()
-    for name in ("generate.py", "workbench.py", "accounts.py", "assistant_fixture.py", "table_import.py"):
+    for name in ("generate.py", "workbench.py", "accounts.py", "assistant_fixture.py", "assistant_model.py",
+                 "table_import.py", "trial_budget.py"):
         digest.update(name.encode() + b"\0" + (ROOT / name).read_bytes() + b"\0")
     for path, body in assets.items():
         digest.update(path.encode() + b"\0" + body + b"\0")
@@ -110,9 +117,13 @@ def session_cookie(token, max_age=SESSION_SECONDS):
     return f"root_session={token}; HttpOnly; SameSite=Strict; Path=/; Max-Age={max_age}"
 
 
-def serve(key, port, runs=generate.RUNS):
-    generation_lock = threading.Lock()
+def serve(key, port, runs=generate.RUNS, *, generation_limits=(5, 30), analysis_limits=(6, 60),
+          admin_usernames=(), analysis_provider=assistant_model.analyze, table_limits=None):
+    model_lock = threading.Lock()
     store = Store(runs / "workspace.sqlite3")
+    budget = TrialBudget(store, runs, generation_limits=generation_limits, analysis_limits=analysis_limits,
+                         admin_usernames=admin_usernames)
+    table_limits = table_limits or table_import.TableLimits()
     assets = {url: (ROOT / "workbench" / name).read_bytes()
               for url, (name, _) in STATIC.items()}
     build = build_id(assets)
@@ -134,7 +145,7 @@ def serve(key, port, runs=generate.RUNS):
                 self.send_header("Content-Security-Policy", policy)
                 paths = (*STATIC, "/api/config", "/api/releases", "/api/session", "/api/register", "/api/login", "/api/logout",
                          "/api/generate", "/api/tools", "/api/tools/*", DRAFTS, DRAFTS + "/*", ANALYZE,
-                         TABLE_INSPECT, TABLE_GENERATE)
+                         TABLE_INSPECT, TABLE_GENERATE, TABLE_CONFIG, TRIAL, TRIAL_ADMIN)
                 allowed = " ".join(f'"http://{host}{path}"' for path in paths)
                 self.send_header("Connection-Allowlist", f"({allowed}); webrtc=block")
             if cookie is not None:
@@ -208,6 +219,16 @@ def serve(key, port, runs=generate.RUNS):
                 self.send_json(200, store.list_requirement_drafts(self.cookie_token(), self.marker()))
             elif match := DRAFT_PATH.fullmatch(self.path):
                 self.send_json(200, store.requirement_draft(self.cookie_token(), self.marker(), match[1]))
+            elif self.path == TRIAL:
+                balance = budget.balance(self.cookie_token(), self.marker())
+                self.send_json(200, {**balance, "analysisMode": (
+                    "fixture" if analysis_provider is assistant_fixture.provider else "deepseek")})
+            elif self.path == TRIAL_ADMIN:
+                self.send_json(200, budget.admin_state(self.cookie_token(), self.marker()))
+            elif self.path == TABLE_CONFIG:
+                with store.connection() as db:
+                    store.session(db, self.cookie_token(), self.marker())
+                self.send_json(200, {"bytes": table_limits.bytes, "rows": table_limits.rows, "columns": table_limits.columns})
             elif match := TOOL_VERSIONS.fullmatch(self.path):
                 history = store.versions(self.cookie_token(), self.marker(), match[1])
                 initial = history["items"][-1]
@@ -229,6 +250,7 @@ def serve(key, port, runs=generate.RUNS):
                 "id": row["id"], "html": self.read_tool_html(draft or row["run_id"]),
                 "entries": json.loads(row["entries"]), "revision": row["revision"],
                 "version": row["version"] + bool(draft), **({"runId": draft} if draft else {}),
+                **({"storageLimit": TABLE_STORAGE_BYTES} if row["table_tool"] else {}),
                 **({"applied": applied} if applied is not None else {}),
             })
 
@@ -249,8 +271,12 @@ def serve(key, port, runs=generate.RUNS):
                 return
             try:
                 size = int(self.headers.get("Content-Length", "0"))
-                large_request = TOOL_ACTION.fullmatch(self.path) or self.path in (TABLE_INSPECT, TABLE_GENERATE)
-                cap = 2 * 1024 * 1024 if large_request else 16000
+                if self.path == TABLE_INSPECT:
+                    cap = 6 * table_limits.bytes + 65536
+                elif self.path == TABLE_GENERATE or TOOL_ACTION.fullmatch(self.path):
+                    cap = 2 * TABLE_STORAGE_BYTES
+                else:
+                    cap = 16000
                 if not 0 < size <= cap:
                     raise ValueError
                 self.connection.settimeout(10)
@@ -289,27 +315,26 @@ def serve(key, port, runs=generate.RUNS):
                 self.send_json(200, store.requirement_draft(token, self.marker(), match[1], data))
                 return
             if self.path == ANALYZE:
-                with store.connection() as db:
-                    store.session(db, token, self.marker())
-                idea = data.get("idea")
-                if key and isinstance(idea, str) and key in idea:
-                    raise ApiError(400, "invalid_analysis", "请移除凭据后再分析。")
-                self.send_json(200, assistant_fixture.analyze(data))
+                self.handle_analysis(data, token)
+                return
+            if self.path == TRIAL_ADMIN:
+                self.send_json(200, budget.admin_action(token, self.marker(), data))
                 return
             if self.path in (TABLE_INSPECT, TABLE_GENERATE):
                 with store.connection() as db:
                     store.session(db, token, self.marker())
                 if self.path == TABLE_INSPECT:
-                    self.send_json(200, table_import.inspect_table(data))
+                    self.send_json(200, table_import.inspect_table(data, table_limits))
                 else:
-                    title, html, entries = table_import.build_table_tool(data.get("table"))
+                    title, html, entries = table_import.build_table_tool(data.get("table"), table_limits)
                     try:
                         run = Path(tempfile.mkdtemp(prefix="run-", dir=runs))
                         (run / "app.html").write_text(html, encoding="utf-8")
                     except OSError:
                         raise ApiError(503, "save_failed", "本机无法保存表格工具，请重试。") from None
-                    store.draft(token, self.marker(), run.name, title, entries)
-                    self.send_json(200, {"id": run.name, "html": html, "entries": entries, "revision": 0, "version": 1})
+                    store.draft(token, self.marker(), run.name, title, entries, table=True)
+                    self.send_json(200, {"id": run.name, "html": html, "entries": entries, "revision": 0, "version": 1,
+                                         "storageLimit": TABLE_STORAGE_BYTES})
                 return
             if match := TOOL_ACTION.fullmatch(self.path):
                 if match[2] == "revise":
@@ -317,12 +342,45 @@ def serve(key, port, runs=generate.RUNS):
                 elif match[2] == "resolve-publish":
                     row, applied = store.resolve_publication(token, self.marker(), match[1], data.get("runId"))
                     self.send_tool(row, applied=applied)
+                elif match[2] == "resolve-commit":
+                    row = store.resolve_initial_publication(token, self.marker(), match[1])
+                    if row is None:
+                        self.send_json(200, {"applied": False})
+                    else:
+                        self.send_tool(row, applied=True)
                 else:
-                    self.send_json(200, store.change_tool(token, self.marker(), match[1], match[2], data))
+                    self.send_json(200, store.change_tool(token, self.marker(), match[1], match[2], data,
+                                                         record_model_success=budget.record_generation_success))
                 return
             if self.path != "/api/generate":
                 raise ApiError(404, "not_found", "页面不存在。")
             self.handle_generation(data)
+
+        def handle_analysis(self, data, token):
+            marker = self.marker()
+            with store.connection() as db:
+                store.session(db, token, marker)
+            request_id = data.get("requestId")
+            if not isinstance(request_id, str) or not re.fullmatch(UUID, request_id):
+                raise ApiError(400, "invalid_analysis", "分析请求标识无效，请重试。")
+            if not model_lock.acquire(blocking=False):
+                raise ApiError(409, "busy", "另一个模型请求正在处理，请稍后重试。")
+
+            def receipt(evidence):
+                try:
+                    with (runs / "analysis-usage.jsonl").open("a", encoding="utf-8") as output:
+                        output.write(json.dumps({"request": request_id, **evidence}, ensure_ascii=False) + "\n")
+                except OSError:
+                    pass
+
+            try:
+                result = analysis_provider(data, key, lambda: budget.reserve(
+                    token, marker, "analysis", request_id=request_id), record=receipt)
+                with store.connection() as db:
+                    store.session(db, token, marker)
+            finally:
+                model_lock.release()
+            self.send_json(200, result)
 
         def handle_generation(self, data, tool_id=None):
             token, marker = self.cookie_token(), self.marker()
@@ -349,19 +407,20 @@ def serve(key, port, runs=generate.RUNS):
                     f"修改要求：{requirement}\n存储键名：{json.dumps(keys, ensure_ascii=False)}\n"
                     f"现有 HTML：\n{previous}"
                 )
-            if not generation_lock.acquire(blocking=False):
+            if not model_lock.acquire(blocking=False):
                 self.error(409, "busy", "另一个生成请求正在处理，请稍后重试。")
                 return
             try:
-                run, evidence = generate.run_generation(requirement, key, runs, model_input=model_input)
+                run, evidence = generate.run_generation(requirement, key, runs, model_input=model_input,
+                                                         admit=lambda: budget.reserve(token, marker, "generation"))
             except OSError:
                 self.error(500, "save_failed", "本机无法保存生成结果，请检查运行目录。")
                 return
             finally:
-                generation_lock.release()
+                model_lock.release()
             if evidence["status"] == "generated":
                 if tool_id:
-                    latest = store.revision_draft(token, marker, tool_id, row["version"], run.name, requirement)
+                    latest = store.revision_draft(token, marker, tool_id, row["version"], run.name, requirement, model=True)
                     self.send_tool(latest, run.name)
                     return
                 html = self.read_tool_html(run.name)
@@ -372,10 +431,10 @@ def serve(key, port, runs=generate.RUNS):
                 except AssertionError:
                     # HTMLParser may reject malformed declarations that the browser tolerates.
                     label = requirement
-                store.draft(token, self.marker(), run.name, label)
+                store.draft(token, self.marker(), run.name, label, model=True)
                 self.send_json(200, {"id": run.name, "html": html, "entries": [], "revision": 0, "version": 1})
             else:
-                self.error(502, evidence["status"], model_error(evidence))
+                self.send_json(502, {"code": evidence["status"], "message": model_error(evidence), "issue": run.name})
 
     with ThreadingHTTPServer(("127.0.0.1", port), Handler) as server:
         host = f"127.0.0.1:{server.server_port}"
@@ -408,7 +467,21 @@ def main():
         parser.error("DeepSeek Key 格式无效，请检查本机配置。")
     if not key:
         print("尚未配置 DeepSeek Key。可查看工作台及恢复既有工具。", flush=True)
-    serve(key, args.port, args.runs_dir)
+    try:
+        generation_limits = (int(os.environ.get("ROOT_ACCOUNT_GENERATIONS", "5")),
+                             int(os.environ.get("ROOT_TOTAL_GENERATIONS", "30")))
+        analysis_limits = (int(os.environ.get("ROOT_ACCOUNT_DAILY_ANALYSES", "6")),
+                           int(os.environ.get("ROOT_TOTAL_ANALYSES", "60")))
+        if any(not 0 < account <= total for account, total in (generation_limits, analysis_limits)):
+            raise ValueError("个人额度与全站额度须为正整数，且个人额度不得超过全站额度")
+        table_limits = table_import.limits_from_env()
+        admins = tuple(name.strip().lower() for name in os.environ.get("ROOT_TRIAL_ADMINS", "").split(",") if name.strip())
+        if any(not re.fullmatch(r"[a-z0-9_-]{3,32}", name) for name in admins):
+            raise ValueError("管理员用户名格式无效")
+    except ValueError as error:
+        parser.error(str(error))
+    serve(key, args.port, args.runs_dir, generation_limits=generation_limits, analysis_limits=analysis_limits,
+          admin_usernames=admins, table_limits=table_limits)
     return 0
 
 

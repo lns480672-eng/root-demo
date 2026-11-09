@@ -20,6 +20,7 @@ function setupRequirementAssistant({request, onBuild, onExit}) {
   let draft = null;
   let conflict = false;
   let comparison = null;
+  const inFlightAnalysis = new Set();
 
   function node(tag, attributes = {}, ...children) {
     const element = document.createElement(tag);
@@ -43,6 +44,8 @@ function setupRequirementAssistant({request, onBuild, onExit}) {
   const title = node('h1', {id: 'assistant-title', tabindex: '-1'}, '需求助手');
   panel.setAttribute('aria-labelledby', title.id);
   const status = node('p', {id: 'assistant-status', role: 'status', 'aria-live': 'polite'});
+  const analysisInfo = node('p', {class: 'auth-muted'}, '整理、保存和带入需求都不会自动生成工具。');
+  const balance = node('p', {id: 'analysis-balance', class: 'auth-muted', role: 'status', hidden: ''});
   const dirty = node('p', {id: 'assistant-dirty', class: 'auth-muted'}, '有未保存的修改。');
   const [ideaLabel, idea] = field('描述你想解决的问题', 'assistant-idea-text', maxIdea, 4);
   const [draftLabel, editor] = field('需求草稿', 'assistant-draft-editor', maxDraft, 8);
@@ -88,7 +91,7 @@ function setupRequirementAssistant({request, onBuild, onExit}) {
     node('header', {class: 'assistant-header'},
       node('div', {}, node('p', {class: 'auth-eyebrow'}, '整理需求'), title),
       button('assistant-exit', '返回工作台', onExit)),
-    node('p', {class: 'auth-muted'}, '当前使用本地模拟分析。整理、保存和带入需求都不会自动生成工具。'),
+    analysisInfo, balance,
     node('div', {class: 'assistant-actions assistant-nav'}, myDrafts, editIdea, changeDirection),
     ...Object.values(views), status,
   );
@@ -164,7 +167,16 @@ function setupRequirementAssistant({request, onBuild, onExit}) {
 
   function analyze(data) {
     if (!isText(data.idea, maxIdea)) return;
-    run('正在整理你的想法…', () => request('/api/assistant/analyze', data), result => {
+    const signature = JSON.stringify(data);
+    if (inFlightAnalysis.has(signature)) return;
+    inFlightAnalysis.add(signature);
+    run('正在整理你的想法…', async () => {
+      try {
+        return await request('/api/assistant/analyze', {...data, requestId: crypto.randomUUID()});
+      } finally {
+        inFlightAnalysis.delete(signature);
+      }
+    }, result => {
       if (result?.kind === 'draft' && isText(result.text, maxDraft)) {
         if (data.step === 'start') directions = [];
         openEditor(result.text, null);
@@ -318,6 +330,15 @@ function setupRequirementAssistant({request, onBuild, onExit}) {
     close() {
       invalidate();
       panel.hidden = true;
+    },
+    updateTrial(trial) {
+      analysisInfo.textContent = trial.analysisMode === 'fixture'
+        ? '当前使用本地模拟分析。整理、保存和带入需求都不会自动生成工具。'
+        : '分析会调用模型。编辑、保存和带入草稿都不会自动调用模型。';
+      const usage = trial.analysis;
+      balance.textContent = '今日剩余 ' + usage.remaining + ' / ' + usage.limit + ' 次'
+        + (trial.paused ? ' · 模型调用暂时暂停' : !usage.totalRemaining ? ' · 试用的总分析额度已用完' : '');
+      balance.hidden = false;
     },
   };
 }

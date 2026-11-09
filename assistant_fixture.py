@@ -71,3 +71,9 @@ def analyze(data):
         f"做一个{title}。\n原始问题：{idea}\n主要用途：{description}\n"
         f"操作偏好：{answers[0]}。\n有记录的操作需保存，重新打开后能找回。"
     )}
+
+
+def provider(data, key, admit, *, record=None):
+    result = analyze(data)
+    admit()
+    return result

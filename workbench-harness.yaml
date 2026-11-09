@@ -175,3 +175,14 @@ slices_checkpoint:
   evidence: runs/workbench-slices/final/开发自测.md
   handoff: runs/workbench-slices/final/handoff.json
   separate_review: [runs/workbench-slices/CSV技术取舍.md, runs/workbench-entry/g1-需求助手与草稿.md]
+
+chg011_checkpoint:
+  scope: [AC-010 CSV 与 XLSX, AC-012 真实分析, AC-017 服务端和用户余额, ROOT-GEN-IA-02]
+  baseline_commit: 7a7bc02
+  build: v4-06025c6dae5f
+  entry: "http://127.0.0.1:8786/"
+  strategy_boxes_used: 1
+  oracle: "首次保存回执丢失仍只有一件工具和一次个人扣次；XLSX 首表按选定列恢复；真分析与生成独立记账"
+  red: [runs/workbench-chg011/red-trial-http.log, runs/workbench-chg011/red-initial-commit-http.log]
+  evidence: runs/workbench-chg011/candidate/开发自测.md
+  handoff: runs/workbench-chg011/candidate/handoff.json

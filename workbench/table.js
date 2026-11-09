@@ -2,7 +2,6 @@
 
 function setupTableImport({ request, generate, onExit }) {
   const panel = document.getElementById('table-panel');
-  const maxFileBytes = 96 * 1024;
   const previewLimit = 6;
   const fieldTypes = new Map([
     ['text', '文本'], ['number', '数字'], ['date', '日期'], ['boolean', '布尔'], ['option', '选项'],
@@ -11,11 +10,11 @@ function setupTableImport({ request, generate, onExit }) {
   panel.innerHTML = `
     <p class="auth-eyebrow">从表格生成</p>
     <div id="table-select">
-      <h3 id="table-heading" tabindex="-1">选择带表头的 CSV</h3>
+      <h3 id="table-heading" tabindex="-1">选择带表头的 CSV 或 XLSX</h3>
       <div id="table-drop" class="table-drop">
-        <label for="table-file">选择 CSV 文件，或拖到这里</label>
-        <input id="table-file" type="file" accept=".csv,text/csv" aria-describedby="table-file-help">
-        <p id="table-file-help" class="auth-muted">UTF-8 编码，最大 96 KiB。第一行为字段名。</p>
+        <label for="table-file">选择 CSV 或 XLSX 文件，或拖到这里</label>
+        <input id="table-file" type="file" accept=".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" aria-describedby="table-file-help">
+        <p id="table-file-help" class="auth-muted">CSV 使用 UTF-8 编码，XLSX 读取第一张工作表。第一行为字段名。</p>
       </div>
       <div class="entry-actions">
         <button id="table-exit" type="button">返回直接开发</button>
@@ -27,6 +26,7 @@ function setupTableImport({ request, generate, onExit }) {
       <div class="table-summary">
         <p id="table-source-kind" class="auth-eyebrow"></p>
         <strong id="table-source"></strong>
+        <p id="table-sheet" class="auth-muted" hidden></p>
         <p id="table-count" class="auth-muted"></p>
       </div>
       <fieldset id="table-fields">
@@ -66,6 +66,7 @@ function setupTableImport({ request, generate, onExit }) {
   let inspection = 0;
   let table = null;
   let generating = false;
+  let limitsRequest;
 
   function say(element, message = '') {
     element.textContent = message;
@@ -93,41 +94,94 @@ function setupTableImport({ request, generate, onExit }) {
     return cell;
   }
 
+  function configuredLimits() {
+    if (!limitsRequest) {
+      limitsRequest = request('/api/table/config').then(limits => {
+        if (![limits?.bytes, limits?.rows, limits?.columns].every(value => Number.isSafeInteger(value) && value > 0)) {
+          throw new Error('无法读取表格导入上限，请重试。');
+        }
+        find('#table-file-help').textContent = `CSV 使用 UTF-8 编码，XLSX 读取第一张工作表。第一行为字段名。最多 ${limits.bytes.toLocaleString('zh-CN')} 字节、${limits.rows} 条记录、${limits.columns} 列。`;
+        return limits;
+      }).catch(error => {
+        limitsRequest = null;
+        throw error;
+      });
+    }
+    return limitsRequest;
+  }
+
+  function currentColumns() {
+    return [...fields.querySelectorAll('.table-field')].map(row => ({
+      name: row.querySelector('input[type=text]').value.trim(),
+      type: row.querySelector('select').value,
+      include: row.querySelector('input[type=checkbox]').checked,
+    }));
+  }
+
+  function renderPreview() {
+    const columns = currentColumns();
+    const included = columns.flatMap((column, index) => column.include ? [index] : []);
+    const caption = find('#table-preview-note');
+    caption.textContent = !included.length ? '请至少保留一个要导入的字段。'
+      : table.rows.length > previewLimit ? `预览前 ${previewLimit} 条记录，生成时保留所选字段的全部记录。`
+      : '识别出的记录';
+    records.querySelector('thead tr').replaceChildren(...included.map(index => textCell('th', columns[index].name)));
+    const rows = included.length ? table.rows.slice(0, previewLimit) : [];
+    records.querySelector('tbody').replaceChildren(...rows.map(values => {
+      const row = document.createElement('tr');
+      row.append(...included.map(index => textCell('td', values[index])));
+      return row;
+    }));
+  }
+
   function renderReview() {
     find('#table-source-kind').textContent = table.source === 'example' ? '输入 · 示例表格' : '输入 · 上传的表格';
     find('#table-source').textContent = table.filename;
+    say(find('#table-sheet'), table.sheet ? '首个工作表 · ' + table.sheet : '');
     find('#table-count').textContent = `识别到 ${table.columns.length} 个字段、${table.rows.length} 条记录`;
     find('#table-suggestion').textContent = table.suggestion;
-    find('#table-preview-note').textContent = table.rows.length > previewLimit
-      ? `预览前 ${previewLimit} 条记录，生成时保留全部记录。`
-      : '识别出的记录';
-    const header = records.querySelector('thead tr');
-    header.replaceChildren(...table.columns.map(column => textCell('th', column.name)));
     fields.replaceChildren(fields.querySelector('legend'));
     table.columns.forEach((column, index) => {
       const row = document.createElement('div');
       row.className = 'table-field';
       const name = document.createElement('input');
+      name.type = 'text';
       name.value = column.name;
       name.maxLength = 160;
       name.setAttribute('aria-label', `字段 ${index + 1} 名称`);
-      name.addEventListener('input', () => { header.children[index].textContent = name.value.trim(); });
+      name.addEventListener('input', renderPreview);
       const type = document.createElement('select');
       type.setAttribute('aria-label', `字段 ${index + 1} 类型`);
       for (const [value, label] of fieldTypes) type.add(new Option(label, value));
       type.value = column.type;
-      row.append(name, type);
+      const include = document.createElement('input');
+      include.type = 'checkbox';
+      include.checked = true;
+      include.setAttribute('aria-label', `导入字段 ${index + 1}`);
+      include.addEventListener('change', () => {
+        name.disabled = type.disabled = !include.checked;
+        renderPreview();
+      });
+      const label = document.createElement('label');
+      label.className = 'table-field-include';
+      label.append(include, '导入');
+      row.append(name, type, label);
       fields.append(row);
     });
-    records.querySelector('tbody').replaceChildren(...table.rows.slice(0, previewLimit).map(values => {
-      const row = document.createElement('tr');
-      row.append(...values.map(value => textCell('td', value)));
-      return row;
-    }));
+    renderPreview();
     selection.hidden = true;
     review.hidden = false;
     panel.setAttribute('aria-labelledby', 'table-review-title');
     find('#table-review-title').focus();
+  }
+
+  function readWorkbook(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.addEventListener('load', () => resolve(reader.result.slice(reader.result.indexOf(',') + 1)), {once: true});
+      reader.addEventListener('error', () => reject(new Error('无法读取 XLSX，请重新选择文件。')), {once: true});
+      reader.readAsDataURL(file);
+    });
   }
 
   async function inspect(file) {
@@ -138,15 +192,19 @@ function setupTableImport({ request, generate, onExit }) {
     try {
       let payload = { source: 'example' };
       if (file) {
-        if (!/\.csv$/i.test(file.name)) throw new Error('请选择带表头的 CSV 文件。');
-        if (file.size > maxFileBytes) throw new Error('CSV 文件超过 96 KiB，请缩小后重新选择。');
-        let csv;
-        try {
-          csv = new TextDecoder('utf-8', { fatal: true }).decode(await file.arrayBuffer());
-        } catch {
-          throw new Error('无法读取文件，请保存为 UTF-8 编码的 CSV 后重新选择。');
+        if (!/\.(csv|xlsx)$/i.test(file.name)) throw new Error('请选择带表头的 CSV 或 XLSX 文件。');
+        const limits = await configuredLimits();
+        if (file.size > limits.bytes) throw new Error(`文件超过 ${limits.bytes.toLocaleString('zh-CN')} 字节，请缩小后重新选择。`);
+        payload = { source: 'upload', filename: file.name };
+        if (/\.xlsx$/i.test(file.name)) {
+          payload.xlsx = await readWorkbook(file);
+        } else {
+          try {
+            payload.csv = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(await file.arrayBuffer());
+          } catch {
+            throw new Error('无法读取文件，请保存为 UTF-8 编码的 CSV 后重新选择。');
+          }
         }
-        payload = { source: 'upload', filename: file.name, csv };
       }
       if (current !== inspection) return;
       const result = await request('/api/table/inspect', payload);
@@ -173,7 +231,7 @@ function setupTableImport({ request, generate, onExit }) {
     if (files.length > 1) {
       inspection++;
       say(status);
-      say(alert, '请一次选择一个 CSV 文件。');
+      say(alert, '请一次选择一个 CSV 或 XLSX 文件。');
     } else if (files.length === 1) {
       inspect(files[0]);
     }
@@ -189,15 +247,17 @@ function setupTableImport({ request, generate, onExit }) {
   });
   confirm.addEventListener('click', async () => {
     if (generating || !table) return;
-    const columns = [...fields.querySelectorAll('.table-field')].map(row => ({
-      name: row.querySelector('input').value.trim(),
-      type: row.querySelector('select').value,
-    }));
-    if (columns.some(column => !column.name || [...column.name].length > 80)) {
+    const columns = currentColumns();
+    const selected = columns.filter(column => column.include);
+    if (!selected.length) {
+      say(alert, '请至少保留一个要导入的字段。');
+      return;
+    }
+    if (selected.some(column => !column.name || [...column.name].length > 80)) {
       say(alert, '字段名须为 1 至 80 个字符，请修改后再生成。');
       return;
     }
-    if (new Set(columns.map(column => column.name)).size !== columns.length) {
+    if (new Set(selected.map(column => column.name.toLocaleLowerCase())).size !== selected.length) {
       say(alert, '字段名不能重复，请修改后再生成。');
       return;
     }
@@ -217,6 +277,7 @@ function setupTableImport({ request, generate, onExit }) {
     open() {
       panel.hidden = false;
       find(table ? '#table-review-title' : '#table-heading').focus();
+      configuredLimits().catch(() => {});
     },
     close() {
       inspection++;

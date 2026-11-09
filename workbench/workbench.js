@@ -12,6 +12,7 @@ const composer = form.closest('section');
 const library = byId('tool-list').closest('section');
 const toolHistory = byId('tool-version-panel');
 const maxStorageBytes = 256 * 1024;
+const tableStorageBytes = 8 * 1024 * 1024;
 const publicationKey = 'root:pending-publication';
 const publicationTimeout = 6000;
 const validToolId = id => typeof id === 'string' && /^run-[a-z0-9_]{8}$/.test(id);
@@ -35,10 +36,13 @@ let sampleTemplate = null;
 let guideStep = -1;
 let guideTool = null;
 let guideTarget = null;
+let trial = null;
+let trialRequest = 0;
 
 function render() {
   const pending = ['model', 'preview', 'restore', 'sync', 'table'].includes(phase);
   const syncing = Boolean(pendingPublication);
+  const pausingEdits = syncing && Boolean(pendingPublication.runId);
   const blocked = pending || syncing;
   const tableMode = entryMode === 'table';
   const showingSample = Boolean(sampleTemplate);
@@ -66,11 +70,21 @@ function render() {
   sync.disabled = pending;
   const publicationMessage = byId('publication-message');
   publicationMessage.hidden = !syncing;
-  publicationMessage.textContent = pending ? '正在核对已发布版本，编辑暂时暂停。'
-    : '暂时无法确认发布结果。编辑已暂停，请点击「同步工具」后继续。';
+  publicationMessage.textContent = pausingEdits
+    ? pending ? '正在核对已发布版本，编辑暂时暂停。'
+      : '暂时无法确认发布结果。编辑已暂停，请点击「同步工具」后继续。'
+    : pending ? '正在核对新工具是否已保存。' : '暂时无法确认新工具是否已保存，请先点击「同步工具」。';
   example.hidden = editing || blocked || Boolean(failure);
   byId('error').textContent = failure;
   byId('error').hidden = !failure;
+  const balance = byId('generation-balance');
+  balance.hidden = tableMode || !trial;
+  if (trial) {
+    const usage = trial.generation;
+    balance.textContent = '剩余 ' + usage.remaining + ' / ' + usage.limit + ' 次'
+      + (trial.paused ? ' · 模型调用暂时暂停' : !usage.totalRemaining ? ' · 试用的总生成额度已用完' : '');
+  }
+  byId('generation-retry-note').hidden = tableMode || !failure;
   byId('loading').hidden = syncing || !pending;
   byId('phase').textContent = {
     model: '正在等待 DeepSeek 响应',
@@ -85,16 +99,17 @@ function render() {
     else item.removeAttribute('aria-current');
   }
   const status = byId('preview-status');
-  status.toggleAttribute('data-usable', showingTool && !syncing);
-  status.textContent = syncing ? '待同步 · 暂停编辑' : showingSample ? '样例试用 · 不保存' : active
-    ? pending || failure ? '上次工具仍可用' : restored ? '已恢复' : '已就绪'
-    : pending ? '等待预览' : '待生成';
+  status.toggleAttribute('data-usable', showingTool && !pausingEdits);
+  status.textContent = pausingEdits ? '待同步 · 暂停编辑' : showingSample ? '样例试用 · 不保存' : active
+    ? pending || failure || syncing ? '上次工具仍可用' : restored ? '已恢复' : '已就绪'
+    : syncing ? '新工具待同步' : pending ? '等待预览' : '待生成';
   byId('empty').hidden = showingTool || showingSample || syncing;
   byId('empty-title').textContent = pending ? '等待预览' : '还没有生成工具';
   byId('empty-copy').textContent = pending ? '工具准备好后，会在这里显示。' : '输入需求后，工具会在这里出现。';
   const fast = entryMode === 'fast';
   byId('quick-panel').hidden = !fast;
   byId('table-panel').hidden = !tableMode;
+  byId('table-panel').inert = syncing;
   form.hidden = tableMode || (fast && !failure);
   byId('quick-entry').setAttribute('aria-pressed', String(fast));
   byId('direct-entry').setAttribute('aria-pressed', String(entryMode === 'direct' && !editing));
@@ -122,6 +137,7 @@ async function api(path, options) {
   if (!response.ok) {
     const error = new Error(data.message || '请求未完成，请重试。');
     error.code = data.code;
+    error.issue = data.issue;
     throw error;
   }
   return data;
@@ -144,6 +160,21 @@ async function workspaceApi(path, data, timeout) {
       location.reload();
     }
     throw error;
+  } finally {
+    if (path === '/api/assistant/analyze') refreshTrial();
+  }
+}
+
+async function refreshTrial() {
+  const request = ++trialRequest;
+  try {
+    const value = await workspaceApi('/api/trial');
+    if (request !== trialRequest) return;
+    trial = value;
+    requirementAssistant.updateTrial(trial);
+    render();
+  } catch {
+    // A balance read failure does not block local tools or saving.
   }
 }
 
@@ -413,12 +444,12 @@ function warnStorage(message) {
   notice.hidden = !message;
 }
 
-function serializeEntries(entries) {
+function serializeEntries(entries, limit) {
   if (!Array.isArray(entries) || !entries.every(
     entry => Array.isArray(entry) && entry.length === 2 && entry.every(value => typeof value === 'string'),
   )) throw new TypeError('无效的工具存储数据');
   const json = JSON.stringify(entries);
-  if (new TextEncoder().encode(json).length > maxStorageBytes) throw new RangeError('工具存储已满');
+  if (new TextEncoder().encode(json).length > limit) throw new RangeError('工具存储已满');
   return json;
 }
 
@@ -514,9 +545,9 @@ window.addEventListener('message', event => {
   if (!frame) return;
   const { type, entries } = event.data;
   if (type === 'storage') {
-    if (frame === active && pendingPublication) return;
+    if (frame === active && pendingPublication?.runId) return;
     try {
-      const snapshot = serializeEntries(entries);
+      const snapshot = serializeEntries(entries, frame.storageLimit);
       frame.snapshot = snapshot;
       if (frame === active) enqueueSave(frame, snapshot);
     } catch {
@@ -594,6 +625,22 @@ async function publishRevision(frame, old, tool) {
   }
 }
 
+async function commitInitial(frame) {
+  const operation = { id: frame.id, marker: session.marker };
+  sessionStorage.setItem(publicationKey, JSON.stringify(operation));
+  try {
+    const saved = await workspaceApi('/api/tools/' + frame.id + '/commit', {
+      entries: JSON.parse(frame.snapshot),
+    }, publicationTimeout);
+    clearPublication();
+    return saved;
+  } catch (error) {
+    if (error.code === 'transport') pendingPublication = operation;
+    else clearPublication();
+    throw error;
+  }
+}
+
 function clearPublication() {
   pendingPublication = null;
   sessionStorage.removeItem(publicationKey);
@@ -602,7 +649,8 @@ function clearPublication() {
 function pendingPublicationForSession() {
   try {
     const operation = JSON.parse(sessionStorage.getItem(publicationKey));
-    return operation?.marker === session.marker && validToolId(operation.id) && validToolId(operation.runId)
+    return operation?.marker === session.marker && validToolId(operation.id) &&
+      (operation.runId === undefined || validToolId(operation.runId))
       ? operation : null;
   } catch {
     return null;
@@ -612,16 +660,26 @@ function pendingPublicationForSession() {
 async function synchronizePublication() {
   const { id, runId } = pendingPublication;
   try {
-    const current = await workspaceApi('/api/tools/' + id + '/resolve-publish', { runId }, publicationTimeout);
+    const action = runId ? 'resolve-publish' : 'resolve-commit';
+    const current = await workspaceApi('/api/tools/' + id + '/' + action, { runId }, publicationTimeout);
+    if (!runId && !current.applied) {
+      clearPublication();
+      failure = '新工具尚未保存，本次候选已撤销。可以重试。';
+      return false;
+    }
     if (active?.id === id && active.version === current.version && active.revision === current.revision) {
       resumeStorage(active);
     } else {
       await openTool(current, true);
     }
     clearPublication();
-    if (current.applied) finishComposition();
+    if (current.applied) {
+      finishComposition();
+      if (!runId) await loadLibrary().catch(error => warnStorage(error.message));
+    }
     else if (editing) failure = '本次修改未发布，已同步当前工具。你可以重试。';
     else warnStorage('本次修改未发布，已恢复当前工具。');
+    return current.applied;
   } catch {
     // Keep the preview and its writes paused until a later synchronization succeeds.
   }
@@ -632,7 +690,8 @@ async function openTool(tool, restore = false) {
     throw new Error('工具文件不完整，无法打开预览。');
   }
   const entries = tool.entries;
-  const original = serializeEntries(entries);
+  const storageLimit = tool.storageLimit === tableStorageBytes ? tableStorageBytes : maxStorageBytes;
+  const original = serializeEntries(entries, storageLimit);
 
   const iframe = document.createElement('iframe');
   iframe.title = '生成的工具';
@@ -642,13 +701,14 @@ async function openTool(tool, restore = false) {
   iframe.inert = true;
   const frame = {
     id: tool.id, token: crypto.randomUUID(), iframe, snapshot: original,
+    storageLimit,
     revision: tool.revision, version: tool.version, saveTail: Promise.resolve(), saveFailed: false,
   };
   const old = active;
   candidate = frame;
   const ready = new Promise((resolve, reject) => Object.assign(frame, { resolve, reject }));
   const deadline = setTimeout(() => frame.reject(new Error('准备预览超时，需求已保留。')), 5000);
-  const args = JSON.stringify([entries, frame.token, location.origin, maxStorageBytes]).replaceAll('<', '\\u003c');
+  const args = JSON.stringify([entries, frame.token, location.origin, storageLimit]).replaceAll('<', '\\u003c');
   const bootstrap = '(' + initializeFrame.toString() + ')(...' + args + ')';
   iframe.srcdoc = '<!doctype html><meta charset="utf-8">'
     + '<meta name="viewport" content="width=device-width, initial-scale=1">'
@@ -664,9 +724,7 @@ async function openTool(tool, restore = false) {
       frame.revision = saved.revision;
     } else if (!restore) {
       savedSnapshot = frame.snapshot;
-      const saved = await workspaceApi('/api/tools/' + frame.id + '/commit', {
-        entries: JSON.parse(savedSnapshot),
-      });
+      const saved = await commitInitial(frame);
       frame.revision = saved.revision;
     } else {
       await workspaceApi('/api/tools/' + frame.id + '/open', { version: frame.version },
@@ -729,6 +787,10 @@ async function generateTable(table) {
     finishComposition();
     await loadLibrary().catch(error => warnStorage(error.message));
   } catch (error) {
+    if (pendingPublication) {
+      if (await synchronizePublication()) return;
+      throw new Error(failure || '暂时无法确认表格工具是否已保存，请先同步。');
+    }
     failure = error.message;
     throw error;
   } finally {
@@ -762,11 +824,18 @@ form.addEventListener('submit', async event => {
     finishComposition();
     await loadLibrary().catch(error => warnStorage(error.message));
   } catch (error) {
-    if (pendingPublication) await synchronizePublication();
-    else failure = error.message;
+    if (pendingPublication) {
+      const applied = await synchronizePublication();
+      if (applied && guidedGeneration && guideStep === 1) {
+        guideTool = active.id;
+        guideStep = 2;
+      }
+    }
+    else failure = error.message + (error.issue ? ' 问题编号 ' + error.issue + '。' : '');
   } finally {
     phase = 'idle';
     render();
+    refreshTrial();
   }
 });
 
@@ -777,6 +846,7 @@ byId('sync-tool').addEventListener('click', async () => {
   await synchronizePublication();
   phase = 'idle';
   render();
+  refreshTrial();
 });
 
 async function selectTool(id) {
@@ -913,6 +983,8 @@ window.addEventListener('focus', async () => {
       byId('workspace').hidden = true;
       preview.replaceChildren();
       location.reload();
+    } else {
+      refreshTrial();
     }
   } catch (error) {
     warnStorage(error.message);
@@ -937,6 +1009,7 @@ async function start(registration = null) {
       render();
     }
     ({ configured } = await api('/api/config'));
+    await refreshTrial();
     networkIsolated = await confirmsNetworkPolicy();
     if (!networkIsolated) {
       byId('config').textContent = '当前浏览器未启用预览网络隔离。请使用支持 Connection-Allowlist 的 Chrome。';

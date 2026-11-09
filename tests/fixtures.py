@@ -128,7 +128,9 @@ def fixture(requirement, key):
 
 generate.request_completion = fixture
 import workbench
+import assistant_fixture
 
 runs = Path(sys.argv[3])
 Store(runs / "workspace.sqlite3").create_invite("fixture-invite", uses=2)
-workbench.serve(sys.argv[1], int(sys.argv[2]), runs)
+workbench.serve(sys.argv[1], int(sys.argv[2]), runs, generation_limits=(100, 500),
+                analysis_limits=(100, 500), analysis_provider=assistant_fixture.provider)

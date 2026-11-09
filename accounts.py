@@ -10,6 +10,8 @@ from contextlib import closing, contextmanager
 
 SESSION_SECONDS = 12 * 60 * 60
 USERNAME = re.compile(r"[a-z0-9_-]{3,32}")
+TOOL_STORAGE_BYTES = 256 * 1024
+TABLE_STORAGE_BYTES = 8 * 1024 * 1024
 
 
 class ApiError(Exception):
@@ -64,6 +66,12 @@ class Store:
                     entries TEXT NOT NULL DEFAULT '[]', revision INTEGER NOT NULL DEFAULT 0
                 );
                 CREATE INDEX IF NOT EXISTS tools_owner ON tools(owner, published);
+                CREATE TABLE IF NOT EXISTS table_tools (
+                    id TEXT PRIMARY KEY REFERENCES tools(id)
+                );
+                CREATE TABLE IF NOT EXISTS model_candidates (
+                    run_id TEXT PRIMARY KEY, tool_id TEXT NOT NULL REFERENCES tools(id)
+                );
                 CREATE TABLE IF NOT EXISTS tool_versions (
                     tool_id TEXT NOT NULL REFERENCES tools(id), version INTEGER NOT NULL,
                     run_id TEXT NOT NULL UNIQUE, note TEXT NOT NULL, effective_at INTEGER,
@@ -218,12 +226,14 @@ class Store:
 
     @staticmethod
     def owned_tool(db, user, tool_id, published=True):
+        published = None if published is None else int(published)
         tool = db.execute("""
-            SELECT tools.*, coalesce(v.version, 1) AS version, coalesce(v.run_id, tools.id) AS run_id
+            SELECT tools.*, coalesce(v.version, 1) AS version, coalesce(v.run_id, tools.id) AS run_id,
+              CASE WHEN EXISTS (SELECT 1 FROM table_tools WHERE id=tools.id) THEN 1 ELSE 0 END AS table_tool
             FROM tools LEFT JOIN tool_versions v ON v.tool_id=tools.id
               AND v.version=(SELECT max(version) FROM tool_versions WHERE tool_id=tools.id)
-            WHERE tools.id=? AND owner=? AND published=?
-        """, (tool_id, user["id"], int(published))).fetchone()
+            WHERE tools.id=? AND owner=? AND (? IS NULL OR published=?)
+        """, (tool_id, user["id"], published, published)).fetchone()
         if tool is None:
             raise ApiError(404, "tool_unavailable", "此工具不可用。")
         return tool
@@ -233,13 +243,18 @@ class Store:
             user = self.session(db, token, marker)
             return dict(self.owned_tool(db, user, tool_id))
 
-    def draft(self, token, marker, tool_id, requirement, entries=None):
+    def draft(self, token, marker, tool_id, requirement, entries=None, *, table=False, model=False):
         title = " ".join(requirement.split())[:48]
-        initial = pack_entries([] if entries is None else entries)
+        initial = pack_entries([] if entries is None else entries,
+                               limit=TABLE_STORAGE_BYTES if table else TOOL_STORAGE_BYTES)
         with self.connection(write=True) as db:
             user = self.session(db, token, marker)
             db.execute("INSERT INTO tools(id, owner, title, entries) VALUES (?,?,?,?)",
                        (tool_id, user["id"], title, initial))
+            if table:
+                db.execute("INSERT INTO table_tools VALUES (?)", (tool_id,))
+            if model:
+                db.execute("INSERT INTO model_candidates VALUES (?,?)", (tool_id, tool_id))
 
     @staticmethod
     def require_version(value, version):
@@ -259,12 +274,14 @@ class Store:
             ]
             return {"current": items[0]["version"], "items": items}
 
-    def revision_draft(self, token, marker, tool_id, version, run_id, note):
+    def revision_draft(self, token, marker, tool_id, version, run_id, note, *, model=False):
         with self.connection(write=True) as db:
             user = self.session(db, token, marker)
             row = self.owned_tool(db, user, tool_id)
             self.require_version(version, row["version"])
             db.execute("INSERT INTO revision_drafts VALUES (?,?,?,?)", (run_id, tool_id, version, note))
+            if model:
+                db.execute("INSERT INTO model_candidates VALUES (?,?)", (run_id, tool_id))
             return dict(row)
 
     def resolve_publication(self, token, marker, tool_id, run_id):
@@ -275,12 +292,33 @@ class Store:
             row = self.owned_tool(db, user, tool_id)
             # Share the publication write lock so a pending request cannot commit after this readback.
             db.execute("DELETE FROM revision_drafts WHERE tool_id=? AND run_id=?", (tool_id, run_id))
+            db.execute("DELETE FROM model_candidates WHERE tool_id=? AND run_id=? AND run_id<>tool_id",
+                       (tool_id, run_id))
             applied = db.execute(
                 "SELECT 1 FROM tool_versions WHERE tool_id=? AND run_id=? AND version>1", (tool_id, run_id),
             ).fetchone() is not None
             return row, applied
 
-    def publish_revision(self, db, row, data):
+    def resolve_initial_publication(self, token, marker, tool_id):
+        with self.connection(write=True) as db:
+            user = self.session(db, token, marker)
+            row = self.owned_tool(db, user, tool_id, published=None)
+            if row["published"] == 1:
+                return row
+            if row["published"] == 0:
+                # Fence the original commit even if the browser gave up before it reached SQLite.
+                db.execute("UPDATE tools SET published=-1 WHERE id=?", (tool_id,))
+                db.execute("DELETE FROM model_candidates WHERE run_id=? AND tool_id=?", (tool_id, tool_id))
+            return None
+
+    @staticmethod
+    def record_candidate_success(db, row, run_id, record):
+        if record and db.execute("SELECT 1 FROM model_candidates WHERE run_id=? AND tool_id=?",
+                                 (run_id, row["id"])).fetchone():
+            record(db, row["owner"], run_id)
+            db.execute("DELETE FROM model_candidates WHERE run_id=?", (run_id,))
+
+    def publish_revision(self, db, row, data, record):
         run_id = data.get("runId")
         if not isinstance(run_id, str):
             raise ApiError(400, "invalid_draft", "修改候选无效。")
@@ -294,7 +332,8 @@ class Store:
         self.require_version(draft["base_version"], row["version"])
         if type(revision) is not int or revision != row["revision"]:
             raise ApiError(409, "revision_conflict", "已有更新的数据，请用最新记录重新准备预览。")
-        packed = pack_entries(data.get("entries"))
+        limit = TABLE_STORAGE_BYTES if row["table_tool"] else TOOL_STORAGE_BYTES
+        packed = pack_entries(data.get("entries"), limit=limit)
         if not dict(json.loads(row["entries"])).items() <= dict(data["entries"]).items():
             raise ApiError(409, "incompatible_data", "新版无法原样保留已有数据，旧版仍可用。")
         db.execute("INSERT OR IGNORE INTO tool_versions VALUES (?,1,?,'首次生成',NULL)",
@@ -302,24 +341,26 @@ class Store:
         version = row["version"] + 1
         db.execute("INSERT INTO tool_versions VALUES (?,?,?,?,?)",
                    (row["id"], version, run_id, draft["note"], int(time.time())))
+        self.record_candidate_success(db, row, run_id, record)
         db.execute("DELETE FROM revision_drafts WHERE run_id=?", (run_id,))
         db.execute("UPDATE tools SET entries=?,revision=? WHERE id=?", (packed, revision + 1, row["id"]))
         db.execute("UPDATE accounts SET latest_tool=? WHERE id=?", (row["id"], row["owner"]))
         return {"revision": revision + 1, "version": version}
 
-    def change_tool(self, token, marker, tool_id, action, data):
+    def change_tool(self, token, marker, tool_id, action, data, *, record_model_success=None):
         with self.connection(write=True) as db:
             user = self.session(db, token, marker)
             row = self.owned_tool(db, user, tool_id, published=action != "commit")
             if action == "publish":
-                return self.publish_revision(db, row, data)
+                return self.publish_revision(db, row, data, record_model_success)
             revision = row["revision"]
             if action == "data":
                 self.require_version(data.get("version", 1), row["version"])
             if action == "open" and "version" in data:
                 self.require_version(data["version"], row["version"])
             if action in ("commit", "data"):
-                entries = pack_entries(data.get("entries"))
+                limit = TABLE_STORAGE_BYTES if row["table_tool"] else TOOL_STORAGE_BYTES
+                entries = pack_entries(data.get("entries"), limit=limit)
                 if action == "commit" and not dict(json.loads(row["entries"])).items() <= dict(data["entries"]).items():
                     raise ApiError(409, "incompatible_data", "预览未能原样保留预填记录，请重试。")
                 if action == "data" and (type(data.get("revision")) is not int or data["revision"] != revision):
@@ -328,6 +369,7 @@ class Store:
                 db.execute("UPDATE tools SET entries=?,revision=?,published=1 WHERE id=? AND owner=?",
                            (entries, revision, tool_id, user["id"]))
             if action == "commit":
+                self.record_candidate_success(db, row, tool_id, record_model_success)
                 db.execute("INSERT INTO tool_versions VALUES (?,1,?,'首次生成',?)",
                            (tool_id, tool_id, int(time.time())))
             if action != "data":
@@ -335,7 +377,7 @@ class Store:
             return {"revision": revision}
 
 
-def pack_entries(entries):
+def pack_entries(entries, *, limit=TOOL_STORAGE_BYTES):
     if not isinstance(entries, list) or any(
         not isinstance(entry, list) or len(entry) != 2 or not all(isinstance(value, str) for value in entry)
         for entry in entries
@@ -344,6 +386,6 @@ def pack_entries(entries):
     if len({entry[0] for entry in entries}) != len(entries):
         raise ApiError(400, "invalid_entries", "工具存储含有重复键。")
     packed = json.dumps(entries, ensure_ascii=False, separators=(",", ":"))
-    if len(packed.encode("utf-8")) > 256 * 1024:
-        raise ApiError(413, "tool_quota", "工具存储超过 256 KiB。")
+    if len(packed.encode("utf-8")) > limit:
+        raise ApiError(413, "tool_quota", f"工具存储超过 {limit // 1024} KiB。")
     return packed

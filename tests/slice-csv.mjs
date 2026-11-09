@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 
 export async function verifyCsv({ evaluate, click, until, cdp, activeTool, library, stored,
   selectHistory, screenshot, stage }) {
@@ -14,6 +15,16 @@ export async function verifyCsv({ evaluate, click, until, cdp, activeTool, libra
     const input = document.querySelector('#table-file');
     const transfer = new DataTransfer();
     transfer.items.add(new File([${JSON.stringify(text)}], ${JSON.stringify(filename)}, {type: 'text/csv'}));
+    input.files = transfer.files;
+    input.dispatchEvent(new Event('change', {bubbles: true}));
+  })()`);
+  const chooseXlsx = (filename, base64) => evaluate(`(() => {
+    const input = document.querySelector('#table-file');
+    const transfer = new DataTransfer();
+    const bytes = Uint8Array.from(atob(${JSON.stringify(base64)}), char => char.charCodeAt(0));
+    transfer.items.add(new File([bytes], ${JSON.stringify(filename)}, {
+      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    }));
     input.files = transfer.files;
     input.dispatchEvent(new Event('change', {bubbles: true}));
   })()`);
@@ -118,8 +129,59 @@ export async function verifyCsv({ evaluate, click, until, cdp, activeTool, libra
   assert.equal(reopened.id, uploadedTool.id);
   assert.deepEqual((await previewRows(reopened.context)).map(row => row.slice(0, 4)), uploadedRows);
   assert.equal((await savedTable(reopened.id)).done[0], true);
+
+  stage('AC-010 XLSX reads the first sheet and omits the excluded column from all saved rows');
+  const xlsx = execFileSync('python3', ['-B', '-c',
+    'import sys; sys.path.insert(0, "tests"); from test_table_import import sample_xlsx; print(sample_xlsx())'],
+  {encoding: 'utf8'}).trim();
+  await click('#table-entry');
+  await until(() => evaluate('document.querySelector("#table-file-help").textContent.includes("500 条记录")'));
+  await chooseXlsx('第一工作表.xlsx', xlsx);
+  await until(() => visible('#table-review'));
+  assert.match(await evaluate('document.querySelector("#table-sheet").textContent'), /首个工作表.*输入/);
+  assert.match(await evaluate('document.querySelector("#table-count").textContent'), /2 条记录/);
+  assert.deepEqual(await previewRows(), [['0007', '2.50', '2026-11-09'], ['带空格 尾', '', '2026-11-09']]);
+  await click('#table-fields .table-field:nth-of-type(2) input[type="checkbox"]');
+  assert.deepEqual(await previewRows(), [['0007', '2026-11-09'], ['带空格 尾', '2026-11-09']]);
+  const beforeXlsx = (await library()).items.length;
+  await screenshot('xlsx-first-sheet-review');
+  await click('#table-confirm');
+  const xlsxTool = await activeTool(reopened.id);
+  const xlsxSeed = await savedTable(xlsxTool.id);
+  assert.equal((await library()).items.length, beforeXlsx + 1);
+  assert.equal(xlsxSeed.sheet, '输入');
+  assert.deepEqual(xlsxSeed.columns, [{name: '编号', type: 'text'}, {name: '截止日', type: 'date'}]);
+  assert.deepEqual(xlsxSeed.rows, [['0007', '2026-11-09'], ['带空格 尾', '2026-11-09']]);
+  await selectHistory(originalTool.id);
+  const restoredXlsx = await selectHistory(xlsxTool.id);
+  assert.deepEqual((await previewRows(restoredXlsx.context)).map(row => row.slice(0, 2)), xlsxSeed.rows);
+  await screenshot('xlsx-excluded-column-tool');
+
+  stage('AC-010 large CSV preview is capped but all 500 rows are saved and restored');
+  await click('#table-entry');
+  const largeColumns = Array.from({length: 20}, (_, index) => '字段' + (index + 1));
+  const longValue = 'x'.repeat(94);
+  const largeRows = Array.from({length: 500}, (_, index) =>
+    ['批量记录' + (index + 1), ...Array(19).fill(longValue)]);
+  const largeCsv = [largeColumns, ...largeRows].map(row => row.join(',')).join('\n');
+  const largeBytes = Buffer.byteLength(largeCsv);
+  assert.ok(largeBytes > 256 * 1024 && largeBytes < 1024 * 1024);
+  await chooseCsv('容量边界.csv', largeCsv);
+  await until(() => visible('#table-review'));
+  assert.match(await evaluate('document.querySelector("#table-count").textContent'), /20 个字段、500 条记录/);
+  assert.equal((await previewRows()).length, 6);
+  await click('#table-confirm');
+  const largeTool = await activeTool(restoredXlsx.id);
+  const largeSaved = await savedTable(largeTool.id);
+  assert.equal(largeSaved.rows.length, 500);
+  assert.deepEqual(largeSaved.rows.at(-1), largeRows.at(-1));
+  await selectHistory(originalTool.id);
+  const largeRestored = await selectHistory(largeTool.id);
+  assert.match(await evaluate('document.querySelector("#table-count").textContent', largeRestored.context), /500 \/ 500 条记录/);
   return {
     id: 'TEST-010', result: 'passed', exampleRows: exampleRows.length, uploadedRows: uploadedRows.length,
-    explicitGenerations: 2, savedStatusRestored: true, previousToolPreservedOnMalformedCsv: true,
+    explicitGenerations: 4, savedStatusRestored: true, previousToolPreservedOnMalformedCsv: true,
+    xlsxFirstSheet: xlsxSeed.sheet, xlsxRows: xlsxSeed.rows.length, xlsxExcludedColumn: true,
+    largeBytes, largeRows: largeSaved.rows.length,
   };
 }

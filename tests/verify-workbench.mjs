@@ -1141,8 +1141,46 @@ try {
       zeroSampleGenerations: true, noSavedSampleTools: true, customizeWithoutRequest: true,
       templateGenerationRequests: 1, directGenerationRequests: 1 });
   }
+  if (live && process.argv.includes('--analysis-live')) {
+    const initialBalance = (await appRequest('/api/trial')).body;
+    assert.equal(initialBalance.analysisMode, 'deepseek');
+    await click('#idea-entry');
+    const idea = '#assistant-idea-text';
+    async function analyzeIdea(value, result) {
+      await evaluate(`document.querySelector(${JSON.stringify(idea)}).value = ""`);
+      await type(idea, value);
+      await click('#assistant-analyze button');
+      await until(async () => {
+        const error = await evaluate('document.querySelector("#assistant-status.elys-error")?.textContent');
+        if (error) throw new Error(error);
+        return visible(result);
+      }, 35000);
+    }
+    stage = 'DeepSeek analysis of a clear idea reaches an editable draft';
+    await analyzeIdea('做一个社区图书借阅清单。记录书名和借阅人，能新增借阅并标记已归还，刷新后保留记录。',
+      '#assistant-draft-editor');
+    assert.match(await evaluate('document.querySelector("#assistant-draft-editor").value'), /借阅|归还/);
+    await screenshot('live-analysis-draft');
+    await click('#assistant-edit-idea');
+    stage = 'DeepSeek analysis of a vague idea presents directions';
+    await analyzeIdea('每周都在群里追问项目进度，经常不知道哪里卡住了。', '#assistant-directions');
+    const count = await evaluate('document.querySelectorAll("#assistant-directions [data-direction]").length');
+    assert.ok(count >= 2 && count <= 3);
+    await screenshot('live-analysis-directions');
+    const finalBalance = (await appRequest('/api/trial')).body;
+    assert.equal(finalBalance.analysis.used, initialBalance.analysis.used + 2);
+    assert.deepEqual(finalBalance.generation, initialBalance.generation);
+    evidence.tests.push({id: 'TEST-012-live', result: 'passed', clearDraft: true, directions: count,
+      analysisRequests: 2, generationBalanceUnchanged: true});
+  }
   const setStage = name => { stage = name; };
   const slices = process.argv.includes('--slices');
+  if (!live && process.argv.includes('--create-recovery')) {
+    const { verifyCreateRecovery } = await import('./slice-create-recovery.mjs');
+    evidence.tests.push(await verifyCreateRecovery({
+      evaluate, click, type, until, cdp, activeTool, appRequest, library, screenshot, stage: setStage,
+    }));
+  }
   if (!live && (slices || process.argv.includes('--assistant-flow'))) {
     const { verifyAssistant } = await import('./slice-assistant.mjs');
     evidence.tests.push(await verifyAssistant({

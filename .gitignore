@@ -10,6 +10,8 @@
 !/workbench-harness.yaml
 !/generate.py
 !/assistant_fixture.py
+!/assistant_model.py
+!/trial_budget.py
 !/table_import.py
 !/verify-preview.mjs
 !/workbench.py
@@ -36,8 +38,11 @@
 !/tests/verify-workbench.mjs
 !/tests/test_generation.py
 !/tests/test_table_import.py
+!/tests/test_assistant_model.py
+!/tests/test_trial_budget.py
 !/tests/slice-csv.mjs
 !/tests/slice-assistant.mjs
+!/tests/slice-create-recovery.mjs
 !/tests/verify-webrtc-isolation.mjs
 !/账号与工具设计.md
 !/accounts.py

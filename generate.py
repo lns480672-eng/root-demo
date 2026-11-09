@@ -10,6 +10,7 @@ import time
 import urllib.error
 import urllib.request
 import warnings
+from contextlib import suppress
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -75,10 +76,19 @@ def request_completion(requirement, key):
         return response.status, body
 
 
-def run_generation(requirement, key, runs=RUNS, *, model_input=None):
+def run_generation(requirement, key, runs=RUNS, *, model_input=None, admit=None):
     runs.mkdir(mode=0o700, exist_ok=True)
     run = Path(tempfile.mkdtemp(prefix="run-", dir=runs))
-    (run / "requirement.txt").write_text(requirement + "\n", encoding="utf-8")
+    requirement_file = run / "requirement.txt"
+    requirement_file.write_text(requirement + "\n", encoding="utf-8")
+    if admit:
+        try:
+            admit()
+        except Exception:
+            with suppress(OSError):
+                requirement_file.unlink()
+                run.rmdir()
+            raise
     started_at = datetime.now(timezone.utc).isoformat()
     start = time.perf_counter()
     evidence = {

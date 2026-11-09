@@ -21,11 +21,20 @@ class AccountHTTP(unittest.TestCase):
         cls.runs = directory.name
         cls.server = subprocess.Popen(
             [sys.executable, "-B", "-c",
-             "import sys, workbench, generate; from pathlib import Path; "
-             "import json; generate.request_completion = lambda *args: (200, json.dumps({"
-             "'id':'fixture-account','model':generate.MODEL,'choices':[{'finish_reason':'stop',"
-             "'message':{'content':'<!doctype html><html><body>工具</body></html>'}}]}).encode()); "
-             "workbench.serve('fixture-key', 0, Path(sys.argv[1]))",
+             "import sys, workbench, generate, assistant_fixture, json\n"
+             "from pathlib import Path\n"
+             "from accounts import Store\n"
+             "def fixture(requirement, key):\n"
+             "    if requirement == '额度测试超时': raise TimeoutError('fixture timeout')\n"
+             "    return 200, json.dumps({'id':'fixture-account','model':generate.MODEL,"
+             "'choices':[{'finish_reason':'stop','message':{'content':'<!doctype html><html><body>工具</body></html>'}}]}).encode()\n"
+             "generate.request_completion = fixture\n"
+             "runs = Path(sys.argv[1])\n"
+             "store = Store(runs / 'workspace.sqlite3')\n"
+             "store.register({'username':'trial-admin','password':'fixture-test-password!',"
+             "'invite':store.create_invite()})\n"
+             "workbench.serve('fixture-key', 0, runs, generation_limits=(5, 100), "
+             "analysis_limits=(6, 100), admin_usernames=('trial-admin',), analysis_provider=assistant_fixture.provider)",
              cls.runs], stdout=subprocess.PIPE, text=True,
         )
         cls.addClassCleanup(cls.server.stdout.close)
@@ -50,6 +59,65 @@ class AccountHTTP(unittest.TestCase):
     def test_unauthenticated_generation_is_rejected(self):
         status, body, _ = self.request("/api/generate", {"requirement": "待授权"})
         self.assertEqual((status, body.get("code")), (401, "login_required"))
+
+    def test_trial_quotas_pause_and_admin_authorization(self):
+        self.assertEqual(self.register("trial-user", self.store.create_invite())[0], 201)
+        admin, admin_marker = self.login("trial-admin")
+        user, marker = self.login("trial-user")
+        balance = "/api/trial"
+        manage = "/api/trial/admin"
+        status, initial, _ = self.request(balance, cookie=user, marker=marker)
+        self.assertEqual(status, 200)
+        self.assertEqual(initial["generation"]["remaining"], 5)
+        self.assertEqual(initial["analysis"]["remaining"], 6)
+        self.assertEqual(self.request(manage, cookie=user, marker=marker)[0], 403)
+        self.assertEqual(self.request(manage, {"action": "pause"}, user, marker)[0], 403)
+        self.assertEqual(self.request(manage, {"action": "pause"}, admin, admin_marker)[0], 200)
+        self.assertEqual(self.request("/api/generate", {"requirement": "空耗测试"}, user, marker)[1]["code"], "model_paused")
+        analysis = {"step": "start", "idea": "记录项目跟进", "requestId": str(uuid4())}
+        self.assertEqual(self.request("/api/assistant/analyze", analysis, user, marker)[1]["code"], "model_paused")
+        draft = "/api/requirement-drafts/" + str(uuid4())
+        self.assertEqual(self.request(draft, {"text": "暂停时可保存", "revision": 0}, user, marker)[0], 200)
+        self.assertEqual(self.request(manage, {"action": "resume"}, admin, admin_marker)[0], 200)
+        self.assertEqual(self.request("/api/generate", {"requirement": " "}, user, marker)[0], 400)
+        self.assertEqual(self.request("/api/generate", {"requirement": "额度测试超时"}, user, marker)[0], 502)
+        after_failure = self.request(balance, cookie=user, marker=marker)[1]
+        self.assertEqual(after_failure["generation"]["remaining"], 5)
+        self.assertEqual(after_failure["generation"]["totalUsed"], initial["generation"]["totalUsed"] + 1)
+        self.assertEqual(self.request("/api/assistant/analyze", analysis, user, marker)[0], 200)
+        self.assertEqual(self.request("/api/assistant/analyze", analysis, user, marker)[1]["code"], "analysis_duplicate")
+        for _ in range(5):
+            status, tool, _ = self.request("/api/generate", {"requirement": "读书清单"}, user, marker)
+            self.assertEqual(status, 200)
+            self.assertEqual(self.request("/api/tools/" + tool["id"] + "/commit", {"entries": []}, user, marker)[0], 200)
+        self.assertEqual(self.request("/api/generate", {"requirement": "清单"}, user, marker)[1]["code"], "generation_account_limit")
+        self.assertEqual(self.request(manage, {"action": "grant", "username": "trial-user", "amount": 2}, admin, admin_marker)[0], 200)
+        status, current, _ = self.request(balance, cookie=user, marker=marker)
+        self.assertEqual(status, 200)
+        self.assertEqual((current["generation"]["remaining"], current["analysis"]["remaining"]), (2, 5))
+
+    def test_initial_publication_readback_fences_late_commit_and_keeps_single_charge(self):
+        self.assertEqual(self.register("initial-recover", self.store.create_invite())[0], 201)
+        cookie, marker = self.login("initial-recover")
+        self.assertEqual(self.register("initial-other", self.store.create_invite())[0], 201)
+        other, other_marker = self.login("initial-other")
+        _, first, _ = self.request("/api/generate", {"requirement": "保存回执未到达"}, cookie, marker)
+        path = "/api/tools/" + first["id"]
+        self.assertEqual(self.request(path + "/resolve-commit", {}, other, other_marker)[0], 404)
+        for _ in range(2):
+            self.assertEqual(self.request(path + "/resolve-commit", {}, cookie, marker)[:2],
+                             (200, {"applied": False}))
+        self.assertEqual(self.request(path + "/commit", {"entries": []}, cookie, marker)[0], 404)
+        self.assertEqual(self.request("/api/trial", cookie=cookie, marker=marker)[1]["generation"]["used"], 0)
+        _, second, _ = self.request("/api/generate", {"requirement": "保存已提交"}, cookie, marker)
+        path = "/api/tools/" + second["id"]
+        self.assertEqual(self.request(path + "/commit", {"entries": []}, cookie, marker)[0], 200)
+        for _ in range(2):
+            status, resolved, _ = self.request(path + "/resolve-commit", {}, cookie, marker)
+            self.assertEqual((status, resolved["applied"], resolved["id"]), (200, True, second["id"]))
+        self.assertEqual(self.request("/api/trial", cookie=cookie, marker=marker)[1]["generation"]["used"], 1)
+        self.assertEqual([item["id"] for item in self.request("/api/tools", cookie=cookie, marker=marker)[1]["items"]],
+                         [second["id"]])
 
     def test_requirement_drafts_owner_revision_and_replay(self):
         for username in ("draft-one", "draft-two"):
@@ -85,34 +153,36 @@ class AccountHTTP(unittest.TestCase):
     def test_assistant_fixture_has_structured_paths_without_generation(self):
         path = "/api/assistant/analyze"
         start = {"step": "start", "idea": "每周都要在群里问项目进度，不知道谁卡住了"}
-        self.assertEqual(self.request(path, start)[0], 401)
+        self.assertEqual(self.request(path, {**start, "requestId": str(uuid4())})[0], 401)
         self.assertEqual(self.register("assistant-path", self.store.create_invite())[0], 201)
         cookie, marker = self.login("assistant-path")
-        status, first, _ = self.request(path, start, cookie, marker)
+        def analyze(data):
+            return self.request(path, {**data, "requestId": str(uuid4())}, cookie, marker)
+        status, first, _ = analyze(start)
         self.assertEqual(status, 200)
         self.assertEqual(first["kind"], "directions")
         self.assertGreaterEqual(len(first["directions"]), 2)
         results = []
         for selected in first["directions"][:2]:
-            status, questions, _ = self.request(path, {
+            status, questions, _ = analyze({
                 **start, "step": "direction", "direction": selected,
-            }, cookie, marker)
+            })
             self.assertEqual(status, 200)
             self.assertEqual(questions["kind"], "questions")
             prompts = questions["questions"]
-            status, draft, _ = self.request(path, {
+            status, draft, _ = analyze({
                 **start, "step": "answers", "direction": selected, "questions": prompts,
                 "answers": [item["options"][0] for item in prompts],
-            }, cookie, marker)
+            })
             self.assertEqual((status, draft["kind"]), (200, "draft"))
             self.assertIn(selected["title"], draft["text"])
             results.append(prompts)
         self.assertNotEqual(*results)
-        status, clear, _ = self.request(path, {
+        status, clear, _ = analyze({
             "step": "start", "idea": "做一个读书清单，可以添加书名并标记已读，刷新后保留记录。",
-        }, cookie, marker)
+        })
         self.assertEqual((status, clear["kind"]), (200, "draft"))
-        self.assertEqual(self.request(path, {**start, "step": "answers"}, cookie, marker)[0], 400)
+        self.assertEqual(analyze({**start, "step": "answers"})[0], 400)
         self.assertEqual(self.request("/api/tools", cookie=cookie, marker=marker)[1]["items"], [])
 
     def test_csv_confirmation_publishes_with_original_rows(self):
@@ -139,6 +209,24 @@ class AccountHTTP(unittest.TestCase):
         self.assertEqual(self.request(path + "/commit", {"entries": tool["entries"]}, owner, marker)[0], 200)
         self.assertEqual(self.request(path, cookie=owner, marker=marker)[1]["entries"], tool["entries"])
         self.assertEqual(self.request(path, cookie=other, marker=other_marker)[0], 404)
+
+    def test_large_table_uses_only_its_trusted_storage_limit(self):
+        self.assertEqual(self.register("large-table", self.store.create_invite())[0], 201)
+        cookie, marker = self.login("large-table")
+        before = self.request("/api/trial", cookie=cookie, marker=marker)[1]["generation"]
+        csv = "项目,备注\n" + "".join(f"{index},{'x' * 4000}\n" for index in range(70))
+        status, table, _ = self.request("/api/table/inspect", {
+            "source": "upload", "filename": "large.csv", "csv": csv,
+        }, cookie, marker)
+        self.assertEqual(status, 200)
+        status, tool, _ = self.request("/api/table/generate", {"table": table}, cookie, marker)
+        self.assertEqual(status, 200)
+        self.assertGreater(len(tool["entries"][0][1]), 256 * 1024)
+        self.assertGreater(tool["storageLimit"], 256 * 1024)
+        path = "/api/tools/" + tool["id"]
+        self.assertEqual(self.request(path + "/commit", {"entries": tool["entries"]}, cookie, marker)[0], 200)
+        self.assertEqual(self.request(path, cookie=cookie, marker=marker)[1]["entries"], tool["entries"])
+        self.assertEqual(self.request("/api/trial", cookie=cookie, marker=marker)[1]["generation"], before)
 
     def register(self, name, invite):
         return self.request("/api/register", {

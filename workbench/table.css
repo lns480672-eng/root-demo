@@ -44,8 +44,22 @@
 
 .table-field {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto auto;
   gap: .5rem;
+}
+
+.elys-product .table-field-include {
+  display: flex;
+  align-items: center;
+  gap: .25rem;
+  white-space: nowrap;
+}
+
+.elys-product .table-field-include input {
+  inline-size: 1rem;
+  block-size: 1rem;
+  margin: 0;
+  padding: 0;
 }
 
 .table-field select {
