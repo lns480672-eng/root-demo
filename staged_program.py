@@ -29,7 +29,7 @@ class Fragment(HTMLParser):
     """Check that the model produced only inert markup under the generated tool root."""
 
     def __init__(self):
-        super().__init__(convert_charrefs=True)
+        super().__init__(convert_charrefs=False)
         self.open = []
 
     def handle_starttag(self, tag, attrs):
@@ -56,6 +56,11 @@ class Fragment(HTMLParser):
         if not self.open or self.open[-1] != tag:
             raise ValueError("bad_program_markup")
         self.open.pop()
+
+    def handle_data(self, data):
+        # A fragment ending in an incomplete tag could consume the host's closing markup.
+        if "<" in data:
+            raise ValueError("bad_program_markup")
 
     def handle_decl(self, decl):
         raise ValueError("bad_program_markup")

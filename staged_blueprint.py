@@ -28,7 +28,7 @@ markup 只能是工具根节点内的 HTML 片段：表单、按钮、标签、�
 所有非空元素显式写结束标签；禁止 html、head、body、script、style、iframe、SVG、外部资源、事件属性或表单 action。
 script 是普通 JavaScript 源码，勿含 script 标签、HTML 注释或 Markdown 围栏。用 DOM API 添加事件并阻止表单默认提交。
 使用 #root-program 内的节点，文字用 textContent 渲染，按需使用 localStorage。无网络、页面跳转或模块导入。
-宿主提供标题与基础样式。优先实现需求中的可操作功能，避免装饰。"""
+宿主已创建 #root-program 容器并提供标题与基础样式，markup 不要重复创建容器。正文中的小于号用 &lt;。优先实现可操作功能。"""
 TYPES = {"text", "date", "integer", "choice"}
 RULES = {
     "spec": """本阶段为任何需求选择一个计划，并输出相应 JSON。选择依据是核心功能和数据结构，不能只凭请求长度。

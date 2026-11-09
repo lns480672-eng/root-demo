@@ -122,7 +122,7 @@ class StageArtifactTests(unittest.TestCase):
         previous = {"spec.json":plan}
         payload = json.dumps({
             "markup": '<form id="numbers"><label>A<input id="a" type="number"></label>'
-                      '<button type="submit">Add</button><output id="result"></output></form>',
+                      '<button type="submit">Add</button><output id="result">&lt; 3</output></form>',
             "script": 'document.querySelector("#numbers").addEventListener("submit", (e) => {'
                       'e.preventDefault(); document.querySelector("#result").textContent = 1; });',
         }).encode()
@@ -142,6 +142,7 @@ class StageArtifactTests(unittest.TestCase):
         previous = {"spec.json":b'{"kind":"program","title":"Calculator","goal":"Add numbers"}'}
         bad = [
             ('<script>alert(1)</script>', 'safe()'),
+            ('<img src=x onerror=alert(1)', 'safe()'),
             ('<button onclick="alert(1)">Go</button>', 'safe()'),
             ('<a href="&#x6a;avascript:alert(1)">Bad</a>', 'safe()'),
             ('<form action="https://example.test/"><button>Go</button></form>', 'safe()'),
