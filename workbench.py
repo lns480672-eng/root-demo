@@ -20,7 +20,7 @@ import table_import
 import staged_blueprint
 from staged_jobs import StagedJobs
 from staged_route import choose_route
-from accounts import ApiError, SESSION_SECONDS, Store, TABLE_STORAGE_BYTES
+from accounts import ApiError, SESSION_SECONDS, Store, TABLE_STORAGE_BYTES, TOOL_STORAGE_BYTES
 from trial_budget import TrialBudget
 
 ROOT = Path(__file__).resolve().parent
@@ -316,8 +316,10 @@ def serve(key, port, runs=generate.RUNS, *, generation_limits=(5, 30), analysis_
                 size = int(self.headers.get("Content-Length", "0"))
                 if self.path == TABLE_INSPECT:
                     cap = 6 * table_limits.bytes + 65536
-                elif self.path == TABLE_GENERATE or TOOL_ACTION.fullmatch(self.path) or STAGED_ACTION.fullmatch(self.path):
+                elif self.path == TABLE_GENERATE or TOOL_ACTION.fullmatch(self.path):
                     cap = 2 * TABLE_STORAGE_BYTES
+                elif STAGED_ACTION.fullmatch(self.path) and self.path.endswith("/publish"):
+                    cap = 2 * TOOL_STORAGE_BYTES
                 else:
                     cap = 16000
                 if not 0 < size <= cap:

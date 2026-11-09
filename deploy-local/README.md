@@ -59,7 +59,7 @@ spki="$(openssl x509 -in "$state_dir/localhost.pem" -pubkey -noout | \
   --ignore-certificate-errors-spki-list="$spki" https://localhost:8801/
 ```
 
-代理表格识别请求上限默认为 6,356,992 字节，等于默认原始表格大小的六倍加 65,536 字节。修改工作台 `ROOT_TABLE_MAX_BYTES` 时，将 Caddy 的 `ROOT_LOCAL_INSPECT_LIMIT` 同步设为这个公式的结果。代理在表格识别路径使用该值。表格生成及工具数据请求在 16 MiB 内，其余请求按 16,000 字节限制。
+代理表格识别请求上限默认为 6,356,992 字节，等于默认原始表格大小的六倍加 65,536 字节。修改工作台 `ROOT_TABLE_MAX_BYTES` 时，将 Caddy 的 `ROOT_LOCAL_INSPECT_LIMIT` 同步设为这个公式的结果。代理在表格识别路径使用该值。表格生成及工具数据请求在 16 MiB 内。分阶段发布请求上限为 512 KiB，其余请求按 16,000 字节限制。
 
 本机证书、监听、邀请码和数据隔离用于开发及个人验收。正式 AC-003 还需用户授权拟部署版本，按拟部署环境核对代理信任、认证限流、日志留存、访问期限、额度和回退，然后从新的浏览器完成线上 G5。公开仓库、评审开放和笔试提交分别按已有授权执行。
 
