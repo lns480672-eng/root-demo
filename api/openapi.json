@@ -1,0 +1,3738 @@
+{
+  "openapi": "3.1.1",
+  "info": {
+    "title": "ROOT 工作台 API",
+    "version": "0.1.0",
+    "description": "ROOT 工作台的同源 JSON HTTP API。除明确标记为公开的操作外，需要 root_session Cookie 和从会话接口取得的 X-Root-Session。所有 POST 必须提供同源 Origin 与 application/json。默认模型新建走统一任务编排。管理员发码与分阶段修订扩展未纳入此快照；现有试用管理和既有修订接口已记录。"
+  },
+  "servers": [
+    {
+      "url": "http://127.0.0.1:8765",
+      "description": "本机工作台示例。端口以启动参数为准。"
+    }
+  ],
+  "security": [
+    {
+      "SessionCookie": [],
+      "SessionMarker": []
+    }
+  ],
+  "tags": [
+    {
+      "name": "工作台"
+    },
+    {
+      "name": "账号"
+    },
+    {
+      "name": "工具"
+    },
+    {
+      "name": "需求"
+    },
+    {
+      "name": "表格"
+    },
+    {
+      "name": "试用"
+    },
+    {
+      "name": "生成任务"
+    }
+  ],
+  "paths": {
+    "/api/config": {
+      "get": {
+        "operationId": "readConfig",
+        "tags": [
+          "工作台"
+        ],
+        "summary": "读取工作台配置",
+        "description": "只报告是否配置模型凭据及构建标识。统一任务编排启用时返回 staged=true。",
+        "responses": {
+          "200": {
+            "description": "读取工作台配置",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Config"
+                }
+              }
+            }
+          },
+          "403": {
+            "$ref": "#/components/responses/Http403"
+          },
+          "503": {
+            "$ref": "#/components/responses/Http503"
+          },
+          "default": {
+            "$ref": "#/components/responses/UnexpectedError"
+          }
+        },
+        "security": []
+      }
+    },
+    "/api/releases": {
+      "get": {
+        "operationId": "listReleases",
+        "tags": [
+          "工作台"
+        ],
+        "summary": "读取版本发布记录",
+        "description": "当前工作台版本与版本说明。",
+        "responses": {
+          "200": {
+            "description": "读取版本发布记录",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReleaseHistory"
+                }
+              }
+            }
+          },
+          "403": {
+            "$ref": "#/components/responses/Http403"
+          },
+          "503": {
+            "$ref": "#/components/responses/Http503"
+          },
+          "default": {
+            "$ref": "#/components/responses/UnexpectedError"
+          }
+        },
+        "security": []
+      }
+    },
+    "/api/egress-check": {
+      "get": {
+        "operationId": "probePreviewIsolation",
+        "tags": [
+          "工作台"
+        ],
+        "summary": "探测预览出站限制",
+        "description": "内部本机探针，用于检查浏览器是否阻止此路径。普通浏览器工作台不应获得该响应。",
+        "responses": {
+          "200": {
+            "description": "探测预览出站限制",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "allowed": {
+                      "const": true
+                    }
+                  },
+                  "required": [
+                    "allowed"
+                  ]
+                }
+              }
+            }
+          },
+          "403": {
+            "$ref": "#/components/responses/Http403"
+          },
+          "503": {
+            "$ref": "#/components/responses/Http503"
+          },
+          "default": {
+            "$ref": "#/components/responses/UnexpectedError"
+          }
+        },
+        "security": [],
+        "x-internal": true
+      }
+    },
+    "/api/session": {
+      "get": {
+        "operationId": "readSession",
+        "tags": [
+          "账号"
+        ],
+        "summary": "读取登录会话",
+        "description": "只依赖 Cookie。未登录、Cookie 无效或会话已过期仍返回 200，user 为 null。已登录返回 X-Root-Session 的 marker。",
+        "responses": {
+          "200": {
+            "description": "读取登录会话",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Session"
+                }
+              }
+            }
+          },
+          "403": {
+            "$ref": "#/components/responses/Http403"
+          },
+          "503": {
+            "$ref": "#/components/responses/Http503"
+          },
+          "default": {
+            "$ref": "#/components/responses/UnexpectedError"
+          }
+        },
+        "security": [
+          {},
+          {
+            "SessionCookie": []
+          }
+        ]
+      }
+    },
+    "/api/register": {
+      "post": {
+        "operationId": "registerAccount",
+        "tags": [
+          "账号"
+        ],
+        "summary": "使用邀请码注册并登录",
+        "description": "成功注册才消耗邀请码，同时签发 Cookie。邀请码错误可按 inviteReason 区分缺失、无效、过期和已使用。",
+        "responses": {
+          "201": {
+            "description": "使用邀请码注册并登录",
+            "headers": {
+              "Set-Cookie": {
+                "$ref": "#/components/headers/SetSessionCookie"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthenticatedSession"
+                }
+              }
+            }
+          },
+          "409": {
+            "$ref": "#/components/responses/Http409"
+          },
+          "403": {
+            "$ref": "#/components/responses/Http403"
+          },
+          "400": {
+            "$ref": "#/components/responses/Http400"
+          },
+          "415": {
+            "$ref": "#/components/responses/Http415"
+          },
+          "503": {
+            "$ref": "#/components/responses/Http503"
+          },
+          "default": {
+            "$ref": "#/components/responses/UnexpectedError"
+          }
+        },
+        "security": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RegisterRequest"
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Origin"
+          }
+        ]
+      }
+    },
+    "/api/login": {
+      "post": {
+        "operationId": "loginAccount",
+        "tags": [
+          "账号"
+        ],
+        "summary": "登录并签发会话 Cookie",
+        "description": "登录后用 GET /api/session 读取 marker。登录响应不含 marker。",
+        "responses": {
+          "200": {
+            "description": "登录并签发会话 Cookie",
+            "headers": {
+              "Set-Cookie": {
+                "$ref": "#/components/headers/SetSessionCookie"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Ok"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Http401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Http403"
+          },
+          "400": {
+            "$ref": "#/components/responses/Http400"
+          },
+          "415": {
+            "$ref": "#/components/responses/Http415"
+          },
+          "503": {
+            "$ref": "#/components/responses/Http503"
+          },
+          "default": {
+            "$ref": "#/components/responses/UnexpectedError"
+          }
+        },
+        "security": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LoginRequest"
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Origin"
+          }
+        ]
+      }
+    },
+    "/api/logout": {
+      "post": {
+        "operationId": "logoutAccount",
+        "tags": [
+          "账号"
+        ],
+        "summary": "退出当前会话",
+        "description": "服务端删除当前会话，同时清除登录 Cookie。",
+        "responses": {
+          "200": {
+            "description": "退出当前会话",
+            "headers": {
+              "Set-Cookie": {
+                "$ref": "#/components/headers/SetSessionCookie"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Ok"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Http401"
+          },
+          "409": {
+            "$ref": "#/components/responses/Http409"
+          },
+          "403": {
+            "$ref": "#/components/responses/Http403"
+          },
+          "400": {
+            "$ref": "#/components/responses/Http400"
+          },
+          "415": {
+            "$ref": "#/components/responses/Http415"
+          },
+          "503": {
+            "$ref": "#/components/responses/Http503"
+          },
+          "default": {
+            "$ref": "#/components/responses/UnexpectedError"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Empty"
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Origin"
+          }
+        ]
+      }
+    },
+    "/api/tools": {
+      "get": {
+        "operationId": "listTools",
+        "tags": [
+          "工具"
+        ],
+        "summary": "列出当前账号的已保存工具",
+        "description": "尚未提交的预览候选不进入工具库。latest 是最近打开或保存的工具。",
+        "responses": {
+          "200": {
+            "description": "列出当前账号的已保存工具",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ToolList"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Http401"
+          },
+          "409": {
+            "$ref": "#/components/responses/Http409"
+          },
+          "403": {
+            "$ref": "#/components/responses/Http403"
+          },
+          "503": {
+            "$ref": "#/components/responses/Http503"
+          },
+          "default": {
+            "$ref": "#/components/responses/UnexpectedError"
+          }
+        }
+      }
+    },
+    "/api/tools/{toolId}": {
+      "get": {
+        "operationId": "readTool",
+        "tags": [
+          "工具"
+        ],
+        "summary": "读取已保存工具",
+        "description": "返回当前可用版本和完整存储快照。",
+        "responses": {
+          "200": {
+            "description": "读取已保存工具",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Tool"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Http401"
+          },
+          "404": {
+            "$ref": "#/components/responses/Http404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Http409"
+          },
+          "403": {
+            "$ref": "#/components/responses/Http403"
+          },
+          "503": {
+            "$ref": "#/components/responses/Http503"
+          },
+          "default": {
+            "$ref": "#/components/responses/UnexpectedError"
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ToolId"
+          }
+        ]
+      }
+    },
+    "/api/tools/{toolId}/versions": {
+      "get": {
+        "operationId": "listToolVersions",
+        "tags": [
+          "工具"
+        ],
+        "summary": "读取工具版本历史",
+        "description": "版本按降序返回。旧版本可能没有生效时间或只提供近似值。",
+        "responses": {
+          "200": {
+            "description": "读取工具版本历史",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ToolHistory"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Http401"
+          },
+          "404": {
+            "$ref": "#/components/responses/Http404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Http409"
+          },
+          "403": {
+            "$ref": "#/components/responses/Http403"
+          },
+          "503": {
+            "$ref": "#/components/responses/Http503"
+          },
+          "default": {
+            "$ref": "#/components/responses/UnexpectedError"
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ToolId"
+          }
+        ]
+      }
+    },
+    "/api/tools/{toolId}/open": {
+      "post": {
+        "operationId": "markToolOpened",
+        "tags": [
+          "工具"
+        ],
+        "summary": "将工具标记为最近打开",
+        "description": "可带当前版本号做并发校验。不会增加存储修订号。",
+        "responses": {
+          "200": {
+            "description": "将工具标记为最近打开",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ToolRevision"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Http401"
+          },
+          "404": {
+            "$ref": "#/components/responses/Http404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Http409"
+          },
+          "403": {
+            "$ref": "#/components/responses/Http403"
+          },
+          "400": {
+            "$ref": "#/components/responses/Http400"
+          },
+          "415": {
+            "$ref": "#/components/responses/Http415"
+          },
+          "503": {
+            "$ref": "#/components/responses/Http503"
+          },
+          "default": {
+            "$ref": "#/components/responses/UnexpectedError"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OpenToolRequest"
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ToolId"
+          },
+          {
+            "$ref": "#/components/parameters/Origin"
+          }
+        ]
+      }
+    },
+    "/api/tools/{toolId}/data": {
+      "post": {
+        "operationId": "saveToolData",
+        "tags": [
+          "工具"
+        ],
+        "summary": "保存工具的完整存储快照",
+        "description": "修订号和工具版本必须与服务端一致。成功后修订号递增；冲突应重新读工具。",
+        "responses": {
+          "200": {
+            "description": "保存工具的完整存储快照",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ToolRevision"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Http401"
+          },
+          "404": {
+            "$ref": "#/components/responses/Http404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Http409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Http413"
+          },
+          "403": {
+            "$ref": "#/components/responses/Http403"
+          },
+          "400": {
+            "$ref": "#/components/responses/Http400"
+          },
+          "415": {
+            "$ref": "#/components/responses/Http415"
+          },
+          "503": {
+            "$ref": "#/components/responses/Http503"
+          },
+          "default": {
+            "$ref": "#/components/responses/UnexpectedError"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SaveToolDataRequest"
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ToolId"
+          },
+          {
+            "$ref": "#/components/parameters/Origin"
+          }
+        ]
+      }
+    },
+    "/api/tools/{toolId}/commit": {
+      "post": {
+        "operationId": "commitInitialTool",
+        "tags": [
+          "工具"
+        ],
+        "summary": "首次保存预览通过的工具",
+        "description": "用于从表格生成的候选及关闭编排时的本地对照。回执未知时用 resolve-commit 核对。统一编排任务使用自己的 publish 接口。",
+        "responses": {
+          "200": {
+            "description": "首次保存预览通过的工具",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ToolRevision"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Http401"
+          },
+          "404": {
+            "$ref": "#/components/responses/Http404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Http409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Http413"
+          },
+          "429": {
+            "$ref": "#/components/responses/Http429"
+          },
+          "403": {
+            "$ref": "#/components/responses/Http403"
+          },
+          "400": {
+            "$ref": "#/components/responses/Http400"
+          },
+          "415": {
+            "$ref": "#/components/responses/Http415"
+          },
+          "503": {
+            "$ref": "#/components/responses/Http503"
+          },
+          "default": {
+            "$ref": "#/components/responses/UnexpectedError"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CommitToolRequest"
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ToolId"
+          },
+          {
+            "$ref": "#/components/parameters/Origin"
+          }
+        ]
+      }
+    },
+    "/api/tools/{toolId}/resolve-commit": {
+      "post": {
+        "operationId": "resolveInitialToolCommit",
+        "tags": [
+          "工具"
+        ],
+        "summary": "核对首次保存结果",
+        "description": "已保存返回同一工具及 applied=true。未保存时撤销未完成的初始候选并返回 applied=false，防止晚到写入。",
+        "responses": {
+          "200": {
+            "description": "核对首次保存结果",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResolveInitialResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Http401"
+          },
+          "404": {
+            "$ref": "#/components/responses/Http404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Http409"
+          },
+          "403": {
+            "$ref": "#/components/responses/Http403"
+          },
+          "400": {
+            "$ref": "#/components/responses/Http400"
+          },
+          "415": {
+            "$ref": "#/components/responses/Http415"
+          },
+          "503": {
+            "$ref": "#/components/responses/Http503"
+          },
+          "default": {
+            "$ref": "#/components/responses/UnexpectedError"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Empty"
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ToolId"
+          },
+          {
+            "$ref": "#/components/parameters/Origin"
+          }
+        ]
+      }
+    },
+    "/api/tools/{toolId}/revise": {
+      "post": {
+        "operationId": "prepareLegacyRevision",
+        "tags": [
+          "工具"
+        ],
+        "summary": "生成现有工具的修订候选",
+        "description": "当前仍是既有修订协议。校验基准版本，保留已存在的存储数据。分阶段修订扩展尚未纳入此契约。",
+        "responses": {
+          "200": {
+            "description": "生成现有工具的修订候选",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LegacyRevisionCandidate"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Http401"
+          },
+          "404": {
+            "$ref": "#/components/responses/Http404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Http409"
+          },
+          "429": {
+            "$ref": "#/components/responses/Http429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Http500"
+          },
+          "502": {
+            "$ref": "#/components/responses/Http502"
+          },
+          "403": {
+            "$ref": "#/components/responses/Http403"
+          },
+          "400": {
+            "$ref": "#/components/responses/Http400"
+          },
+          "415": {
+            "$ref": "#/components/responses/Http415"
+          },
+          "503": {
+            "$ref": "#/components/responses/Http503"
+          },
+          "default": {
+            "$ref": "#/components/responses/UnexpectedError"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LegacyRevisionRequest"
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ToolId"
+          },
+          {
+            "$ref": "#/components/parameters/Origin"
+          }
+        ]
+      }
+    },
+    "/api/tools/{toolId}/publish": {
+      "post": {
+        "operationId": "publishLegacyRevision",
+        "tags": [
+          "工具"
+        ],
+        "summary": "发布既有修订候选",
+        "description": "绑定运行 ID 和最新存储修订号。新版必须保留既有数据。回执不确定时先 resolve-publish。",
+        "responses": {
+          "200": {
+            "description": "发布既有修订候选",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RevisedToolVersion"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Http401"
+          },
+          "404": {
+            "$ref": "#/components/responses/Http404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Http409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Http413"
+          },
+          "429": {
+            "$ref": "#/components/responses/Http429"
+          },
+          "403": {
+            "$ref": "#/components/responses/Http403"
+          },
+          "400": {
+            "$ref": "#/components/responses/Http400"
+          },
+          "415": {
+            "$ref": "#/components/responses/Http415"
+          },
+          "503": {
+            "$ref": "#/components/responses/Http503"
+          },
+          "default": {
+            "$ref": "#/components/responses/UnexpectedError"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LegacyRevisionPublish"
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ToolId"
+          },
+          {
+            "$ref": "#/components/parameters/Origin"
+          }
+        ]
+      }
+    },
+    "/api/tools/{toolId}/resolve-publish": {
+      "post": {
+        "operationId": "resolveLegacyRevision",
+        "tags": [
+          "工具"
+        ],
+        "summary": "核对既有修订发布结果",
+        "description": "返回实际可用版本与 applied 标记，并取消尚未生效的指定修订候选。",
+        "responses": {
+          "200": {
+            "description": "核对既有修订发布结果",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResolveRevisionResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Http401"
+          },
+          "404": {
+            "$ref": "#/components/responses/Http404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Http409"
+          },
+          "403": {
+            "$ref": "#/components/responses/Http403"
+          },
+          "400": {
+            "$ref": "#/components/responses/Http400"
+          },
+          "415": {
+            "$ref": "#/components/responses/Http415"
+          },
+          "503": {
+            "$ref": "#/components/responses/Http503"
+          },
+          "default": {
+            "$ref": "#/components/responses/UnexpectedError"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResolveRevisionRequest"
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ToolId"
+          },
+          {
+            "$ref": "#/components/parameters/Origin"
+          }
+        ]
+      }
+    },
+    "/api/requirement-drafts": {
+      "get": {
+        "operationId": "listDrafts",
+        "tags": [
+          "需求"
+        ],
+        "summary": "列出当前账号草稿",
+        "description": "按更新时间排序。",
+        "responses": {
+          "200": {
+            "description": "列出当前账号草稿",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DraftList"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Http401"
+          },
+          "409": {
+            "$ref": "#/components/responses/Http409"
+          },
+          "403": {
+            "$ref": "#/components/responses/Http403"
+          },
+          "503": {
+            "$ref": "#/components/responses/Http503"
+          },
+          "default": {
+            "$ref": "#/components/responses/UnexpectedError"
+          }
+        }
+      }
+    },
+    "/api/requirement-drafts/{draftId}": {
+      "get": {
+        "operationId": "readDraft",
+        "tags": [
+          "需求"
+        ],
+        "summary": "读取需求草稿",
+        "description": "仅草稿所属账号可读。",
+        "responses": {
+          "200": {
+            "description": "读取需求草稿",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Draft"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Http401"
+          },
+          "404": {
+            "$ref": "#/components/responses/Http404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Http409"
+          },
+          "403": {
+            "$ref": "#/components/responses/Http403"
+          },
+          "503": {
+            "$ref": "#/components/responses/Http503"
+          },
+          "default": {
+            "$ref": "#/components/responses/UnexpectedError"
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/DraftId"
+          }
+        ]
+      },
+      "post": {
+        "operationId": "saveDraft",
+        "tags": [
+          "需求"
+        ],
+        "summary": "新建或更新草稿",
+        "description": "新草稿由客户端指定 UUID v4，提交 revision=0。已有草稿按修订号并发校验。相同内容重放已完成的写入返回原记录。",
+        "responses": {
+          "200": {
+            "description": "新建或更新草稿",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Draft"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Http401"
+          },
+          "404": {
+            "$ref": "#/components/responses/Http404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Http409"
+          },
+          "403": {
+            "$ref": "#/components/responses/Http403"
+          },
+          "400": {
+            "$ref": "#/components/responses/Http400"
+          },
+          "415": {
+            "$ref": "#/components/responses/Http415"
+          },
+          "503": {
+            "$ref": "#/components/responses/Http503"
+          },
+          "default": {
+            "$ref": "#/components/responses/UnexpectedError"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SaveDraft"
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/DraftId"
+          },
+          {
+            "$ref": "#/components/parameters/Origin"
+          }
+        ]
+      }
+    },
+    "/api/assistant/analyze": {
+      "post": {
+        "operationId": "analyzeRequirement",
+        "tags": [
+          "需求"
+        ],
+        "summary": "运行需求助手的一步分析",
+        "description": "依次提交 start、direction 或 answers。start 可直接得到 draft。direction 可得到 questions 或 draft；answers 得到 draft。每次真实派发按分析额度计次，同一账号已派发 requestId 再用返回 analysis_duplicate。",
+        "responses": {
+          "200": {
+            "description": "运行需求助手的一步分析",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnalysisResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Http401"
+          },
+          "409": {
+            "$ref": "#/components/responses/Http409"
+          },
+          "429": {
+            "$ref": "#/components/responses/Http429"
+          },
+          "502": {
+            "$ref": "#/components/responses/Http502"
+          },
+          "504": {
+            "$ref": "#/components/responses/Http504"
+          },
+          "403": {
+            "$ref": "#/components/responses/Http403"
+          },
+          "400": {
+            "$ref": "#/components/responses/Http400"
+          },
+          "415": {
+            "$ref": "#/components/responses/Http415"
+          },
+          "503": {
+            "$ref": "#/components/responses/Http503"
+          },
+          "default": {
+            "$ref": "#/components/responses/UnexpectedError"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnalysisRequest"
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Origin"
+          }
+        ]
+      }
+    },
+    "/api/table/config": {
+      "get": {
+        "operationId": "readTableLimits",
+        "tags": [
+          "表格"
+        ],
+        "summary": "读取表格限制",
+        "description": "以此接口给出的上传字节数、行数、列数为准。",
+        "responses": {
+          "200": {
+            "description": "读取表格限制",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TableLimits"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Http401"
+          },
+          "409": {
+            "$ref": "#/components/responses/Http409"
+          },
+          "403": {
+            "$ref": "#/components/responses/Http403"
+          },
+          "503": {
+            "$ref": "#/components/responses/Http503"
+          },
+          "default": {
+            "$ref": "#/components/responses/UnexpectedError"
+          }
+        }
+      }
+    },
+    "/api/table/inspect": {
+      "post": {
+        "operationId": "inspectTable",
+        "tags": [
+          "表格"
+        ],
+        "summary": "识别 CSV、XLSX 或内置示例",
+        "description": "CSV 传 UTF-8 文本，XLSX 传 Base64。XLSX 只识别首张工作表。此步不派发模型。",
+        "responses": {
+          "200": {
+            "description": "识别 CSV、XLSX 或内置示例",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InspectedTable"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Http401"
+          },
+          "409": {
+            "$ref": "#/components/responses/Http409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Http413"
+          },
+          "403": {
+            "$ref": "#/components/responses/Http403"
+          },
+          "400": {
+            "$ref": "#/components/responses/Http400"
+          },
+          "415": {
+            "$ref": "#/components/responses/Http415"
+          },
+          "503": {
+            "$ref": "#/components/responses/Http503"
+          },
+          "default": {
+            "$ref": "#/components/responses/UnexpectedError"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InspectTable"
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Origin"
+          }
+        ]
+      }
+    },
+    "/api/table/generate": {
+      "post": {
+        "operationId": "generateTableTool",
+        "tags": [
+          "表格"
+        ],
+        "summary": "按确认后的表格生成预填工具",
+        "description": "本地模板生成，无模型计次。字段可用 include 排除，成功时只返回预览候选；首次保存使用工具 commit。",
+        "responses": {
+          "200": {
+            "description": "按确认后的表格生成预填工具",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TableCandidate"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Http401"
+          },
+          "409": {
+            "$ref": "#/components/responses/Http409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Http413"
+          },
+          "403": {
+            "$ref": "#/components/responses/Http403"
+          },
+          "400": {
+            "$ref": "#/components/responses/Http400"
+          },
+          "415": {
+            "$ref": "#/components/responses/Http415"
+          },
+          "503": {
+            "$ref": "#/components/responses/Http503"
+          },
+          "default": {
+            "$ref": "#/components/responses/UnexpectedError"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConfirmedTable"
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Origin"
+          }
+        ]
+      }
+    },
+    "/api/trial": {
+      "get": {
+        "operationId": "readTrialBalance",
+        "tags": [
+          "试用"
+        ],
+        "summary": "读取账号和全站余额",
+        "description": "生成个人额度按成功保存计次，站点额度按真实派发计次。分析个人额度在北京时间零点重置。",
+        "responses": {
+          "200": {
+            "description": "读取账号和全站余额",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TrialBalance"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Http401"
+          },
+          "409": {
+            "$ref": "#/components/responses/Http409"
+          },
+          "403": {
+            "$ref": "#/components/responses/Http403"
+          },
+          "503": {
+            "$ref": "#/components/responses/Http503"
+          },
+          "default": {
+            "$ref": "#/components/responses/UnexpectedError"
+          }
+        }
+      }
+    },
+    "/api/trial/admin": {
+      "get": {
+        "operationId": "readAdminTrialState",
+        "tags": [
+          "试用"
+        ],
+        "summary": "读取管理员试用状态",
+        "description": "要求已配置并预先存在的管理员账号。返回生成与分析各自的全站用量、已结束数、失败数和失败率，以及账号额度、暂停状态和最近的操作记录。调用前拒绝或结果未知的请求不参与失败率。",
+        "responses": {
+          "200": {
+            "description": "读取管理员试用状态",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminTrialState"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Http401"
+          },
+          "409": {
+            "$ref": "#/components/responses/Http409"
+          },
+          "403": {
+            "$ref": "#/components/responses/Http403"
+          },
+          "503": {
+            "$ref": "#/components/responses/Http503"
+          },
+          "default": {
+            "$ref": "#/components/responses/UnexpectedError"
+          }
+        }
+      },
+      "post": {
+        "operationId": "updateAdminTrialState",
+        "tags": [
+          "试用"
+        ],
+        "summary": "管理员补额、暂停或恢复",
+        "description": "传 requestId 可幂等重放。同一操作者、同一 ID 与相同动作参数不重复写入。复用 ID 但参数变化返回 409。",
+        "responses": {
+          "200": {
+            "description": "管理员补额、暂停或恢复",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminTrialResult"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Http401"
+          },
+          "404": {
+            "$ref": "#/components/responses/Http404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Http409"
+          },
+          "403": {
+            "$ref": "#/components/responses/Http403"
+          },
+          "400": {
+            "$ref": "#/components/responses/Http400"
+          },
+          "415": {
+            "$ref": "#/components/responses/Http415"
+          },
+          "503": {
+            "$ref": "#/components/responses/Http503"
+          },
+          "default": {
+            "$ref": "#/components/responses/UnexpectedError"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdminTrialAction"
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Origin"
+          }
+        ]
+      }
+    },
+    "/api/generate": {
+      "post": {
+        "operationId": "startGeneration",
+        "tags": [
+          "生成任务"
+        ],
+        "summary": "发起统一模型生成任务",
+        "description": "所有新工具模型生成默认使用同一编排，服务端决定阶段和实现块。返回 202 表示已接受，不代表生成完成。相同账号用同一 requestId 和需求可取回同一任务。不同内容重放返回 staged_request_changed。在关闭编排的本地测试对照中，此接口可返回传统 200 预览候选；该对照不属于默认契约。",
+        "responses": {
+          "202": {
+            "description": "发起统一模型生成任务",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StagedTaskEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Http401"
+          },
+          "409": {
+            "$ref": "#/components/responses/Http409"
+          },
+          "403": {
+            "$ref": "#/components/responses/Http403"
+          },
+          "400": {
+            "$ref": "#/components/responses/Http400"
+          },
+          "415": {
+            "$ref": "#/components/responses/Http415"
+          },
+          "503": {
+            "$ref": "#/components/responses/Http503"
+          },
+          "default": {
+            "$ref": "#/components/responses/UnexpectedError"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StartGeneration"
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Origin"
+          }
+        ]
+      }
+    },
+    "/api/staged": {
+      "get": {
+        "operationId": "listGenerationTasks",
+        "tags": [
+          "生成任务"
+        ],
+        "summary": "列出当前账号的生成任务",
+        "description": "按最近更新排序，至多 30 条。不列已发布任务；它们可通过任务 ID 单独读取。",
+        "responses": {
+          "200": {
+            "description": "列出当前账号的生成任务",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StagedTaskList"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Http401"
+          },
+          "404": {
+            "$ref": "#/components/responses/Http404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Http409"
+          },
+          "403": {
+            "$ref": "#/components/responses/Http403"
+          },
+          "503": {
+            "$ref": "#/components/responses/Http503"
+          },
+          "default": {
+            "$ref": "#/components/responses/UnexpectedError"
+          }
+        }
+      }
+    },
+    "/api/staged/{taskId}": {
+      "get": {
+        "operationId": "readGenerationTask",
+        "tags": [
+          "生成任务"
+        ],
+        "summary": "读取同一生成任务",
+        "description": "按账号鉴权。状态已发布时返回 toolId，供保存响应丢失后读取同一已保存工具。",
+        "responses": {
+          "200": {
+            "description": "读取同一生成任务",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StagedTaskEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Http401"
+          },
+          "404": {
+            "$ref": "#/components/responses/Http404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Http409"
+          },
+          "403": {
+            "$ref": "#/components/responses/Http403"
+          },
+          "503": {
+            "$ref": "#/components/responses/Http503"
+          },
+          "default": {
+            "$ref": "#/components/responses/UnexpectedError"
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/TaskId"
+          }
+        ]
+      }
+    },
+    "/api/staged/{taskId}/resume": {
+      "post": {
+        "operationId": "resumeGenerationTask",
+        "tags": [
+          "生成任务"
+        ],
+        "summary": "继续尚未完成的生成任务",
+        "description": "从首个未通过的阶段继续，不重复已通过阶段。同一任务同一时间只允许一个执行者。已在执行或终态可返回现有状态，不保证新派发。",
+        "responses": {
+          "202": {
+            "description": "继续尚未完成的生成任务",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StagedTaskEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Http401"
+          },
+          "404": {
+            "$ref": "#/components/responses/Http404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Http409"
+          },
+          "403": {
+            "$ref": "#/components/responses/Http403"
+          },
+          "400": {
+            "$ref": "#/components/responses/Http400"
+          },
+          "415": {
+            "$ref": "#/components/responses/Http415"
+          },
+          "503": {
+            "$ref": "#/components/responses/Http503"
+          },
+          "default": {
+            "$ref": "#/components/responses/UnexpectedError"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Empty"
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/TaskId"
+          },
+          {
+            "$ref": "#/components/parameters/Origin"
+          }
+        ]
+      }
+    },
+    "/api/staged/{taskId}/candidate": {
+      "post": {
+        "operationId": "prepareGenerationCandidate",
+        "tags": [
+          "生成任务"
+        ],
+        "summary": "读取并绑定私有预览候选",
+        "description": "任务必须完成且未发布。重复取同一候选保留相同绑定。此接口不把工具加入工具库，也不扣个人生成次数。",
+        "responses": {
+          "200": {
+            "description": "读取并绑定私有预览候选",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StagedCandidate"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Http401"
+          },
+          "404": {
+            "$ref": "#/components/responses/Http404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Http409"
+          },
+          "403": {
+            "$ref": "#/components/responses/Http403"
+          },
+          "400": {
+            "$ref": "#/components/responses/Http400"
+          },
+          "415": {
+            "$ref": "#/components/responses/Http415"
+          },
+          "503": {
+            "$ref": "#/components/responses/Http503"
+          },
+          "default": {
+            "$ref": "#/components/responses/UnexpectedError"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Empty"
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/TaskId"
+          },
+          {
+            "$ref": "#/components/parameters/Origin"
+          }
+        ]
+      }
+    },
+    "/api/staged/{taskId}/publish": {
+      "post": {
+        "operationId": "publishGenerationTask",
+        "tags": [
+          "生成任务"
+        ],
+        "summary": "保存通过预览检查的候选",
+        "description": "工作台在隔离预览确认后，使用同一任务的候选绑定及快照保存。匹配的重复提交返回同一工具，只扣一次个人成功额度。若保存回执丢失，先 GET 该任务。published 时使用 toolId 打开已有工具；complete 时重新检查同一候选。",
+        "responses": {
+          "200": {
+            "description": "保存通过预览检查的候选",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublishedStagedTool"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Http401"
+          },
+          "404": {
+            "$ref": "#/components/responses/Http404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Http409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Http413"
+          },
+          "429": {
+            "$ref": "#/components/responses/Http429"
+          },
+          "403": {
+            "$ref": "#/components/responses/Http403"
+          },
+          "400": {
+            "$ref": "#/components/responses/Http400"
+          },
+          "415": {
+            "$ref": "#/components/responses/Http415"
+          },
+          "503": {
+            "$ref": "#/components/responses/Http503"
+          },
+          "default": {
+            "$ref": "#/components/responses/UnexpectedError"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PublishStagedCandidate"
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/TaskId"
+          },
+          {
+            "$ref": "#/components/parameters/Origin"
+          }
+        ]
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "SessionCookie": {
+        "type": "apiKey",
+        "in": "cookie",
+        "name": "root_session",
+        "description": "注册或登录签发的 HttpOnly Cookie。浏览器负责保存和发送。"
+      },
+      "SessionMarker": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-Root-Session",
+        "description": "当前 Cookie 对应会话的 marker，须通过 GET /api/session 或注册响应取得。"
+      }
+    },
+    "parameters": {
+      "Origin": {
+        "name": "Origin",
+        "in": "header",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "format": "uri"
+        },
+        "description": "必须匹配工作台来源。浏览器会自动设置。"
+      },
+      "ToolId": {
+        "name": "toolId",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "pattern": "^run-[a-z0-9_]{8}$"
+        }
+      },
+      "DraftId": {
+        "name": "draftId",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+        }
+      },
+      "TaskId": {
+        "name": "taskId",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{32}$"
+        }
+      }
+    },
+    "headers": {
+      "SetSessionCookie": {
+        "schema": {
+          "type": "string"
+        },
+        "description": "签发或清除 root_session。工作台本机 Cookie 使用 HttpOnly、SameSite=Strict、Path=/。"
+      }
+    },
+    "responses": {
+      "Http400": {
+        "description": "请求字段、格式或长度无效。",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "Http401": {
+        "description": "缺少有效的登录会话，或登录凭据错误。",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "Http403": {
+        "description": "Host 或 Origin 不受信任，或当前账号权限不足。",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "Http404": {
+        "description": "目标不存在、尚未对当前接口公开，或不属于当前账号。",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "Http409": {
+        "description": "会话、版本、请求标识或任务状态冲突，请先重新读取状态。",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "Http413": {
+        "description": "表格内容或工具存储快照超出上限。",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "Http415": {
+        "description": "请求的 Content-Type 必须为 application/json。",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "Http429": {
+        "description": "个人或全站调用额度已用完。",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "Http500": {
+        "description": "本地保存未完成。",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "Http502": {
+        "description": "模型请求或结果校验失败。",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "Http503": {
+        "description": "工作台、模型服务或存储当前不可用。",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "Http504": {
+        "description": "模型请求超时。",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "UnexpectedError": {
+        "description": "其他工作台 JSON 错误。",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      }
+    },
+    "schemas": {
+      "Error": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string",
+            "minLength": 1,
+            "description": "稳定的机器错误码。"
+          },
+          "message": {
+            "type": "string",
+            "minLength": 1,
+            "description": "可展示给用户的提示。"
+          },
+          "issue": {
+            "type": "string",
+            "description": "某些生成错误的排障编号。"
+          },
+          "inviteReason": {
+            "type": "string",
+            "enum": [
+              "missing",
+              "invalid",
+              "expired",
+              "used"
+            ],
+            "description": "注册邀请码错误的细分原因。"
+          }
+        },
+        "required": [
+          "code",
+          "message"
+        ]
+      },
+      "Empty": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false,
+        "description": "以空 JSON 对象 {} 发送。"
+      },
+      "Ok": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "const": true
+          }
+        },
+        "required": [
+          "ok"
+        ]
+      },
+      "Config": {
+        "type": "object",
+        "properties": {
+          "configured": {
+            "type": "boolean"
+          },
+          "build": {
+            "type": "string"
+          },
+          "staged": {
+            "const": true
+          }
+        },
+        "required": [
+          "configured",
+          "build"
+        ]
+      },
+      "ReleaseHistory": {
+        "type": "object",
+        "properties": {
+          "current": {
+            "type": "string"
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "version": {
+                  "type": "string"
+                },
+                "date": {
+                  "type": "string",
+                  "format": "date"
+                },
+                "build": {
+                  "type": "string"
+                },
+                "note": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "version",
+                "date",
+                "build",
+                "note"
+              ]
+            }
+          }
+        },
+        "required": [
+          "current",
+          "items"
+        ]
+      },
+      "AuthenticatedSession": {
+        "type": "object",
+        "properties": {
+          "user": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{3,32}$",
+            "description": "账号按去掉首尾空白的小写值处理。"
+          },
+          "marker": {
+            "type": "string",
+            "minLength": 1
+          },
+          "latest": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^run-[a-z0-9_]{8}$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "user",
+          "marker",
+          "latest"
+        ]
+      },
+      "Session": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/AuthenticatedSession"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "user": {
+                "type": "null"
+              }
+            },
+            "required": [
+              "user"
+            ]
+          }
+        ]
+      },
+      "RegisterRequest": {
+        "type": "object",
+        "properties": {
+          "username": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{3,32}$",
+            "description": "账号按去掉首尾空白的小写值处理。"
+          },
+          "password": {
+            "type": "string",
+            "minLength": 12,
+            "maxLength": 128,
+            "format": "password",
+            "writeOnly": true
+          },
+          "invite": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "writeOnly": true
+          }
+        },
+        "required": [
+          "username",
+          "password",
+          "invite"
+        ]
+      },
+      "LoginRequest": {
+        "type": "object",
+        "properties": {
+          "username": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{3,32}$",
+            "description": "账号按去掉首尾空白的小写值处理。"
+          },
+          "password": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "format": "password",
+            "writeOnly": true
+          }
+        },
+        "required": [
+          "username",
+          "password"
+        ]
+      },
+      "ToolList": {
+        "type": "object",
+        "properties": {
+          "latest": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^run-[a-z0-9_]{8}$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "pattern": "^run-[a-z0-9_]{8}$"
+                },
+                "title": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "title"
+              ]
+            }
+          }
+        },
+        "required": [
+          "latest",
+          "items"
+        ]
+      },
+      "StorageEntries": {
+        "type": "array",
+        "items": {
+          "type": "array",
+          "prefixItems": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "items": false,
+          "minItems": 2,
+          "maxItems": 2
+        },
+        "description": "完整 localStorage 快照。每项为 [键, 字符串值]，键不可重复。普通工具至多 256 KiB，表格工具至多 8 MiB，按服务端编码后的 UTF-8 计。"
+      },
+      "Tool": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^run-[a-z0-9_]{8}$"
+          },
+          "html": {
+            "type": "string",
+            "description": "工具 HTML，仅在工作台的隔离预览中执行。"
+          },
+          "entries": {
+            "$ref": "#/components/schemas/StorageEntries"
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "version": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "runId": {
+            "type": "string",
+            "pattern": "^run-[a-z0-9_]{8}$",
+            "description": "传统修订候选的运行 ID。"
+          },
+          "storageLimit": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "表格工具的存储上限（字节）。"
+          },
+          "stagedBackup": {
+            "const": true,
+            "description": "服务端确认此已知分阶段产物可使用备份功能。"
+          },
+          "applied": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "html",
+          "entries",
+          "revision",
+          "version"
+        ]
+      },
+      "ToolHistory": {
+        "type": "object",
+        "properties": {
+          "current": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "version": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "note": {
+                  "type": "string"
+                },
+                "effectiveAt": {
+                  "anyOf": [
+                    {
+                      "type": "integer",
+                      "minimum": 0,
+                      "description": "Unix 秒。旧版本可能没有时间。"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "approximate": {
+                  "const": true
+                }
+              },
+              "required": [
+                "version",
+                "note",
+                "effectiveAt"
+              ]
+            }
+          }
+        },
+        "required": [
+          "current",
+          "items"
+        ]
+      },
+      "OpenToolRequest": {
+        "type": "object",
+        "properties": {
+          "version": {
+            "type": "integer",
+            "minimum": 1
+          }
+        },
+        "required": []
+      },
+      "CommitToolRequest": {
+        "type": "object",
+        "properties": {
+          "entries": {
+            "$ref": "#/components/schemas/StorageEntries"
+          }
+        },
+        "required": [
+          "entries"
+        ]
+      },
+      "SaveToolDataRequest": {
+        "type": "object",
+        "properties": {
+          "revision": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "version": {
+            "type": "integer",
+            "minimum": 1,
+            "default": 1
+          },
+          "entries": {
+            "$ref": "#/components/schemas/StorageEntries"
+          }
+        },
+        "required": [
+          "revision",
+          "entries"
+        ]
+      },
+      "ToolRevision": {
+        "type": "object",
+        "properties": {
+          "revision": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "revision"
+        ]
+      },
+      "RevisedToolVersion": {
+        "type": "object",
+        "properties": {
+          "revision": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "version": {
+            "type": "integer",
+            "minimum": 1
+          }
+        },
+        "required": [
+          "revision",
+          "version"
+        ]
+      },
+      "LegacyRevisionRequest": {
+        "type": "object",
+        "properties": {
+          "requirement": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000,
+            "description": "提交去掉首尾空白后的需求，长度以字符计。请移除凭据。"
+          },
+          "version": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "requestId": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{32}$"
+          }
+        },
+        "required": [
+          "requirement",
+          "version"
+        ]
+      },
+      "LegacyRevisionCandidate": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/Tool"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "runId": {
+                "type": "string",
+                "pattern": "^run-[a-z0-9_]{8}$"
+              }
+            },
+            "required": [
+              "runId"
+            ]
+          }
+        ]
+      },
+      "LegacyRevisionPublish": {
+        "type": "object",
+        "properties": {
+          "runId": {
+            "type": "string",
+            "pattern": "^run-[a-z0-9_]{8}$"
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "entries": {
+            "$ref": "#/components/schemas/StorageEntries"
+          }
+        },
+        "required": [
+          "runId",
+          "revision",
+          "entries"
+        ]
+      },
+      "ResolveRevisionRequest": {
+        "type": "object",
+        "properties": {
+          "runId": {
+            "type": "string",
+            "pattern": "^run-[a-z0-9_]{8}$"
+          }
+        },
+        "required": [
+          "runId"
+        ]
+      },
+      "ResolveInitialResponse": {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "applied": {
+                "const": false
+              }
+            },
+            "required": [
+              "applied"
+            ]
+          },
+          {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Tool"
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "applied": {
+                    "const": true
+                  }
+                },
+                "required": [
+                  "applied"
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "ResolveRevisionResponse": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/Tool"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "applied": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "applied"
+            ]
+          }
+        ]
+      },
+      "Draft": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+          },
+          "text": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000,
+            "description": "提交去掉首尾空白后的需求，长度以字符计。请移除凭据。"
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "updatedAt": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Unix 毫秒。"
+          }
+        },
+        "required": [
+          "id",
+          "text",
+          "revision",
+          "updatedAt"
+        ]
+      },
+      "DraftList": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+                },
+                "title": {
+                  "type": "string",
+                  "maxLength": 70
+                },
+                "revision": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "updatedAt": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              },
+              "required": [
+                "id",
+                "title",
+                "revision",
+                "updatedAt"
+              ]
+            }
+          }
+        },
+        "required": [
+          "items"
+        ]
+      },
+      "SaveDraft": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000,
+            "description": "提交去掉首尾空白后的需求，长度以字符计。请移除凭据。"
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "text",
+          "revision"
+        ]
+      },
+      "AnalysisDirection": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          },
+          "description": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500
+          }
+        },
+        "required": [
+          "title",
+          "description"
+        ],
+        "additionalProperties": false
+      },
+      "AnalysisQuestion": {
+        "type": "object",
+        "properties": {
+          "prompt": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 300
+          },
+          "options": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 300
+            },
+            "minItems": 2,
+            "maxItems": 5,
+            "uniqueItems": true
+          }
+        },
+        "required": [
+          "prompt",
+          "options"
+        ],
+        "additionalProperties": false
+      },
+      "AnalysisRequest": {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "step": {
+                "const": "start"
+              },
+              "idea": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1200
+              },
+              "requestId": {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+              }
+            },
+            "required": [
+              "step",
+              "idea",
+              "requestId"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "step": {
+                "const": "direction"
+              },
+              "idea": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1200
+              },
+              "requestId": {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+              },
+              "direction": {
+                "$ref": "#/components/schemas/AnalysisDirection"
+              }
+            },
+            "required": [
+              "step",
+              "idea",
+              "requestId",
+              "direction"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "step": {
+                "const": "answers"
+              },
+              "idea": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1200
+              },
+              "requestId": {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+              },
+              "direction": {
+                "$ref": "#/components/schemas/AnalysisDirection"
+              },
+              "questions": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/AnalysisQuestion"
+                },
+                "minItems": 1,
+                "maxItems": 2
+              },
+              "answers": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 300
+                },
+                "minItems": 1,
+                "maxItems": 2,
+                "description": "与问题逐一对应，必须是服务端提供的选项。"
+              }
+            },
+            "required": [
+              "step",
+              "idea",
+              "requestId",
+              "direction",
+              "questions",
+              "answers"
+            ]
+          }
+        ]
+      },
+      "AnalysisResponse": {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "const": "draft"
+              },
+              "text": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 2000,
+                "description": "提交去掉首尾空白后的需求，长度以字符计。请移除凭据。"
+              }
+            },
+            "required": [
+              "kind",
+              "text"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "const": "directions"
+              },
+              "understanding": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1200
+              },
+              "directions": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/AnalysisDirection"
+                },
+                "minItems": 2,
+                "maxItems": 3
+              }
+            },
+            "required": [
+              "kind",
+              "understanding",
+              "directions"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "const": "questions"
+              },
+              "questions": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/AnalysisQuestion"
+                },
+                "minItems": 1,
+                "maxItems": 2
+              }
+            },
+            "required": [
+              "kind",
+              "questions"
+            ]
+          }
+        ]
+      },
+      "TableLimits": {
+        "type": "object",
+        "properties": {
+          "bytes": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "rows": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "columns": {
+            "type": "integer",
+            "minimum": 1
+          }
+        },
+        "required": [
+          "bytes",
+          "rows",
+          "columns"
+        ]
+      },
+      "InspectTable": {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "source": {
+                "const": "example"
+              }
+            },
+            "required": [
+              "source"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "source": {
+                "const": "upload"
+              },
+              "filename": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 120,
+                "pattern": "\\.[cC][sS][vV]$"
+              },
+              "csv": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "source",
+              "filename",
+              "csv"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "source": {
+                "const": "upload"
+              },
+              "filename": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 120,
+                "pattern": "\\.[xX][lL][sS][xX]$"
+              },
+              "xlsx": {
+                "type": "string",
+                "contentEncoding": "base64"
+              }
+            },
+            "required": [
+              "source",
+              "filename",
+              "xlsx"
+            ]
+          }
+        ]
+      },
+      "TableColumn": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "text",
+              "number",
+              "date",
+              "boolean",
+              "option"
+            ]
+          }
+        },
+        "required": [
+          "name",
+          "type"
+        ]
+      },
+      "InspectedTable": {
+        "type": "object",
+        "properties": {
+          "source": {
+            "type": "string",
+            "enum": [
+              "example",
+              "upload"
+            ]
+          },
+          "filename": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          },
+          "suggestion": {
+            "type": "string"
+          },
+          "columns": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TableColumn"
+            },
+            "minItems": 1
+          },
+          "rows": {
+            "type": "array",
+            "items": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "minItems": 1,
+            "description": "所有单元格均为字符串，每行列数须与字段列表一致。限额见表格配置。"
+          },
+          "sheet": {
+            "type": "string",
+            "maxLength": 31
+          }
+        },
+        "required": [
+          "source",
+          "filename",
+          "suggestion",
+          "columns",
+          "rows"
+        ]
+      },
+      "ConfirmedTable": {
+        "type": "object",
+        "properties": {
+          "table": {
+            "type": "object",
+            "properties": {
+              "source": {
+                "type": "string",
+                "enum": [
+                  "example",
+                  "upload"
+                ]
+              },
+              "filename": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 120
+              },
+              "columns": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "type": {
+                      "type": "string",
+                      "enum": [
+                        "text",
+                        "number",
+                        "date",
+                        "boolean",
+                        "option"
+                      ]
+                    },
+                    "include": {
+                      "type": "boolean",
+                      "default": true
+                    }
+                  },
+                  "required": [
+                    "name",
+                    "type"
+                  ]
+                },
+                "minItems": 1
+              },
+              "rows": {
+                "type": "array",
+                "items": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "minItems": 1,
+                "description": "所有单元格均为字符串，每行列数须与字段列表一致。限额见表格配置。"
+              },
+              "sheet": {
+                "type": "string",
+                "maxLength": 31
+              }
+            },
+            "required": [
+              "source",
+              "filename",
+              "columns",
+              "rows"
+            ]
+          }
+        },
+        "required": [
+          "table"
+        ]
+      },
+      "TableCandidate": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/Tool"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "storageLimit": {
+                "type": "integer",
+                "minimum": 1
+              }
+            },
+            "required": [
+              "storageLimit"
+            ]
+          }
+        ]
+      },
+      "Usage": {
+        "type": "object",
+        "properties": {
+          "used": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "remaining": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "used",
+          "limit",
+          "remaining"
+        ]
+      },
+      "GenerationBalance": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/Usage"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "totalUsed": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "totalLimit": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "totalRemaining": {
+                "type": "integer",
+                "minimum": 0
+              }
+            },
+            "required": [
+              "totalUsed",
+              "totalLimit",
+              "totalRemaining"
+            ]
+          }
+        ]
+      },
+      "AnalysisBalance": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/GenerationBalance"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "resetAt": {
+                "type": "string",
+                "format": "date-time",
+                "description": "北京时间每日额度下次重置时间。"
+              }
+            },
+            "required": [
+              "resetAt"
+            ]
+          }
+        ]
+      },
+      "TrialBalance": {
+        "type": "object",
+        "properties": {
+          "username": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{3,32}$",
+            "description": "账号按去掉首尾空白的小写值处理。"
+          },
+          "generation": {
+            "$ref": "#/components/schemas/GenerationBalance"
+          },
+          "analysis": {
+            "$ref": "#/components/schemas/AnalysisBalance"
+          },
+          "paused": {
+            "type": "boolean"
+          },
+          "admin": {
+            "type": "boolean"
+          },
+          "analysisMode": {
+            "type": "string",
+            "enum": [
+              "deepseek",
+              "fixture"
+            ]
+          }
+        },
+        "required": [
+          "username",
+          "generation",
+          "analysis",
+          "paused",
+          "admin",
+          "analysisMode"
+        ]
+      },
+      "AdminTrialState": {
+        "type": "object",
+        "properties": {
+          "generation": {
+            "$ref": "#/components/schemas/AdminGlobalUsage"
+          },
+          "analysis": {
+            "$ref": "#/components/schemas/AdminGlobalUsage"
+          },
+          "paused": {
+            "type": "boolean"
+          },
+          "accounts": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "username": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9_-]{3,32}$",
+                  "description": "账号按去掉首尾空白的小写值处理。"
+                },
+                "generation": {
+                  "$ref": "#/components/schemas/GenerationBalance"
+                },
+                "analysis": {
+                  "$ref": "#/components/schemas/AnalysisBalance"
+                }
+              },
+              "required": [
+                "username",
+                "generation",
+                "analysis"
+              ]
+            }
+          },
+          "audit": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "actor": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9_-]{3,32}$",
+                  "description": "账号按去掉首尾空白的小写值处理。"
+                },
+                "action": {
+                  "type": "string",
+                  "enum": [
+                    "grant",
+                    "pause",
+                    "resume"
+                  ]
+                },
+                "username": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "pattern": "^[A-Za-z0-9_-]{3,32}$",
+                      "description": "账号按去掉首尾空白的小写值处理。"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "amount": {
+                  "anyOf": [
+                    {
+                      "type": "integer",
+                      "minimum": 1
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "createdAt": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "description": "Unix 秒。"
+                }
+              },
+              "required": [
+                "id",
+                "actor",
+                "action",
+                "username",
+                "amount",
+                "createdAt"
+              ]
+            },
+            "maxItems": 100
+          }
+        },
+        "required": [
+          "generation",
+          "analysis",
+          "paused",
+          "accounts",
+          "audit"
+        ]
+      },
+      "AdminTrialAction": {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "action": {
+                "const": "grant"
+              },
+              "username": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{3,32}$",
+                "description": "账号按去掉首尾空白的小写值处理。"
+              },
+              "amount": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991
+              },
+              "requestId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 80
+              }
+            },
+            "required": [
+              "action",
+              "username",
+              "amount"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "action": {
+                "type": "string",
+                "enum": [
+                  "pause",
+                  "resume"
+                ]
+              },
+              "requestId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 80
+              }
+            },
+            "required": [
+              "action"
+            ]
+          }
+        ]
+      },
+      "AdminTrialResult": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "const": true
+          },
+          "paused": {
+            "type": "boolean"
+          },
+          "action": {
+            "type": "string",
+            "enum": [
+              "grant",
+              "pause",
+              "resume"
+            ]
+          },
+          "username": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{3,32}$",
+            "description": "账号按去掉首尾空白的小写值处理。"
+          },
+          "amount": {
+            "type": "integer",
+            "minimum": 1
+          }
+        },
+        "required": [
+          "ok",
+          "paused",
+          "action"
+        ]
+      },
+      "StartGeneration": {
+        "type": "object",
+        "properties": {
+          "requirement": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000,
+            "description": "提交去掉首尾空白后的需求，长度以字符计。请移除凭据。"
+          },
+          "requestId": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{32}$"
+          }
+        },
+        "required": [
+          "requirement",
+          "requestId"
+        ]
+      },
+      "StagedTask": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{32}$"
+          },
+          "requirement": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000,
+            "description": "提交去掉首尾空白后的需求，长度以字符计。请移除凭据。"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "queued",
+              "running",
+              "failed",
+              "interrupted",
+              "complete",
+              "published",
+              "expired",
+              "exhausted",
+              "unsupported"
+            ]
+          },
+          "steps": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "spec",
+                "implementation",
+                "entry",
+                "filters",
+                "summary",
+                "export",
+                "assemble"
+              ]
+            },
+            "minItems": 1,
+            "uniqueItems": true,
+            "description": "服务端当前公布的有序计划。规划未完成时只有 spec。"
+          },
+          "completed": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "spec",
+                "implementation",
+                "entry",
+                "filters",
+                "summary",
+                "export",
+                "assemble"
+              ]
+            },
+            "uniqueItems": true
+          },
+          "stage": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "spec",
+                  "implementation",
+                  "entry",
+                  "filters",
+                  "summary",
+                  "export",
+                  "assemble"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "issue": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "resumable": {
+            "type": "boolean"
+          },
+          "toolId": {
+            "type": "string",
+            "pattern": "^run-[a-z0-9_]{8}$"
+          }
+        },
+        "required": [
+          "id",
+          "requirement",
+          "state",
+          "steps",
+          "completed",
+          "stage",
+          "issue",
+          "reason",
+          "resumable"
+        ],
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "state": {
+                  "const": "published"
+                }
+              },
+              "required": [
+                "state"
+              ]
+            },
+            "then": {
+              "required": [
+                "toolId"
+              ]
+            }
+          }
+        ]
+      },
+      "StagedTaskEnvelope": {
+        "type": "object",
+        "properties": {
+          "task": {
+            "$ref": "#/components/schemas/StagedTask"
+          }
+        },
+        "required": [
+          "task"
+        ]
+      },
+      "StagedTaskList": {
+        "type": "object",
+        "properties": {
+          "tasks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StagedTask"
+            },
+            "maxItems": 30
+          }
+        },
+        "required": [
+          "tasks"
+        ]
+      },
+      "StagedCandidateBinding": {
+        "type": "object",
+        "properties": {
+          "taskId": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{32}$"
+          },
+          "commit": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{40}$"
+          },
+          "sha256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "nonce": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{32}$",
+            "description": "候选校验令牌。随同任务与内容摘要回传，不写入共享日志。"
+          }
+        },
+        "required": [
+          "taskId",
+          "commit",
+          "sha256",
+          "nonce"
+        ]
+      },
+      "StagedCandidate": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/Tool"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "staged": {
+                "$ref": "#/components/schemas/StagedCandidateBinding"
+              }
+            },
+            "required": [
+              "staged"
+            ]
+          }
+        ]
+      },
+      "PublishStagedCandidate": {
+        "type": "object",
+        "properties": {
+          "toolId": {
+            "type": "string",
+            "pattern": "^run-[a-z0-9_]{8}$"
+          },
+          "commit": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{40}$"
+          },
+          "sha256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "nonce": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{32}$"
+          },
+          "entries": {
+            "$ref": "#/components/schemas/StorageEntries"
+          }
+        },
+        "required": [
+          "toolId",
+          "commit",
+          "sha256",
+          "nonce",
+          "entries"
+        ]
+      },
+      "PublishedStagedTool": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/Tool"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "applied": {
+                "const": true
+              }
+            },
+            "required": [
+              "applied"
+            ]
+          }
+        ]
+      },
+      "AdminGlobalUsage": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/Usage"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "completed": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "已获得明确结果的实际调用数。"
+              },
+              "failed": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "上游错误、超时或模型响应校验失败的调用数。"
+              },
+              "failureRate": {
+                "type": [
+                  "number",
+                  "null"
+                ],
+                "minimum": 0,
+                "maximum": 1,
+                "description": "failed ÷ completed。没有已结束调用时为 null。模型成功后的预览或保存失败不改变此统计。"
+              }
+            },
+            "required": [
+              "completed",
+              "failed",
+              "failureRate"
+            ]
+          }
+        ]
+      }
+    }
+  },
+  "x-source-commit": "66304db72dd410e2446d113b9d26c95e3a850cfd"
+}
