@@ -89,6 +89,15 @@ class Store:
                     run_id TEXT NOT NULL UNIQUE, note TEXT NOT NULL, effective_at INTEGER,
                     PRIMARY KEY (tool_id, version)
                 );
+                CREATE TABLE IF NOT EXISTS tool_git_repositories (
+                    tool_id TEXT PRIMARY KEY REFERENCES tools(id),
+                    repo_id TEXT NOT NULL UNIQUE
+                );
+                CREATE TABLE IF NOT EXISTS tool_git_versions (
+                    tool_id TEXT NOT NULL, version INTEGER NOT NULL, commit_id TEXT NOT NULL,
+                    PRIMARY KEY (tool_id, version),
+                    FOREIGN KEY (tool_id, version) REFERENCES tool_versions(tool_id, version)
+                );
                 CREATE TABLE IF NOT EXISTS revision_drafts (
                     run_id TEXT PRIMARY KEY, tool_id TEXT NOT NULL REFERENCES tools(id),
                     base_version INTEGER NOT NULL, note TEXT NOT NULL
@@ -300,17 +309,23 @@ class Store:
         if type(value) is not int or value != version:
             raise ApiError(409, "version_conflict", "工具已更新，请重新打开后再修改。")
 
-    def versions(self, token, marker, tool_id):
-        with self.connection() as db:
+    def versions(self, token, marker, tool_id, *, ensure_history=None):
+        with self.connection(write=ensure_history is not None) as db:
             user = self.session(db, token, marker)
-            self.owned_tool(db, user, tool_id)
+            tool = self.owned_tool(db, user, tool_id)
+            if ensure_history:
+                ensure_history(db, tool)
             rows = db.execute("""
-                SELECT version, note, effective_at AS effectiveAt FROM tool_versions
-                WHERE tool_id=? ORDER BY version DESC
+                SELECT v.version, v.note, v.effective_at AS effectiveAt, g.commit_id AS "commit"
+                FROM tool_versions v LEFT JOIN tool_git_versions g USING (tool_id, version)
+                WHERE v.tool_id=? ORDER BY v.version DESC
             """, (tool_id,)).fetchall()
             items = [dict(row) for row in rows] or [
                 {"version": 1, "note": "首次生成", "effectiveAt": None},
             ]
+            for item in items:
+                if item.get("commit") is None:
+                    item.pop("commit", None)
             return {"current": items[0]["version"], "items": items}
 
     def revision_draft(self, token, marker, tool_id, version, run_id, note, *, model=False):
@@ -431,14 +446,16 @@ class Store:
         db.execute("UPDATE accounts SET latest_tool=? WHERE id=?", (row["id"], row["owner"]))
         return {"revision": revision}
 
-    def change_tool(self, token, marker, tool_id, action, data, *, record_model_success=None):
+    def change_tool(self, token, marker, tool_id, action, data, *, record_model_success=None, ensure_history=None):
         with self.connection(write=True) as db:
             user = self.session(db, token, marker)
             row = self.owned_tool(db, user, tool_id, published=action != "commit")
-            if action == "publish":
-                return self.publish_revision(db, row, data, record_model_success)
-            if action == "commit":
-                return self.commit_initial(db, row, data.get("entries"), record_model_success)
+            if action in ("publish", "commit"):
+                result = (self.publish_revision(db, row, data, record_model_success) if action == "publish"
+                          else self.commit_initial(db, row, data.get("entries"), record_model_success))
+                if ensure_history:
+                    ensure_history(db, row)
+                return result
             revision = row["revision"]
             if action == "data":
                 self.require_version(data.get("version", 1), row["version"])

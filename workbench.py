@@ -153,8 +153,8 @@ def serve(key, port, runs=generate.RUNS, *, generation_limits=(5, 30), analysis_
         except OSError:
             pass
 
-    staged = StagedJobs(store, budget, runs, staged_blueprint, record=stage_receipt,
-                        revision=staged_revision) if staged_enabled else None
+    history = StagedJobs(store, budget, runs, staged_blueprint, record=stage_receipt, revision=staged_revision)
+    staged = history if staged_enabled else None
 
     def stage_provider(stage, requirement, prior, admit, record, base=None):
         if not model_lock.acquire(timeout=20):
@@ -296,15 +296,16 @@ def serve(key, port, runs=generate.RUNS, *, generation_limits=(5, 30), analysis_
                     store.session(db, self.cookie_token(), self.marker())
                 self.send_json(200, {"bytes": table_limits.bytes, "rows": table_limits.rows, "columns": table_limits.columns})
             elif match := TOOL_VERSIONS.fullmatch(self.path):
-                history = store.versions(self.cookie_token(), self.marker(), match[1])
-                initial = history["items"][-1]
+                versions = store.versions(self.cookie_token(), self.marker(), match[1],
+                                          ensure_history=history.ensure_tool_history)
+                initial = versions["items"][-1]
                 if initial["effectiveAt"] is None:
                     try:
                         initial["effectiveAt"] = int((runs / match[1] / "app.html").stat().st_mtime)
                         initial["approximate"] = True
                     except OSError:
                         pass
-                self.send_json(200, history)
+                self.send_json(200, versions)
             elif match := TOOL_PATH.fullmatch(self.path):
                 row = store.get_tool(self.cookie_token(), self.marker(), match[1])
                 self.send_tool(row)
@@ -447,7 +448,8 @@ def serve(key, port, runs=generate.RUNS, *, generation_limits=(5, 30), analysis_
                         self.send_tool(row, applied=True)
                 else:
                     self.send_json(200, store.change_tool(token, self.marker(), match[1], match[2], data,
-                                                         record_model_success=budget.record_generation_success))
+                                                         record_model_success=budget.record_generation_success,
+                                                         ensure_history=history.ensure_tool_history))
                 return
             if self.path != "/api/generate":
                 raise ApiError(404, "not_found", "页面不存在。")
@@ -457,14 +459,15 @@ def serve(key, port, runs=generate.RUNS, *, generation_limits=(5, 30), analysis_
             try:
                 table = table_import.read_saved_table(row["entries"])
                 current = table_import.tool_configuration(self.read_tool_html(row["run_id"]))
-                target = table_import.tool_configuration(self.read_tool_html(historical_run))
+                historical_html = self.read_tool_html(historical_run)
+                target = table_import.tool_configuration(historical_html)
                 if any(index >= len(table["columns"]) for config in (current, target) for index in config["filters"]):
                     raise ValueError("invalid filter column")
             except (ApiError, TypeError, ValueError, RecursionError):
                 raise ApiError(409, "incompatible_restore", "无法验证此旧版与当前记录兼容，当前版本仍可用。") from None
             try:
                 run = Path(tempfile.mkdtemp(prefix="run-", dir=runs))
-                (run / "app.html").write_text(table_import.render_tool(**target), encoding="utf-8")
+                (run / "app.html").write_text(historical_html, encoding="utf-8")
             except OSError:
                 raise ApiError(503, "save_failed", "本机无法准备旧版本，请重试。") from None
             return run.name, target["title"]

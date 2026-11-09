@@ -457,7 +457,7 @@
           "工具"
         ],
         "summary": "读取工具版本历史",
-        "description": "版本按降序返回。旧版本可能没有生效时间或只提供近似值。",
+        "description": "每条已生效版本包含同一工具私有 Git 仓库中的完整提交 ID。内部阶段和未保存的候选不会出现在历史中。",
         "responses": {
           "200": {
             "description": "读取工具版本历史",
@@ -2643,12 +2643,18 @@
                 },
                 "approximate": {
                   "const": true
+                },
+                "commit": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{40}$",
+                  "description": "对应已生效代码的 Git 提交。恢复旧版会为当前工具追加一笔新的提交。"
                 }
               },
               "required": [
                 "version",
                 "note",
-                "effectiveAt"
+                "effectiveAt",
+                "commit"
               ]
             }
           }

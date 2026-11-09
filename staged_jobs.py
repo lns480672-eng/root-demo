@@ -190,11 +190,90 @@ class StagedJobs:
             row = self.revision_record(db, identifier)
             return json.loads(row["context"]) if row else None
 
-    def revision_source(self, db, tool):
-        source = db.execute("""
+    @staticmethod
+    def published_source(db, run_id):
+        return db.execute("""
             SELECT job.*, c.digest FROM staged_jobs job JOIN staged_candidates c ON c.task=job.id
             WHERE c.tool_id=? AND c.commit_id=job.head AND job.state='published'
-        """, (tool["run_id"],)).fetchone()
+        """, (run_id,)).fetchone()
+
+    def ensure_tool_history(self, db, tool):
+        """Record each published version in its tool's permanent repository."""
+        tool_id = tool["id"]
+        db.execute("INSERT OR IGNORE INTO tool_versions VALUES (?,1,?,'首次生成',NULL)", (tool_id, tool_id))
+        binding = db.execute("SELECT repo_id FROM tool_git_repositories WHERE tool_id=?", (tool_id,)).fetchone()
+        versions = db.execute("""
+            SELECT v.*, g.commit_id FROM tool_versions v LEFT JOIN tool_git_versions g USING (tool_id, version)
+            WHERE v.tool_id=? ORDER BY v.version
+        """, (tool_id,)).fetchall()
+        try:
+            if binding:
+                repo_id = binding["repo_id"]
+            else:
+                source = next((job for version in versions
+                               if (job := self.published_source(db, version["run_id"])) is not None), None)
+                repo_id = (source["repo_id"] or source["id"]) if source is not None else tool_id
+                db.execute("INSERT INTO tool_git_repositories VALUES (?, ?)", (tool_id, repo_id))
+            repo = self.root / (repo_id + ".git")
+            parent = None
+            for version in versions:
+                commit = version["commit_id"]
+                if commit is None:
+                    commit = self.record_version(db, repo, parent, version)
+                    db.execute("INSERT INTO tool_git_versions VALUES (?, ?, ?)",
+                               (tool_id, version["version"], commit))
+                parent = commit
+        except (OSError, ValueError, subprocess.SubprocessError) as error:
+            raise ApiError(503, "tool_git_unavailable", "工具版本仓库暂时无法保存或读取，请重试。") from error
+        return repo_id, parent
+
+    def record_version(self, db, repo, parent, version):
+        run_id = version["run_id"]
+        html = (self.runs / run_id / "app.html").read_bytes()
+        repo.mkdir(parents=True, mode=0o700, exist_ok=True)
+        if not (repo / "HEAD").is_file():
+            self.git_at(repo, "init", "--bare", "--object-format=sha1", "--template=")
+        source = self.published_source(db, run_id)
+        parents = ["-p", parent] if parent else []
+        if source is not None:
+            commit = source["head"]
+            if digest(html) != source["digest"] or self.read(source, commit, "app.html") != html:
+                raise ValueError("published source mismatch")
+            source_repo = self.repo(source)
+            if source_repo != repo:
+                self.git_at(repo, "fetch", "--no-tags", "--no-write-fetch-head", str(source_repo.resolve()), commit)
+            if not parent or self.ancestor(repo, parent, commit):
+                self.keep_commit(repo, commit)
+                return commit
+            # Older builds could publish successive versions from different Git roots.
+            # Preserve the original staged tree and make both histories reachable.
+            parents += ["-p", commit]
+            tree = self.git_at(repo, "rev-parse", commit + "^{tree}").decode().strip()
+        else:
+            blob = self.git_at(repo, "hash-object", "-w", "--stdin", content=html).decode().strip()
+            tree = self.git_at(repo, "mktree", content=f"100644 blob {blob}\tapp.html\n".encode()).decode().strip()
+        commit = self.git_at(repo, "commit-tree", tree, *parents,
+                             "-m", f'Publish v{version["version"]}',
+                             date=version["effective_at"] or 1).decode().strip()
+        self.keep_commit(repo, commit)
+        return commit
+
+    def keep_commit(self, repo, commit):
+        # These refs retain objects. SQLite alone marks a version as published.
+        self.git_at(repo, "update-ref", "refs/workbench/objects/" + commit, commit)
+
+    def ancestor(self, repo, parent, commit):
+        try:
+            self.git_at(repo, "merge-base", "--is-ancestor", parent, commit)
+            return True
+        except subprocess.CalledProcessError as error:
+            if error.returncode != 1:
+                raise
+            return False
+
+    def revision_source(self, db, tool):
+        repo_id, head = self.ensure_tool_history(db, tool)
+        source = self.published_source(db, tool["run_id"])
         try:
             if source:
                 files = self.files(source)
@@ -203,11 +282,11 @@ class StagedJobs:
                     raise ValueError("revision source mismatch")
                 context = (self.revision.prepare_table(tool["entries"], prior_artifacts=files)
                            if tool["table_tool"] else self.revision.prepare(files))
-                return source["repo_id"] or source["id"], source["head"], require_digest, context
+                return repo_id, head, require_digest, context
             html = (self.runs / tool["run_id"] / "app.html").read_bytes()
             context = (self.revision.prepare_table(tool["entries"], html=html)
                        if tool["table_tool"] else self.revision.prepare({}, html))
-            return None, ZERO, digest(html), context
+            return repo_id, head, digest(html), context
         except (ApiError, ValueError, OSError, subprocess.SubprocessError):
             raise ApiError(422, "staged_revision_source", "这个旧版本暂时无法安全地分阶段修改，原工具与记录仍可用。") from None
 
@@ -215,10 +294,16 @@ class StagedJobs:
         return self.root / ((row["repo_id"] or row["id"]) + ".git")
 
     def git(self, row, *arguments, content=None, check=True):
+        return self.git_at(self.repo(row), *arguments, content=content, check=check)
+
+    @staticmethod
+    def git_at(repo, *arguments, content=None, check=True, date=None):
         env = {"PATH":os.environ.get("PATH", os.defpath), "GIT_CONFIG_GLOBAL":os.devnull,
                "GIT_CONFIG_NOSYSTEM":"1", "GIT_AUTHOR_NAME":"ROOT", "GIT_AUTHOR_EMAIL":"root@localhost",
                "GIT_COMMITTER_NAME":"ROOT", "GIT_COMMITTER_EMAIL":"root@localhost"}
-        result = subprocess.run(["git", "--git-dir", str(self.repo(row)), "-c", "core.hooksPath=/dev/null",
+        if date is not None:
+            env["GIT_AUTHOR_DATE"] = env["GIT_COMMITTER_DATE"] = f"@{date} +0000"
+        result = subprocess.run(["git", "--git-dir", str(repo), "-c", "core.hooksPath=/dev/null",
                                  *arguments], env=env, input=content, capture_output=True, timeout=10, check=check)
         return result.stdout if result.returncode == 0 else b""
 
@@ -499,4 +584,5 @@ class StagedJobs:
                     tool = self.store.owned_tool(db, owner, tool_id, published=False)
                     self.store.commit_initial(db, tool, data.get("entries"), self.budget.record_generation_success)
                 db.execute("UPDATE staged_jobs SET state='published' WHERE id=?", (identifier,))
+                self.ensure_tool_history(db, {"id": result_id})
             return self.store.owned_tool(db, owner, result_id)

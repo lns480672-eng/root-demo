@@ -1,5 +1,6 @@
 """TEST-018-B1 using the actual HTTP entry and controlled model dispatch."""
 from concurrent.futures import ThreadPoolExecutor
+import hashlib
 import json
 from pathlib import Path
 import re
@@ -296,11 +297,21 @@ class StagedHTTP(unittest.TestCase):
         self.assertEqual(self.request(path, auth=owner)[1]["task"]["state"], "complete")
         self.assertEqual(self.request("/api/trial", auth=owner)[1]["generation"]["used"], 0)
         failed_path.rmdir()
+        git_refs = self.runs / "staged-repositories" / (task + ".git") / "refs" / "workbench"
+        git_refs.touch()
+        status, failure, _ = self.request(path + "/publish", data, owner)
+        self.assertEqual((status, failure["code"]), (503, "tool_git_unavailable"))
+        self.assertEqual(self.request(path, auth=owner)[1]["task"]["state"], "complete")
+        self.assertEqual(self.request("/api/trial", auth=owner)[1]["generation"]["used"], 0)
+        self.assertEqual(self.request("/api/tools", auth=owner)[1]["items"], [])
+        git_refs.unlink()
         with ThreadPoolExecutor(max_workers=2) as pool:
             responses = list(pool.map(lambda _: self.request(path + "/publish", data, owner), range(2)))
         self.assertEqual([response[0] for response in responses], [200,200])
         self.assertEqual([response[1]["id"] for response in responses], [candidate["id"]] * 2)
         self.assertEqual(self.request(path, auth=owner)[1]["task"]["toolId"], candidate["id"])
+        version = self.request("/api/tools/" + candidate["id"] + "/versions", auth=owner)[1]["items"][0]
+        self.assertEqual(version["commit"], candidate["staged"]["commit"])
         self.assertTrue(self.request("/api/tools/" + candidate["id"], auth=owner)[1]["stagedBackup"])
         balance = self.request("/api/trial", auth=owner)[1]["generation"]
         self.assertEqual((balance["used"], balance["totalUsed"] - before), (1, 6))
@@ -349,6 +360,9 @@ class StagedHTTP(unittest.TestCase):
         self.assertEqual((published[1]["id"], published[1]["version"], published[1]["entries"]),
                          (candidate["id"], 2, changes))
         self.assertEqual(self.request(rev_path + "/publish", payload, owner)[1], published[1])
+        history = self.request(tool + "/versions", auth=owner)[1]
+        self.assertEqual([item["commit"] for item in history["items"]],
+                         [revised["staged"]["commit"], candidate["staged"]["commit"]])
         self.assertEqual(self.request(tool + "/revise", data, owner)[1]["task"]["id"], revision)
         runs_before = set(self.runs.glob("run-*"))
         for _ in range(3):
@@ -369,7 +383,15 @@ class StagedHTTP(unittest.TestCase):
         code, initial, _ = self.request("/api/table/generate", {"table": table}, owner)
         self.assertEqual(code, 200)
         tool = "/api/tools/" + initial["id"]
+        repositories = self.runs / "staged-repositories"
+        existing = set(repositories.glob("*.git"))
         self.assertEqual(self.request(tool + "/commit", {"entries": initial["entries"]}, owner)[0], 200)
+        created = set(repositories.glob("*.git")) - existing
+        self.assertEqual(len(created), 1, "首次保存导入表格应自动创建独立 Git 仓库")
+        repo = created.pop()
+        first_commit = self.request(tool + "/versions", auth=owner)[1]["items"][0]["commit"]
+        self.assertEqual(subprocess.check_output(
+            ["git", "--git-dir", str(repo), "show", first_commit + ":app.html"]).decode(), initial["html"])
         entries = json.loads(initial["entries"][0][1])
         extra = [["追加记录" + "x" * 3072, "小林"] for _ in range(180)]
         entries["rows"].extend(extra)
@@ -438,6 +460,100 @@ class StagedHTTP(unittest.TestCase):
         }, owner)[0], 200)
         self.assertEqual(self.request("/api/trial", auth=owner)[1]["generation"], after)
         publish(revise(4, "只把标题改成每周交付台账"), 5, "每周交付台账")
+        self.assertEqual(set(repositories.glob("*.git")) - existing, {repo})
+        versions = self.request(tool + "/versions", auth=owner)[1]["items"][::-1]
+        self.assertEqual([item["version"] for item in versions], [1, 2, 3, 4, 5])
+        commits = [item["commit"] for item in versions]
+        self.assertEqual(len(set(commits)), 5)
+        for older, newer in zip(commits, commits[1:]):
+            subprocess.run(["git", "--git-dir", str(repo), "merge-base", "--is-ancestor", older, newer], check=True)
+        def historical(commit):
+            return subprocess.check_output(["git", "--git-dir", str(repo), "show", commit + ":app.html"])
+
+        self.assertEqual(historical(commits[1]), historical(commits[3]))
+        self.assertNotIn(b"private-row", historical(commits[-1]))
+        self.assertEqual(self.request(tool + "/versions", auth=other)[0], 404)
+
+    def test_git_failure_leaves_initial_save_retryable_and_other_tool_has_its_own_repository(self):
+        owner = self.account("tool-git-failure")
+        request = {"table": {
+            "source": "upload", "filename": "trial.csv",
+            "columns": [{"name": "事项", "type": "text"}], "rows": [["只在数据库"]],
+        }}
+        candidates = [self.request("/api/table/generate", request, owner)[1] for _ in range(2)]
+        root = self.runs / "staged-repositories"
+        root.mkdir(exist_ok=True)
+        paths = [root / (tool["id"] + ".git") for tool in candidates]
+        paths[0].touch()
+        action = "/api/tools/" + candidates[0]["id"] + "/commit"
+        code, error, _ = self.request(action, {"entries": candidates[0]["entries"]}, owner)
+        self.assertEqual((code, error["code"]), (503, "tool_git_unavailable"))
+        self.assertEqual(self.request("/api/tools", auth=owner)[1]["items"], [])
+        paths[0].unlink()
+        for tool, repo in zip(candidates, paths):
+            path = "/api/tools/" + tool["id"]
+            self.assertEqual(self.request(path + "/commit", {"entries": tool["entries"]}, owner)[0], 200)
+            history = self.request(path + "/versions", auth=owner)[1]
+            self.assertEqual([item["version"] for item in history["items"]], [1])
+            self.assertTrue((repo / "HEAD").is_file())
+        with self.store.connection() as db:
+            self.assertEqual({tuple(row) for row in db.execute(
+                "SELECT tool_id, repo_id FROM tool_git_repositories WHERE tool_id IN (?,?)",
+                [tool["id"] for tool in candidates],
+            )}, {(tool["id"], tool["id"]) for tool in candidates})
+
+    def test_legacy_split_repositories_keep_original_commits_in_one_published_history(self):
+        owner = self.account("tool-git-migration")
+        tool_id, second_run, third_run = "run-oldgit01", "run-oldgit02", "run-oldgit03"
+        old_repos = [uuid4().hex, uuid4().hex]
+        root = self.runs / "staged-repositories"
+        html = [b"<!doctype html><p>v1</p>", b"<!doctype html><p>v2</p>", b"<!doctype html><p>v3</p>"]
+        for run_id, content in zip((tool_id, second_run, third_run), html):
+            (self.runs / run_id).mkdir()
+            (self.runs / run_id / "app.html").write_bytes(content)
+
+        def git(repo, *args, input=None):
+            return subprocess.check_output(
+                ["git", "--git-dir", str(repo), "-c", "user.name=Fixture", "-c", "user.email=test@example.test", *args],
+                input=input, stderr=subprocess.DEVNULL,
+            ).decode().strip()
+
+        original = []
+        for repo_id, content in zip(old_repos, html[1:]):
+            repo = root / (repo_id + ".git")
+            repo.mkdir(parents=True)
+            git(repo, "init", "--bare")
+            blob = git(repo, "hash-object", "-w", "--stdin", input=content)
+            tree = git(repo, "mktree", input=f"100644 blob {blob}\tapp.html\n".encode())
+            commit = git(repo, "commit-tree", tree, "-m", "old staged version")
+            git(repo, "update-ref", "refs/tasks/legacy", commit)
+            original.append(commit)
+
+        with self.store.connection(write=True) as db:
+            account_id = db.execute("SELECT id FROM accounts WHERE username='tool-git-migration'").fetchone()[0]
+            db.execute("INSERT INTO tools(id,owner,title,published) VALUES (?,?,?,1)", (tool_id, account_id, "旧工具"))
+            for version, run_id in enumerate((tool_id, second_run, third_run), 1):
+                db.execute("INSERT INTO tool_versions VALUES (?,?,?,?,?)", (tool_id, version, run_id, f"旧版 {version}", 1))
+            for task, commit, run_id, content in zip(old_repos, original, (second_run, third_run), html[1:]):
+                db.execute("""INSERT INTO staged_jobs(id,owner,request_id,requirement,head,expires,state)
+                              VALUES (?,?,?,?,?,?,'published')""",
+                           (task, account_id, task, "历史需求", commit, 1))
+                db.execute("INSERT INTO staged_candidates VALUES (?,?,?,?,?)",
+                           (task, run_id, commit, hashlib.sha256(content).hexdigest(), uuid4().hex))
+
+        path = "/api/tools/" + tool_id + "/versions"
+        code, result, _ = self.request(path, auth=owner)
+        self.assertEqual(code, 200)
+        self.assertEqual(self.request(path, auth=owner)[1], result)
+        commits = [item["commit"] for item in result["items"][::-1]]
+        canonical = root / (old_repos[0] + ".git")
+        self.assertEqual([git(canonical, "show", commit + ":app.html") for commit in commits],
+                         [content.decode() for content in html])
+        for parent, child in zip(commits, commits[1:]):
+            git(canonical, "merge-base", "--is-ancestor", parent, child)
+        for commit, publication in zip(original, commits[1:]):
+            git(canonical, "merge-base", "--is-ancestor", commit, publication)
+        self.assertFalse((root / (tool_id + ".git")).exists())
 
     def test_resolve_fences_a_late_publish_without_revoking_the_new_preview(self):
         owner = self.account("staged-resolve")
