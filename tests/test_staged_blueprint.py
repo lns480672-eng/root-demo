@@ -113,6 +113,47 @@ class StageArtifactTests(unittest.TestCase):
                 blueprint.validate("entry", json.dumps({**entry, **update}).encode(), files)
 
 
+    def test_unified_program_plan_accepts_one_implementation_without_backup_privilege(self):
+        plan = b'{"kind":"program","title":"Calculator","goal":"Add two numbers"}'
+        blueprint.validate("spec", plan, {})
+        self.assertEqual(blueprint.stage_plan(plan), ("spec", "implementation", "assemble"))
+        ledger = artifacts()["spec.json"]
+        self.assertEqual(blueprint.stage_plan(ledger), blueprint.STAGES)
+        previous = {"spec.json":plan}
+        payload = json.dumps({
+            "markup": '<form id="numbers"><label>A<input id="a" type="number"></label>'
+                      '<button type="submit">Add</button><output id="result"></output></form>',
+            "script": 'document.querySelector("#numbers").addEventListener("submit", (e) => {'
+                      'e.preventDefault(); document.querySelector("#result").textContent = 1; });',
+        }).encode()
+        blueprint.validate("implementation", payload, previous)
+        previous["implementation.json"] = payload
+        result = blueprint.assemble(previous)
+        blueprint.validate("assemble", result, previous)
+        self.assertIn(b'<title>Calculator</title>', result)
+        self.assertIn(b'<form id="numbers">', result)
+        self.assertFalse(blueprint.permits_backup(previous))
+        with self.assertRaises(ValueError):
+            blueprint.validate("entry", artifacts()["entry.json"], previous)
+        with self.assertRaises(ValueError):
+            blueprint.validate("implementation", payload, {"spec.json":ledger})
+
+    def test_program_rejects_active_markup_urls_and_script_end_escape(self):
+        previous = {"spec.json":b'{"kind":"program","title":"Calculator","goal":"Add numbers"}'}
+        bad = [
+            ('<script>alert(1)</script>', 'safe()'),
+            ('<button onclick="alert(1)">Go</button>', 'safe()'),
+            ('<a href="&#x6a;avascript:alert(1)">Bad</a>', 'safe()'),
+            ('<form action="https://example.test/"><button>Go</button></form>', 'safe()'),
+            ('<!doctype html><html><body>Bad</body></html>', 'safe()'),
+            ('<div><span>x</div>', 'safe()'),
+            ('<p>OK</p>', 'const bad = "</ScRiPt><script>alert(1)</script>"'),
+        ]
+        for markup, script in bad:
+            with self.subTest(markup=markup), self.assertRaises(ValueError):
+                blueprint.validate("implementation", json.dumps({"markup":markup, "script":script}).encode(), previous)
+
+
 class StageProviderTests(unittest.TestCase):
     def test_requests_one_json_module_and_records_only_sanitized_evidence(self):
         files = artifacts()
@@ -146,6 +187,35 @@ class StageProviderTests(unittest.TestCase):
         self.assertTrue(receipts[0]["dispatched"])
         self.assertNotIn(requirement, json.dumps(receipts))
         self.assertNotIn(secret, json.dumps(receipts))
+
+    def test_program_provider_builds_only_the_planned_implementation(self):
+        spec = b'{"kind":"program","title":"Calculator","goal":"Add two numbers"}'
+        implementation = json.dumps({
+            "markup": '<p id="answer"></p>',
+            "script": 'document.querySelector("#answer").textContent=3;',
+        })
+        seen = []
+
+        def exchange(payload, admit, *, wall_seconds):
+            body = json.loads(payload)["body"]
+            request = json.loads(body["messages"][1]["content"])
+            stage = request["current_stage"]
+            seen.append(stage)
+            admit()
+            if stage == "spec":
+                self.assertIn('"kind":"program"', body["messages"][0]["content"])
+                return envelope(spec.decode())
+            self.assertEqual(request["accepted_spec"], json.loads(spec))
+            self.assertEqual(body["max_tokens"], 3200)
+            return envelope(implementation)
+
+        with patch.object(assistant_model, "_exchange", exchange):
+            accepted = blueprint.provide("spec", "加法计算", {}, "secret", lambda: None)
+            self.assertEqual(blueprint.stage_plan(accepted), ("spec", "implementation", "assemble"))
+            blueprint.provide("implementation", "加法计算", {"spec.json":accepted}, "secret", lambda: None)
+            with self.assertRaises(ApiError):
+                blueprint.provide("entry", "加法计算", {"spec.json":accepted}, "secret", lambda: None)
+        self.assertEqual(seen, ["spec", "implementation"])
 
     def test_invalid_and_unsupported_results_are_not_reported_as_success(self):
         for result, finish, error in (
