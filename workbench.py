@@ -52,6 +52,7 @@ TRIAL_ADMIN = "/api/trial/admin"
 STAGED = "/api/staged"
 STAGED_TASK = re.compile(STAGED + r"/([a-f0-9]{32})")
 STAGED_ACTION = re.compile(STAGED + r"/([a-f0-9]{32})/(resume|candidate|publish)")
+ADMIN_INVITES = "/api/admin/invites"
 TABLE_INSPECT = "/api/table/inspect"
 TABLE_GENERATE = "/api/table/generate"
 TABLE_CONFIG = "/api/table/config"
@@ -195,7 +196,7 @@ def serve(key, port, runs=generate.RUNS, *, generation_limits=(5, 30), analysis_
                 self.send_header("Content-Security-Policy", policy)
                 paths = (*STATIC, "/api/config", "/api/releases", "/api/session", "/api/register", "/api/login", "/api/logout",
                          "/api/generate", "/api/tools", "/api/tools/*", DRAFTS, DRAFTS + "/*", ANALYZE,
-                         TABLE_INSPECT, TABLE_GENERATE, TABLE_CONFIG, TRIAL, TRIAL_ADMIN)
+                         TABLE_INSPECT, TABLE_GENERATE, TABLE_CONFIG, TRIAL, TRIAL_ADMIN, ADMIN_INVITES)
                 if staged:
                     paths += (STAGED, STAGED + "/*")
                 allowed = " ".join(f'"http://{host}{path}"' for path in paths)
@@ -388,6 +389,9 @@ def serve(key, port, runs=generate.RUNS, *, generation_limits=(5, 30), analysis_
                 return
             if self.path == TRIAL_ADMIN:
                 self.send_json(200, budget.admin_action(token, self.marker(), data))
+                return
+            if self.path == ADMIN_INVITES:
+                self.send_json(201, budget.issue_invite(token, self.marker(), data.get("requestId")))
                 return
             if staged and (match := STAGED_ACTION.fullmatch(self.path)):
                 marker = self.marker()

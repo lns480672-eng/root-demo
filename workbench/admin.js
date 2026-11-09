@@ -5,6 +5,8 @@ const backend = get('backend');
 const retryLoad = get('retry-load');
 const retryAction = get('retry-action');
 const toggle = get('toggle');
+const inviteGenerate = get('invite-generate');
+const inviteField = get('issued-code');
 const confirmAction = get('confirm');
 const auditClock = new Intl.DateTimeFormat('zh-CN', {
   timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit',
@@ -15,6 +17,8 @@ let identity = null;
 let state = null;
 let busy = false;
 let pending = null;
+let pendingInvite = null;
+let issuingInvite = false;
 
 function element(tag, value) {
   const node = document.createElement(tag);
@@ -48,6 +52,7 @@ async function request(path, data) {
   const payload = await response.json();
   if (!response.ok) {
     const error = new Error(payload.message || '请求未完成。');
+    error.code = payload.code;
     error.authorizationChanged = ['login_required', 'session_changed', 'admin_required'].includes(payload.code);
     error.knownRejection = !error.authorizationChanged && response.status >= 400 && response.status < 500;
     throw error;
@@ -57,10 +62,98 @@ async function request(path, data) {
 
 function showSection() {
   const locked = location.hash === '#accounts';
-  get('admin').hidden = locked;
+  const invites = location.hash === '#invites';
+  get('admin').hidden = locked || invites;
   get('account-preview').hidden = !locked;
-  get('trial-nav').setAttribute('aria-current', locked ? 'false' : 'page');
+  get('invite-module').hidden = !invites;
+  get('trial-nav').setAttribute('aria-current', locked || invites ? 'false' : 'page');
   get('account-nav').setAttribute('aria-current', locked ? 'page' : 'false');
+  get('invite-nav').setAttribute('aria-current', invites ? 'page' : 'false');
+}
+
+function inviteKey() {
+  return 'root:admin-invite-request:' + identity.user;
+}
+
+function rememberInvite(requestId) {
+  pendingInvite = requestId;
+  try {
+    if (requestId) sessionStorage.setItem(inviteKey(), requestId);
+    else sessionStorage.removeItem(inviteKey());
+  } catch {
+    // Keep the request identifier in memory if session storage is unavailable.
+  }
+}
+
+function updateInviteButton() {
+  inviteGenerate.disabled = issuingInvite;
+  inviteGenerate.textContent = issuingInvite ? '正在发码…' : pendingInvite ? '确认上次发码' : '生成邀请码';
+}
+
+function clearInviteResult() {
+  inviteField.value = '';
+  get('invite-expires').textContent = '';
+  get('invite-expires').removeAttribute('datetime');
+  get('invite-result').hidden = true;
+}
+
+async function issueInvite() {
+  if (issuingInvite) return;
+  if (!pendingInvite) {
+    clearInviteResult();
+    rememberInvite(crypto.randomUUID());
+  }
+  issuingInvite = true;
+  updateInviteButton();
+  const feedback = get('invite-feedback');
+  feedback.textContent = '';
+  try {
+    const issued = await request('/api/admin/invites', {requestId: pendingInvite});
+    rememberInvite(null);
+    inviteField.value = issued.code;
+    const date = new Date(issued.expiresAt * 1000);
+    const expires = get('invite-expires');
+    expires.textContent = auditClock.format(date);
+    expires.dateTime = date.toISOString();
+    get('invite-result').hidden = false;
+    feedback.textContent = '邀请码已生成。请与官网链接一起私发给受邀评审。';
+    request('/api/trial/admin').then(updated => {
+      state = updated;
+      render();
+    }).catch(() => {
+      // The issue has committed. Leave its only visible code available if refreshing the audit fails.
+    });
+  } catch (error) {
+    if (error.code === 'invite_already_issued') {
+      rememberInvite(null);
+      feedback.textContent = '本次邀请码已生成，原码无法恢复。若未收到，可重新生成一枚。';
+    } else if (error.knownRejection) {
+      rememberInvite(null);
+      feedback.textContent = error.message;
+    } else if (error.authorizationChanged) {
+      feedback.textContent = '登录会话或权限已变化，请重新登录后确认上次发码。';
+    } else {
+      feedback.textContent = '暂时无法确认发码结果，请点击「确认上次发码」。';
+    }
+  } finally {
+    issuingInvite = false;
+    updateInviteButton();
+  }
+}
+
+async function copyInvite() {
+  const code = inviteField.value;
+  if (!code) return;
+  const feedback = get('invite-feedback');
+  try {
+    await navigator.clipboard.writeText(code);
+    if (inviteField.value === code) feedback.textContent = '已复制邀请码。';
+  } catch {
+    if (inviteField.value !== code) return;
+    inviteField.focus();
+    inviteField.select();
+    feedback.textContent = '剪贴板不可用，请手动复制已选中的邀请码。';
+  }
 }
 
 function showUsage(kind, stats) {
@@ -127,7 +220,7 @@ function auditRow(entry) {
   const time = element('time', auditClock.format(date));
   time.dateTime = date.toISOString();
   const label = entry.action === 'grant' ? '为 ' + entry.username + ' 补发 ' + entry.amount + ' 次生成额度'
-    : entry.action === 'pause' ? '暂停模型调用' : '恢复模型调用';
+    : {pause: '暂停模型调用', resume: '恢复模型调用', issue_invite: '生成邀请码'}[entry.action];
   const action = element('span', label);
   action.className = 'audit-action';
   const row = document.createElement('li');
@@ -172,6 +265,13 @@ async function load(afterAction = false) {
       } catch {
         pending = null;
       }
+      try {
+        pendingInvite = sessionStorage.getItem(inviteKey());
+      } catch {
+        pendingInvite = null;
+      }
+      updateInviteButton();
+      if (pendingInvite) get('invite-feedback').textContent = '上次发码结果未确认，请先核对。';
     }
     state = await request('/api/trial/admin');
     render();
@@ -232,5 +332,8 @@ confirmAction.addEventListener('close', () => {
 });
 retryLoad.addEventListener('click', () => load());
 retryAction.addEventListener('click', () => applyAction());
+inviteGenerate.addEventListener('click', issueInvite);
+get('invite-copy').addEventListener('click', copyInvite);
 window.addEventListener('hashchange', showSection);
+window.addEventListener('pagehide', clearInviteResult);
 load();

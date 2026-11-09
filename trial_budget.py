@@ -2,13 +2,16 @@
 
 from datetime import datetime, time as midnight, timedelta, timezone
 from pathlib import Path
+import secrets
 import time
+from uuid import UUID
 
 from accounts import ApiError, USERNAME
 
 
 BEIJING = timezone(timedelta(hours=8))
 MAX_COUNTER = 2**53 - 1
+INVITE_SECONDS = 24 * 60 * 60
 
 
 def usage(used, limit):
@@ -83,6 +86,9 @@ class TrialBudget:
             # An invite recipient must not acquire operator privileges by claiming an unused name.
             self.admins = {(row["id"], row["username"]) for row in db.execute("SELECT id, username FROM accounts")
                            if row["username"] in names}
+        with store.connection(write=True) as db:
+            if "invite_digest" not in {row["name"] for row in db.execute("PRAGMA table_info(trial_audit)")}:
+                db.execute("ALTER TABLE trial_audit ADD COLUMN invite_digest TEXT REFERENCES invites(digest) ON DELETE SET NULL")
 
     def day_window(self):
         today = datetime.fromtimestamp(self.clock(), BEIJING).date()
@@ -252,6 +258,31 @@ class TrialBudget:
                 ],
                 "audit": [dict(row) for row in audit],
             }
+
+    def issue_invite(self, token, marker, request_id):
+        with self.store.connection(write=True) as db:
+            actor = self.require_admin(db, token, marker)
+            try:
+                if not isinstance(request_id, str) or str(UUID(request_id, version=4)) != request_id:
+                    raise ValueError
+            except ValueError:
+                raise ApiError(400, "invalid_admin_request", "发码请求编号无效。") from None
+            previous = db.execute("SELECT action FROM trial_audit WHERE actor=? AND request_id=?",
+                                  (actor, request_id)).fetchone()
+            if previous is not None:
+                if previous["action"] == "issue_invite":
+                    raise ApiError(409, "invite_already_issued", "本次邀请码已生成，原码无法恢复。")
+                raise ApiError(409, "admin_request_conflict", "此管理请求编号已用于其他操作。")
+
+            code = secrets.token_urlsafe(24)
+            created = int(self.clock())
+            expires = created + INVITE_SECONDS
+            invite_digest = self.store.insert_invite(db, code, 1, expires)
+            db.execute("""
+                INSERT INTO trial_audit(actor, action, created_at, request_id, invite_digest)
+                VALUES (?, 'issue_invite', ?, ?, ?)
+            """, (actor, created, request_id, invite_digest))
+        return {"code": code, "expiresAt": expires, "uses": 1}
 
     def admin_action(self, token, marker, data):
         with self.store.connection(write=True) as db:

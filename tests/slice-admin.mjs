@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 
-export async function verifyAdmin({evaluate, click, type, until, cdp, login, logout, visible,
+export async function verifyAdmin({evaluate, click, pointerClick, type, until, cdp, login, logout, visible,
   appRequest, screenshot, stage}) {
   const admin = 'qa-trial-admin';
   const member = 'qa-trial-member';
@@ -132,13 +132,105 @@ export async function verifyAdmin({evaluate, click, type, until, cdp, login, log
   await click('#trial-nav');
   await until(() => visible('#admin'));
   assert.equal(Number(await quota()), before + 2);
+  stage('AC-019 administrator issues and copies an invitation');
+  await click('#invite-nav');
+  await until(() => visible('#invite-module'));
+  assert.match(await text('#invite-policy'), /24 小时.*一次/);
+  await screenshot('invite-module-empty');
+  const issuedCount = () => evaluate(`fetch('/api/trial/admin', {headers: {'X-Root-Session': identity.marker}})
+    .then(response => response.json()).then(state => state.audit.filter(row => row.action === 'issue_invite').length)`);
+  const issuedBefore = await issuedCount();
+  await evaluate(`(() => {
+    const original = window.fetch;
+    let drop = true;
+    window.fetch = async (path, options) => {
+      const response = await original(path, options);
+      if (drop && String(path) === '/api/admin/invites' && options?.method === 'POST') {
+        drop = false;
+        throw new TypeError('lost issuance response');
+      }
+      return response;
+    };
+  })()`);
+  stage('AC-019 lost issuance response');
+  await click('#invite-generate');
+  await until(async () => /确认上次发码/.test(await text('#invite-generate')));
+  stage('AC-019 restore pending issuance after reload');
+  await cdp('Page.reload', {ignoreCache: true});
+  await until(async () => (await visible('#invite-module')) && /确认上次发码/.test(await text('#invite-generate')));
+  stage('AC-019 recover status without reissuing');
+  await click('#invite-generate');
+  await until(async () => /原码无法恢复/.test(await text('#invite-feedback')));
+  assert.equal(await issuedCount(), issuedBefore + 1);
+  assert.equal(await visible('#invite-result'), false);
+
+  stage('AC-019 show newly issued invite');
+  const origin = await evaluate('location.origin');
+  await cdp('Browser.grantPermissions', {origin, permissions:['clipboardReadWrite','clipboardSanitizedWrite']});
+  const now = Date.now();
+  await click('#invite-generate');
+  await until(() => visible('#invite-result'));
+  const expiry = await evaluate('Date.parse(document.querySelector("#invite-expires").dateTime)');
+  assert.ok(expiry - now >= 86399000 && expiry - now < 86410000);
+  stage('AC-019 write actual Chrome clipboard');
+  await cdp('Page.bringToFront');
+  await pointerClick('#invite-copy');
+  const copyFeedback = await until(async () => {
+    const feedback = await text('#invite-feedback');
+    return /已复制|手动复制/.test(feedback) && feedback;
+  });
+  assert.match(copyFeedback, /已复制/);
+  assert.equal(await evaluate('navigator.clipboard.readText().then(code => code === document.querySelector("#issued-code").value && code.length > 0)'), true);
+  await click('#invite-copy');
+  assert.equal(await issuedCount(), issuedBefore + 2);
+  stage('AC-019 manual clipboard fallback');
+  await evaluate(`Object.defineProperty(navigator.clipboard, 'writeText', {
+    configurable: true, value: () => Promise.reject(new DOMException('blocked', 'NotAllowedError')),
+  })`);
+  await click('#invite-copy');
+  await until(async () => /手动复制/.test(await text('#invite-feedback')));
+  assert.equal(await evaluate(`(() => {
+    const input = document.querySelector('#issued-code');
+    return document.activeElement === input && input.selectionEnd - input.selectionStart === input.value.length;
+  })()`), true);
+  assert.equal(await issuedCount(), issuedBefore + 2);
+
+  // The code stays in test memory and is never emitted in screenshots or test results.
+  stage('AC-019 register a fresh session with the copied code');
+  const copied = await evaluate('navigator.clipboard.readText()');
   await close();
   await logout();
+  await click('#auth-mode');
+  await type('#invite', copied);
+  await type('#username', 'qa-issued-reviewer');
+  await type('#password', 'root-browser-test-only!');
+  await click('#auth-submit');
+  await until(() => evaluate('document.querySelector("#account-name")?.textContent === "qa-issued-reviewer"'));
+  assert.equal(await visible('#admin-entry'), false);
+  assert.equal(await evaluate('fetch("/admin#invites").then(response => response.status)'), 403);
+  assert.equal((await appRequest('/api/admin/invites', {requestId: crypto.randomUUID()})).status, 403);
+  await logout();
+  await click('#auth-mode');
+  await type('#invite', copied);
+  stage('AC-019 reject reuse of the copied code');
+  await type('#username', 'qa-issued-repeat');
+  await type('#password', 'root-browser-test-only!');
+  await click('#auth-submit');
+  await until(() => visible('#invite-error'));
+  assert.match(await text('#invite-error'), /已使用|已用完/);
+  await evaluate(`(() => {
+    for (const id of ['invite','username','password']) document.getElementById(id).value = '';
+  })()`);
+  await evaluate("navigator.clipboard.writeText('')");
+  await click('#auth-mode');
 
   return [{
     id: 'TEST-017', result: 'passed', normalAccountDenied: true, noSampleState: true,
     generationFailures: [1, 2], analysisFailures: [0, 1], pauseResume: true,
     lostGrantResponseChargedOnce: true, idempotencySurvivesSessionChange: true, loadErrorDoesNotShowFakeData: true,
     accountActionsLocked: true, responsiveWidths: [1360, 700, 390, 320],
+  }, {
+    id: 'TEST-019', result: 'passed', actualClipboard: true, manualCopyFallback: true,
+    survivesResponseLoss: true, singleUse: true, ordinaryAccountDenied: true, ttlHours: 24,
   }];
 }

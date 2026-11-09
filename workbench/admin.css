@@ -147,6 +147,13 @@
   .policy { margin-top: 15px; color: var(--muted); }
   .notice { margin-top: 12px; color: var(--good); font-weight: 600; }
   .notice:empty { display: none; }
+  .invite-code { display: grid; gap: 6px; margin-top: 14px; }
+  .invite-code input {
+    width: min(100%, 29rem); min-width: 0; min-height: 44px; padding: 8px 12px;
+    border: 1px solid var(--line); border-radius: 10px;
+    color: var(--ink); background: var(--soft); font-family: ui-monospace, monospace;
+  }
+  .invite-actions { margin-top: 12px; }
   .accounts { margin-top: 16px; }
   .account-labels, .account-summary {
     display: grid;

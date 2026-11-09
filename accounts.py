@@ -113,9 +113,15 @@ class Store:
     def create_invite(self, code=None, uses=1, hours=24):
         code = secrets.token_urlsafe(24) if code is None else code
         with self.connection(write=True) as db:
-            db.execute("INSERT INTO invites VALUES (?, ?, ?)",
-                       (digest(code), uses, int(time.time() + 3600 * hours)))
+            self.insert_invite(db, code, uses, int(time.time() + 3600 * hours))
         return code
+
+    @staticmethod
+    def insert_invite(db, code, uses, expires):
+        invite_digest = digest(code)
+        db.execute("INSERT INTO invites(digest, remaining, expires) VALUES (?, ?, ?)",
+                   (invite_digest, uses, expires))
+        return invite_digest
 
     def register(self, data, previous_token=""):
         name, password = credentials(data, registering=True)

@@ -22,6 +22,7 @@
     <nav class="admin-nav" aria-label="后台模块">
       <p class="nav-title">管理模块</p>
       <a id="trial-nav" href="#manage">用量与额度</a>
+      <a id="invite-nav" href="#invites">邀请码管理</a>
       <a id="account-nav" href="#accounts">账号管理 <span class="locked-label">已锁定</span></a>
     </nav>
     <div class="admin-content">
@@ -83,8 +84,28 @@
             <div><h2 id="audit-title">操作记录</h2><p class="muted meta">记录操作者、北京时间和具体变更，最新操作在前。</p></div>
             <span id="current-operator" class="muted meta"></span>
           </div>
-          <p id="audit-empty" class="policy">还没有操作。补额度、暂停或恢复后，会在这里留下记录。</p>
+          <p id="audit-empty" class="policy">还没有操作。补额度、发码、暂停或恢复后，会在这里留下记录。</p>
           <ol id="audit-list" class="audit-list" aria-label="管理操作记录"></ol>
+        </section>
+      </section>
+      <section id="invite-module" aria-labelledby="invite-title" hidden>
+        <div class="intro">
+          <h1 id="invite-title">邀请码管理</h1>
+          <p>生成一枚邀请码，和官网链接一起私发给受邀评审。</p>
+        </div>
+        <section class="admin-section" aria-labelledby="invite-issue-title">
+          <div class="section-head">
+            <div><h2 id="invite-issue-title">发放邀请码</h2><p class="muted" id="invite-policy">生成后 24 小时有效，可成功注册一次。</p></div>
+            <button type="button" class="primary" id="invite-generate">生成邀请码</button>
+          </div>
+          <div id="invite-result" hidden>
+            <label class="invite-code">当前邀请码
+              <input id="issued-code" readonly autocomplete="off" spellcheck="false">
+            </label>
+            <p class="policy meta">到期时间（北京时间） <time id="invite-expires"></time></p>
+            <div class="actions invite-actions"><button type="button" id="invite-copy">复制邀请码</button></div>
+          </div>
+          <p id="invite-feedback" class="notice" role="status"></p>
         </section>
       </section>
       <section id="account-preview" aria-labelledby="account-module" hidden>

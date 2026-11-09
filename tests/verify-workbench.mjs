@@ -420,7 +420,7 @@ try {
   if (adminFlow) {
     const { verifyAdmin } = await import('./slice-admin.mjs');
     evidence.tests.push(...await verifyAdmin({
-      evaluate, click, type, until, cdp, login, logout, visible, appRequest, screenshot,
+      evaluate, click, pointerClick, type, until, cdp, login, logout, visible, appRequest, screenshot,
       stage: name => { stage = name; },
     }));
   }

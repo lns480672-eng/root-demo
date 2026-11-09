@@ -4,13 +4,14 @@ import re
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 from uuid import uuid4
-from accounts import Store
+from accounts import Store, digest
 
 
 class AccountHTTP(unittest.TestCase):
@@ -372,6 +373,106 @@ class AccountHTTP(unittest.TestCase):
         self.assertEqual(self.register("invite-new", " " + invite + " ")[0], 201)
         status, body = self.register("invite-extra", invite)
         self.assertEqual((status, body.get("code"), body.get("inviteReason")), (400, "invalid_invite", "used"))
+
+    def test_admin_invite_issuance_permissions_audit_and_idempotency(self):
+        path = "/api/admin/invites"
+        data = {"requestId": str(uuid4())}
+        self.assertEqual(self.request(path, data)[0], 401)
+        self.assertEqual(self.register("invite-non-admin", self.store.create_invite())[0], 201)
+        user, user_marker = self.login("invite-non-admin")
+        self.assertEqual(self.request(path, data, user, user_marker)[0], 403)
+        admin, marker = self.login("trial-admin")
+        self.assertEqual(self.request(path, data, admin, "stale-marker")[0], 409)
+        self.assertEqual(self.request(path, {"requestId":"invalid"}, admin, marker)[0], 400)
+        wrong_origin = Request(self.base + path, json.dumps(data).encode(), {
+            "Origin": "http://127.0.0.1:1", "Content-Type": "application/json",
+            "Cookie": admin, "X-Root-Session": marker,
+        })
+        with self.assertRaises(HTTPError) as rejected:
+            urlopen(wrong_origin, timeout=5)
+        self.assertEqual(rejected.exception.code, 403)
+        rejected.exception.close()
+
+        def issue(_):
+            request = Request(self.base + path, json.dumps(data).encode(), {
+                "Origin": self.base, "Content-Type": "application/json", "Cookie": admin,
+                "X-Root-Session": marker,
+            })
+            try:
+                response = urlopen(request, timeout=5)
+            except HTTPError as error:
+                response = error
+            with response:
+                return response.status, json.load(response), response.headers["Cache-Control"]
+
+        now = int(time.time())
+        with ThreadPoolExecutor(2) as pool:
+            responses = list(pool.map(issue, range(2)))
+        self.assertEqual(sorted(status for status, _, _ in responses), [201, 409])
+        self.assertTrue(all(cache == "no-store" for _, _, cache in responses))
+        issued = next(body for status, body, _ in responses if status == 201)
+        replay = next(body for status, body, _ in responses if status == 409)
+        self.assertEqual(replay["code"], "invite_already_issued")
+        self.assertTrue(issued["code"] not in json.dumps(replay))
+        self.assertTrue(now + 86400 <= issued["expiresAt"] <= int(time.time()) + 86400)
+        self.assertEqual(issued["uses"], 1)
+        code = issued["code"]
+        with self.store.connection() as db:
+            records = list(db.execute("""
+                SELECT actor, created_at, invite_digest FROM trial_audit WHERE request_id=?
+            """, (data["requestId"],)))
+            invite_row = db.execute("SELECT remaining, expires FROM invites WHERE digest=?", (digest(code),)).fetchone()
+        self.assertEqual(len(records), 1)
+        self.assertEqual(tuple(records[0]), ("trial-admin", issued["expiresAt"] - 86400, digest(code)))
+        self.assertEqual(tuple(invite_row), (1, issued["expiresAt"]))
+        self.assertFalse(any(code.encode() in path.read_bytes() for path in Path(self.runs).glob("workspace.sqlite3*")))
+        status, state, _ = self.request("/api/trial/admin", cookie=admin, marker=marker)
+        self.assertEqual(status, 200)
+        self.assertEqual(state["audit"][0]["action"], "issue_invite")
+        self.assertFalse(digest(code) in json.dumps(state))
+        self.assertFalse(code in json.dumps(state))
+
+        # A new server process should read the original audit from the shared isolated database.
+        args = [sys.executable, "-B", "-c",
+                "import sys, workbench; from pathlib import Path; "
+                "workbench.serve('fixture-key', 0, Path(sys.argv[1]), admin_usernames=('trial-admin',))", self.runs]
+        with subprocess.Popen(args, stdout=subprocess.PIPE, text=True) as restarted:
+            try:
+                base = re.search(r"http://127\.0\.0\.1:\d+", restarted.stdout.readline()).group()
+                request = Request(base + path, json.dumps(data).encode(), {
+                    "Origin": base, "Content-Type": "application/json", "Cookie": admin, "X-Root-Session": marker,
+                })
+                with self.assertRaises(HTTPError) as rejected:
+                    urlopen(request, timeout=5)
+                with rejected.exception as response:
+                    self.assertEqual((response.status, json.load(response)["code"]), (409, "invite_already_issued"))
+            finally:
+                restarted.terminate()
+                restarted.wait(timeout=5)
+
+        self.assertEqual(self.register("issued-redeemer", code)[0], 201)
+        status, body = self.register("issued-repeat", code)
+        self.assertEqual((status, body["code"]), (400, "invalid_invite"))
+
+    def test_admin_invite_issuance_rolls_back_if_audit_cannot_be_written(self):
+        path = "/api/admin/invites"
+        data = {"requestId": str(uuid4())}
+        admin, marker = self.login("trial-admin")
+        with self.store.connection(write=True) as db:
+            before = db.execute("SELECT count(*) FROM invites").fetchone()[0]
+            db.execute("""
+                CREATE TRIGGER fail_invite_audit BEFORE INSERT ON trial_audit
+                WHEN NEW.action='issue_invite' BEGIN SELECT RAISE(ABORT, 'fixture failure'); END
+            """)
+        try:
+            self.assertEqual(self.request(path, data, admin, marker)[0], 503)
+            with self.store.connection() as db:
+                self.assertEqual(db.execute("SELECT count(*) FROM invites").fetchone()[0], before)
+                self.assertIsNone(db.execute("SELECT 1 FROM trial_audit WHERE request_id=?", (data["requestId"],)).fetchone())
+        finally:
+            with self.store.connection(write=True) as db:
+                db.execute("DROP TRIGGER fail_invite_audit")
+        self.assertEqual(self.request(path, data, admin, marker)[0], 201)
 
     def test_registration_immediately_authenticates_new_account(self):
         status, registration, cookie = self.request("/api/register", {
