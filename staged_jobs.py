@@ -246,7 +246,7 @@ class StagedJobs:
             attempts = db.execute("SELECT count(*) FROM staged_dispatches WHERE task=?", (identifier,)).fetchone()[0]
             if attempts >= self.max_attempts:
                 raise ApiError(429, "staged_exhausted", "此任务已达到模型调用上限。")
-            self.budget.reserve_generation(db, row["owner"])
+            self.budget.reserve_generation(db, row["owner"], dispatch_id=dispatch_id)
             db.execute("INSERT INTO staged_dispatches VALUES (?,?,?,?)", (dispatch_id, identifier, index, fence))
 
     def checkpoint(self, identifier, fence, index, stage, content, prior):

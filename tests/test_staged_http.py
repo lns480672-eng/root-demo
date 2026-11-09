@@ -21,7 +21,7 @@ import json
 import sys
 import generate
 import workbench
-from accounts import ApiError
+from accounts import ApiError, Store
 
 def ordinary(requirement, key):
     return 200, json.dumps({"choices":[{"finish_reason":"stop",
@@ -59,7 +59,11 @@ def stages(stage, requirement, prior, key, admit, record):
     return json.dumps(modules[stage]).encode()
 
 generate.request_completion = ordinary
-workbench.serve("fixture-key", 0, Path(sys.argv[1]), staged_enabled=True, staged_provider=stages)
+runs = Path(sys.argv[1])
+store = Store(runs / "workspace.sqlite3")
+store.register({"username":"staged-operator","password":"test-only-password","invite":store.create_invite()})
+workbench.serve("fixture-key", 0, runs, staged_enabled=True, staged_provider=stages,
+                admin_usernames=("staged-operator",))
 """
 
 
@@ -93,6 +97,16 @@ class StagedHTTP(unittest.TestCase):
                                                               "invite":self.store.create_invite()})
         self.assertEqual(status, 201)
         return cookie.split(";")[0], user["marker"]
+
+    def admin_generation(self):
+        code, _, cookie = self.request("/api/login", {"username":"staged-operator", "password":"test-only-password"})
+        self.assertEqual(code, 200)
+        auth = (cookie.split(";")[0], "")
+        code, session, _ = self.request("/api/session", auth=auth)
+        self.assertEqual(code, 200)
+        code, view, _ = self.request("/api/trial/admin", auth=(auth[0], session["marker"]))
+        self.assertEqual(code, 200)
+        return view["generation"]
 
     def gen(self, auth, requirement, request=None):
         return self.request("/api/generate", {"requirement":requirement, "requestId":request or uuid4().hex}, auth)
@@ -134,6 +148,7 @@ class StagedHTTP(unittest.TestCase):
         requirement = "设备维修台账：新增记录、修改状态，组合筛选、统计和导出。"
         request = uuid4().hex
         before = self.request("/api/trial", auth=owner)[1]["generation"]["totalUsed"]
+        initial_admin = self.admin_generation()
         status, response, _ = self.gen(owner, requirement, request)
         self.assertEqual(status, 202)
         task = response["task"]["id"]
@@ -180,3 +195,6 @@ class StagedHTTP(unittest.TestCase):
         self.assertTrue(self.request("/api/tools/" + candidate["id"], auth=owner)[1]["stagedBackup"])
         balance = self.request("/api/trial", auth=owner)[1]["generation"]
         self.assertEqual((balance["used"], balance["totalUsed"] - before), (1, 6))
+        final_admin = self.admin_generation()
+        self.assertEqual((final_admin["completed"] - initial_admin["completed"],
+                          final_admin["failed"] - initial_admin["failed"]), (6, 1))

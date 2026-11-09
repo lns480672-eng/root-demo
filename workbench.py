@@ -138,6 +138,11 @@ def serve(key, port, runs=generate.RUNS, *, generation_limits=(5, 30), analysis_
     table_limits = table_limits or table_import.TableLimits()
 
     def stage_receipt(task, dispatch, receipt):
+        if receipt.get("dispatched") is True:
+            try:
+                budget.finish_dispatch("generation", dispatch, success=receipt.get("status") == "ok")
+            except sqlite3.Error:
+                pass
         try:
             with (runs / "staged-usage.jsonl").open("a", encoding="utf-8") as log:
                 log.write(json.dumps({"task":task, "dispatch":dispatch, **receipt}, ensure_ascii=False) + "\n")
