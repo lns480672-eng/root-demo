@@ -140,24 +140,20 @@ def prepare(prior_artifacts, legacy_html=None):
 def table_columns(entries):
     """Extract the stored schema without adding record data to the revision context."""
     try:
-        table = json.loads(dict(json.loads(entries))[table_import.TABLE_KEY])
-        columns = table["columns"]
-        blueprint.require(isinstance(columns, list) and 1 <= len(columns) <= table_import.MAX_TABLE_COLUMNS,
-                          "bad_table_columns")
+        columns = table_import.read_saved_table(entries)["columns"]
         for column in columns:
             blueprint.keys(column, "name", "type")
-            blueprint.require(table_import.valid_label(column["name"], table_import.MAX_HEADER_LENGTH)
-                              and column["type"] in table_import.COLUMN_TYPES, "bad_table_column")
         blueprint.require(len({column["name"] for column in columns}) == len(columns), "bad_table_columns")
         return columns
     except (KeyError, RecursionError, TypeError, ValueError):
         raise ApiError(409, "revision_source_unsupported", "旧表格的字段无法安全修改，原工具仍可用。") from None
 
 
-def prepare_table(entries, title, prior_artifacts=None):
+def prepare_table(entries, *, prior_artifacts=None, html=None):
     columns = table_columns(entries)
     if prior_artifacts is None:
-        spec = {"kind": "table", "title": title, "filters": []}
+        configuration = table_import.tool_configuration(html.decode("utf-8"))
+        spec = {"kind": "table", **configuration}
     else:
         blueprint.require(set(prior_artifacts) == {"spec.json", "app.html"}, "bad_table_artifacts")
         spec = blueprint.read_artifact(prior_artifacts["spec.json"])

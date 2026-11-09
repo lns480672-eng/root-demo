@@ -427,6 +427,18 @@ class StagedHTTP(unittest.TestCase):
         after = self.request("/api/trial", auth=owner)[1]["generation"]
         self.assertEqual((after["used"] - before["used"], after["totalUsed"] - before["totalUsed"]), (2, 5))
 
+        current = self.request(tool, auth=owner)[1]
+        status, restored, _ = self.request(tool + "/restore", {
+            "version": 3, "revision": current["revision"], "restoreVersion": 2,
+        }, owner)
+        self.assertEqual((status, restored["version"], restored["entries"]), (200, 4, updated))
+        self.assertIn("const columnFilters = [1];", restored["html"])
+        self.assertEqual(self.request(tool + "/publish", {
+            "runId": restored["runId"], "revision": current["revision"], "entries": updated,
+        }, owner)[0], 200)
+        self.assertEqual(self.request("/api/trial", auth=owner)[1]["generation"], after)
+        publish(revise(4, "只把标题改成每周交付台账"), 5, "每周交付台账")
+
     def test_resolve_fences_a_late_publish_without_revoking_the_new_preview(self):
         owner = self.account("staged-resolve")
         other = self.account("staged-resolve-other")

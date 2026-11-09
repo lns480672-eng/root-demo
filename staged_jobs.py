@@ -201,16 +201,12 @@ class StagedJobs:
                 require_digest = digest(files["app.html"])
                 if require_digest != source["digest"]:
                     raise ValueError("revision source mismatch")
-                context = (self.revision.prepare_table(tool["entries"], tool["title"], files)
+                context = (self.revision.prepare_table(tool["entries"], prior_artifacts=files)
                            if tool["table_tool"] else self.revision.prepare(files))
                 return source["repo_id"] or source["id"], source["head"], require_digest, context
             html = (self.runs / tool["run_id"] / "app.html").read_bytes()
-            if tool["table_tool"]:
-                if tool["version"] != 1:
-                    raise ValueError("unrecognized table revision")
-                context = self.revision.prepare_table(tool["entries"], tool["title"])
-            else:
-                context = self.revision.prepare({}, html)
+            context = (self.revision.prepare_table(tool["entries"], html=html)
+                       if tool["table_tool"] else self.revision.prepare({}, html))
             return None, ZERO, digest(html), context
         except (ApiError, ValueError, OSError, subprocess.SubprocessError):
             raise ApiError(422, "staged_revision_source", "这个旧版本暂时无法安全地分阶段修改，原工具与记录仍可用。") from None
