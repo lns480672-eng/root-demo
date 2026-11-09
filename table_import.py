@@ -13,6 +13,7 @@ import zlib
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
+from html import escape
 from urllib.parse import unquote, urlsplit
 from xml.etree import ElementTree
 
@@ -32,7 +33,7 @@ def limits_from_env():
     for field, name, ceiling in (
         ("bytes", "ROOT_TABLE_MAX_BYTES", 8 * 1024 * 1024),
         ("rows", "ROOT_TABLE_MAX_ROWS", 5000),
-        ("columns", "ROOT_TABLE_MAX_COLUMNS", 200),
+        ("columns", "ROOT_TABLE_MAX_COLUMNS", MAX_TABLE_COLUMNS),
     ):
         raw = os.environ.get(name, str(getattr(defaults, field)))
         if not re.fullmatch(r"[0-9]{1,8}", raw) or not 1 <= int(raw) <= ceiling:
@@ -41,6 +42,7 @@ def limits_from_env():
     return TableLimits(**values)
 
 
+MAX_TABLE_COLUMNS = 200
 MAX_HEADER_LENGTH = 80
 MAX_CELL_LENGTH = 4096
 MAX_FILENAME_LENGTH = 120
@@ -499,7 +501,20 @@ def build_table_tool(table, limits=TableLimits()):
         if error.code != "tool_quota":
             raise
         raise ApiError(413, "csv_size", "确认后的表格超过工具存储空间，请减少行列后重试。") from None
-    return SUGGESTION, TOOL_HTML, entries
+    return SUGGESTION, render_tool(), entries
+
+
+def render_tool(title=SUGGESTION, filters=()):
+    """Render trusted markup. Records and field names stay in sandbox storage."""
+    if not valid_label(title, MAX_HEADER_LENGTH):
+        raise ValueError("invalid table title")
+    if (not isinstance(filters, (tuple, list))
+            or any(type(index) is not int or not 0 <= index < MAX_TABLE_COLUMNS for index in filters)
+            or len(filters) != len(set(filters))):
+        raise ValueError("invalid table filters")
+    return (TOOL_HTML.replace("__TABLE_CELL_LIMIT__", str(MAX_CELL_LENGTH))
+            .replace("__TABLE_COLUMN_FILTERS__", json.dumps(filters))
+            .replace("__TABLE_TITLE__", escape(title)))
 
 
 TOOL_HTML = """<!doctype html>
@@ -507,14 +522,18 @@ TOOL_HTML = """<!doctype html>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>交付跟进板</title>
+  <title>__TABLE_TITLE__</title>
   <style>
     * { box-sizing: border-box; }
     body { margin: 0; padding: 12px; color: #232638; background: #fafaff; font: 15px/1.5 system-ui, sans-serif; }
     h1 { margin: 0; font-size: 22px; }
     p { margin: 5px 0 12px; overflow-wrap: anywhere; }
     .controls { display: flex; flex-wrap: wrap; gap: 8px 16px; }
-    label { display: grid; gap: 4px; }
+    label { display: grid; min-width: 0; gap: 4px; overflow-wrap: anywhere; }
+    details { margin-block: 12px; }
+    summary { cursor: pointer; }
+    #table-entry-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 12em), 1fr));
+      gap: 8px; margin-block: 8px; max-height: 16em; overflow: auto; }
     input, select { max-width: 100%; padding: 5px 8px; font: inherit; }
     .table { overflow: auto; }
     table { border-collapse: collapse; min-width: 100%; }
@@ -525,8 +544,15 @@ TOOL_HTML = """<!doctype html>
 </head>
 <body>
   <main>
-    <h1>交付跟进板</h1>
+    <h1>__TABLE_TITLE__</h1>
     <p id="table-source"></p>
+    <details id="table-add-record">
+      <summary>新增记录</summary>
+      <form id="table-entry-form">
+        <div id="table-entry-fields"></div>
+        <button type="submit">添加记录</button>
+      </form>
+    </details>
     <div class="controls">
       <label>筛选状态
         <select id="table-filter">
@@ -537,6 +563,7 @@ TOOL_HTML = """<!doctype html>
       </label>
       <label>查找记录 <input id="table-search" type="search"></label>
     </div>
+    <div id="table-column-filters" class="controls"></div>
     <p id="table-count" role="status"></p>
     <p id="table-warning" role="alert" hidden></p>
     <div class="table" tabindex="0" role="region" aria-label="表格记录">
@@ -548,9 +575,14 @@ TOOL_HTML = """<!doctype html>
   </main>
   <script>
     const storageKey = 'root.table.v1';
+    const maxCellLength = __TABLE_CELL_LIMIT__;
+    const columnFilters = __TABLE_COLUMN_FILTERS__;
     const filter = document.querySelector('#table-filter');
     const search = document.querySelector('#table-search');
     const rows = document.querySelector('#table-records tbody');
+    const entryForm = document.querySelector('#table-entry-form');
+    const entryFields = document.querySelector('#table-entry-fields');
+    const filterFields = document.querySelector('#table-column-filters');
     const warning = document.querySelector('#table-warning');
     const report = text => {
       warning.textContent = text;
@@ -568,6 +600,67 @@ TOOL_HTML = """<!doctype html>
       for (const node of header) node.scope = 'col';
       document.querySelector('#table-columns').replaceChildren(...header);
       document.querySelector('#table-source').textContent = '来源 · ' + table.filename;
+      const inputs = table.columns.map(({ name }, index) => {
+        const input = document.createElement('input');
+        input.dataset.tableEntry = index;
+        input.maxLength = 2 * maxCellLength;
+        const label = cell('label', name);
+        label.append(input);
+        entryFields.append(label);
+        return input;
+      });
+      const extraFilters = columnFilters.map(index => {
+        const select = document.createElement('select');
+        select.id = 'table-column-filter-' + index;
+        select.dataset.tableColumnFilter = index;
+        const label = cell('label', '按' + table.columns[index].name + '筛选');
+        label.append(select);
+        filterFields.append(label);
+        select.addEventListener('change', render);
+        return { index, select };
+      });
+
+      function updateFilterOptions() {
+        for (const { index, select } of extraFilters) {
+          const previous = select.value;
+          const options = document.createDocumentFragment();
+          options.append(new Option('全部', ''));
+          for (const value of new Set(table.rows.map(row => row[index]))) {
+            options.append(new Option(value || '（空值）', 'v' + value));
+          }
+          select.replaceChildren(options);
+          select.value = previous;
+        }
+      }
+
+      entryForm.addEventListener('submit', event => {
+        event.preventDefault();
+        const values = inputs.map(input => input.value);
+        if (!values.some(value => value.trim())) {
+          report('请至少填写一个字段。');
+          inputs[0].focus();
+          return;
+        }
+        const invalid = values.findIndex(value => [...value].length > maxCellLength || value.includes(String.fromCharCode(0)));
+        if (invalid !== -1) {
+          report('单元格不能超过 ' + maxCellLength + ' 个字符，也不能含空字符。');
+          inputs[invalid].focus();
+          return;
+        }
+        const next = { ...table, rows: [...table.rows, values], done: [...table.done, false] };
+        try {
+          localStorage.setItem(storageKey, JSON.stringify(next));
+        } catch {
+          report('记录暂时无法保存，输入已保留。');
+          return;
+        }
+        table = next;
+        entryForm.reset();
+        report('');
+        updateFilterOptions();
+        render();
+        inputs[0].focus();
+      });
 
       function render() {
         rows.replaceChildren();
@@ -577,6 +670,7 @@ TOOL_HTML = """<!doctype html>
         table.rows.forEach((values, index) => {
           if (state !== 'all' && (state === 'done') !== table.done[index]) return;
           if (query && !values.some(value => value.toLocaleLowerCase().includes(query))) return;
+          if (extraFilters.some(({ index, select }) => select.value && select.value !== 'v' + values[index])) return;
           visible++;
           const row = document.createElement('tr');
           for (const value of values) row.append(cell('td', value));
@@ -617,6 +711,7 @@ TOOL_HTML = """<!doctype html>
       }
       filter.addEventListener('change', render);
       search.addEventListener('input', render);
+      updateFilterOptions();
       render();
     }
 
@@ -625,6 +720,7 @@ TOOL_HTML = """<!doctype html>
     } catch {
       report('表格记录无法读取，请重新打开工具。');
       filter.disabled = search.disabled = true;
+      document.querySelector('#table-add-record').hidden = true;
     }
   </script>
 </body>

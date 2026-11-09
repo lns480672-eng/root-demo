@@ -118,6 +118,27 @@ export async function verifyCsv({ evaluate, click, until, cdp, activeTool, libra
   await selectFilter('done', uploadedTool.context);
   assert.deepEqual((await previewRows(uploadedTool.context)).map(row => row[0]), ['清点工具', '寄送样本']);
   await screenshot('csv-uploaded-tool');
+
+  stage('CHG-029 adds a record in the imported tool without losing the original rows or status');
+  const addedRow = ['新建跟进事项', '0005', '<img src=x onerror=alert(1)>', ''];
+  assert.equal(await evaluate('Boolean(document.querySelector("#table-add-record > summary"))', uploadedTool.context),
+    true, '导入工具需要提供新增记录入口');
+  await click('#table-add-record > summary', uploadedTool.context);
+  await click('#table-entry-form button[type="submit"]', uploadedTool.context);
+  assert.match(await evaluate('document.querySelector("#table-warning").textContent', uploadedTool.context), /至少填写/);
+  await evaluate(`(() => {
+    const inputs = document.querySelectorAll('#table-entry-form input[data-table-entry]');
+    ${JSON.stringify(addedRow)}.forEach((value, index) => { inputs[index].value = value; });
+  })()`, uploadedTool.context);
+  await click('#table-entry-form button[type="submit"]', uploadedTool.context);
+  const rowsWithNewRecord = [...uploadedRows, addedRow];
+  await until(async () => (await savedTable(uploadedTool.id)).rows.length === rowsWithNewRecord.length);
+  assert.deepEqual((await savedTable(uploadedTool.id)).rows, rowsWithNewRecord);
+  assert.deepEqual((await savedTable(uploadedTool.id)).done, [true, true, false]);
+  await selectFilter('open', uploadedTool.context);
+  assert.deepEqual((await previewRows(uploadedTool.context)).map(row => row.slice(0, 4)), [addedRow]);
+  assert.equal(await evaluate('document.querySelector("#table-records img") === null', uploadedTool.context), true);
+  await screenshot('csv-added-record');
   const previousNavigation = await evaluate('performance.timeOrigin');
   await cdp('Page.reload', { ignoreCache: true });
   await until(() => evaluate(`performance.timeOrigin !== ${previousNavigation} && document.documentElement.dataset.ready === 'true'`));
@@ -125,11 +146,11 @@ export async function verifyCsv({ evaluate, click, until, cdp, activeTool, libra
   assert.equal(reloaded.id, uploadedTool.id);
   assert.notEqual(reloaded.loader, uploadedTool.loader);
   assert.equal(await evaluate('document.querySelector(\'[data-row-status="0"]\').checked', reloaded.context), true);
-  assert.deepEqual((await savedTable(reloaded.id)).rows, uploadedRows);
+  assert.deepEqual((await savedTable(reloaded.id)).rows, rowsWithNewRecord);
   await selectHistory(originalTool.id);
   const reopened = await selectHistory(uploadedTool.id);
   assert.equal(reopened.id, uploadedTool.id);
-  assert.deepEqual((await previewRows(reopened.context)).map(row => row.slice(0, 4)), uploadedRows);
+  assert.deepEqual((await previewRows(reopened.context)).map(row => row.slice(0, 4)), rowsWithNewRecord);
   assert.equal((await savedTable(reopened.id)).done[0], true);
 
   stage('AC-010 XLSX reads the first sheet and omits the excluded column from all saved rows');
@@ -186,6 +207,6 @@ export async function verifyCsv({ evaluate, click, until, cdp, activeTool, libra
     id: 'TEST-010', result: 'passed', exampleRows: exampleRows.length, uploadedRows: uploadedRows.length,
     explicitGenerations: 4, savedStatusRestored: true, previousToolPreservedOnMalformedCsv: true,
     xlsxFirstSheet: xlsxSeed.sheet, xlsxRows: xlsxSeed.rows.length, xlsxExcludedColumn: true,
-    largeBytes, largeRows: largeSaved.rows.length,
+    largeBytes, largeRows: largeSaved.rows.length, addedRecordRestored: true,
   };
 }

@@ -8,7 +8,7 @@ import zipfile
 from unittest.mock import patch
 
 from accounts import ApiError
-from table_import import TableLimits, build_table_tool, inspect_table, limits_from_env
+from table_import import TableLimits, build_table_tool, inspect_table, limits_from_env, render_tool
 
 
 def sample_xlsx(first_sheet=None):
@@ -128,6 +128,16 @@ class TableImportTests(unittest.TestCase):
         self.assertEqual(seed["columns"], payload["columns"])
         self.assertEqual(seed["rows"], payload["rows"])
         self.assertEqual(seed["done"], [True, False])
+
+    def test_renderer_accepts_only_safe_title_and_distinct_column_indexes(self):
+        html = render_tool('</title><img src=x> & 交付', (1, 3))
+        self.assertIn('<title>&lt;/title&gt;&lt;img src=x&gt; &amp; 交付</title>', html)
+        self.assertNotIn('<img src=x>', html)
+        self.assertIn('const columnFilters = [1, 3];', html)
+        self.assertIn('const columnFilters = [];', render_tool())
+        for filters in ((0, 0), (-1,), (True,), ('1',), (200,), '1'):
+            with self.subTest(filters=filters), self.assertRaises(ValueError):
+                render_tool(filters=filters)
 
     def test_confirmation_revalidates_client_data(self):
         result = self.inspect_upload("事项,负责人\n第一条,张三")
