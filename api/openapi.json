@@ -775,7 +775,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/StagedTaskEnvelope"
+                  "$ref": "#/components/schemas/StagedRevisionTaskEnvelope"
                 }
               }
             }
@@ -3855,12 +3855,29 @@
           "version",
           "requestId"
         ]
+      },
+      "StagedRevisionTaskEnvelope": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/StagedTaskEnvelope"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "task": {
+                "type": "object",
+                "required": [
+                  "baseToolId",
+                  "baseVersion"
+                ]
+              }
+            }
+          }
+        ]
       }
     }
   },
   "x-source": {
-    "verifiedBaseline": "66304db72dd410e2446d113b9d26c95e3a850cfd",
-    "inviteImplementation": "dd3e53d",
-    "revisionImplementation": "待固定的统一修订集成"
+    "verifiedCommit": "4b75ed38cb24f7dec0af6fe8370dc48ba0299183"
   }
 }
