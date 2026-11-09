@@ -260,6 +260,19 @@ class StagedReconnectHTTP(StagedHTTPFixture):
 
 
 class StagedHTTP(StagedHTTPFixture):
+    def test_generation_category_is_part_of_the_request_identity(self):
+        auth = self.account("generation-category")
+        path = "/api/generate"
+        data = {"requirement": "计算两个数字", "requestId": uuid4().hex}
+        status, initial, _ = self.request(path, data, auth)
+        self.assertEqual(status, 202)
+        status, replay, _ = self.request(path, {**data, "category": "auto"}, auth)
+        self.assertEqual((status, replay["task"]["id"]), (202, initial["task"]["id"]))
+        status, rejected, _ = self.request(path, {**data, "category": "brand"}, auth)
+        self.assertEqual((status, rejected["code"]), (409, "staged_request_changed"))
+        status, rejected, _ = self.request(path, {**data, "category": "other"}, auth)
+        self.assertEqual((status, rejected["code"]), (400, "staged_category"))
+
     def test_one_endpoint_uses_the_plan_for_a_simple_tool(self):
         user = self.account("staged-routing")
         before = self.request("/api/trial", auth=user)[1]["generation"]["totalUsed"]

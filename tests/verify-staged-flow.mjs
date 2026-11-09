@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
@@ -7,6 +8,14 @@ const requirement = '做一个中文求职投递看板，新增卡片填写公�
   '卡片可点按钮切换阶段并移到对应栏，不需要拖拽。可以编辑和删除卡片。' +
   '浏览器保存数据，能导出全部投递记录为 JSON 备份文件，选之前下载的文件导入恢复。';
 const taskPath = '/api/staged/';
+
+async function findStagedTask(appRequest, requirement, exclude) {
+  for (const path of ['/api/staged', '/api/staged/history']) {
+    const {body} = await appRequest(path);
+    const task = body.tasks?.find(item => item.requirement === requirement && item.id !== exclude);
+    if (task) return task;
+  }
+}
 
 export async function verifyStagedFlow(ctx) {
   const { cdp, evaluate, until, base, click, pointerClick, type, visible, appRequest, login, generate,
@@ -28,17 +37,18 @@ export async function verifyStagedFlow(ctx) {
   await click('#new-tool');
   await evaluate('window.holdFixturePreview = true; window.releaseFixturePreview = undefined');
   await generate(requirement);
-  const task = async () => {
-    const {body} = await appRequest('/api/staged');
-    return body.tasks?.find(item => item.requirement === requirement);
-  };
-  const first = await until(task, 90000);
-  const selected = '#staged-task-list button[data-task-id="' + first.id + '"]';
+  const first = await until(() => findStagedTask(appRequest, requirement), 90000);
+  let publishingTask = first.id;
+  const task = async id => (await appRequest(taskPath + id)).body.task;
+  const selected = '#staged-history-list button[data-history-task-id="' + first.id + '"]';
   if (!stagedLive) {
-    await until(async () => (await task())?.state === 'failed');
-    assert.deepEqual((await task()).completed, ['spec']);
-    assert.equal((await task()).stage, 'entry');
-    assert.equal((await task()).reason, 'invalid_staged_result');
+    const failed = await until(async () => {
+      const current = await task(first.id);
+      return current.state === 'failed' && current;
+    });
+    assert.deepEqual(failed.completed, ['spec']);
+    assert.equal(failed.stage, 'entry');
+    assert.equal(failed.reason, 'invalid_staged_result');
     assert.equal(await used(), before);
     const second = await appRequest('/api/generate', {requirement:requirement + ' 另一个任务。', requestId:'2'.repeat(32)});
     assert.equal(second.status, 202);
@@ -51,30 +61,32 @@ export async function verifyStagedFlow(ctx) {
       await cdp('Emulation.setDeviceMetricsOverride', {width,height:844,deviceScaleFactor:1,mobile:width===390});
       assert.equal(await visible('#staged-panel'), false);
       await click('#new-tool');
-      assert.equal(await visible(selected), true);
-      assert.equal(await evaluate('document.querySelectorAll("#staged-task-list button[data-task-id]").length'), 2);
+      if (!await evaluate('document.querySelector("#staged-history").open')) await click('#staged-history summary');
+      await until(() => visible(selected));
+      assert.equal(await evaluate('document.querySelectorAll("#staged-history-list button[data-history-task-id]").length'), 2);
+      assert.equal(await evaluate('document.querySelectorAll("#staged-task-list button[data-task-id]").length'), 0);
       if (width === 1440) await click('#return-to-library');
     }
     await cdp('Emulation.setDeviceMetricsOverride', {width:1440,height:1000,deviceScaleFactor:1,mobile:false});
     await click(selected);
     assert.equal(await evaluate('document.querySelector("#requirement").value'), requirement);
     assert.ok(await visible('#staged-issue'));
+    assert.equal(await visible('#staged-resume'), false);
+    assert.equal(await used(), before);
     await evaluate('window.holdFixturePreview = true; window.releaseFixturePreview = undefined');
-    await click('#staged-resume');
-    evidence.tests.push('中途失败后整页刷新能找到同账号两项任务，选原任务续跑');
+    await click('#generate');
+    publishingTask = (await until(() => findStagedTask(appRequest, requirement, first.id), 90000)).id;
+    evidence.tests.push('中途失败后整页刷新能从历史找回需求，明确重新提交才创建新任务');
   }
-  let realResume = null;
+  let retried = false;
   await until(async () => {
-    const current = await task();
-    if (stagedLive && current?.state === 'failed' && await visible('#staged-resume')) {
-      if (realResume && realResume !== current.issue) {
-        throw new Error('真实任务续跑后仍失败，阶段 ' + current.stage + '，原因 ' + current.reason);
-      }
-      if (!realResume) {
-        realResume = current.issue;
-        await click('#staged-resume');
-        evidence.tests.push('真模型阶段异常后从同一个任务继续');
-      }
+    const current = await task(publishingTask);
+    if (stagedLive && current?.state === 'failed' && await visible('#staged-reason')) {
+      if (retried) throw new Error('真实任务重新提交后仍失败，阶段 ' + current.stage + '，原因 ' + current.reason);
+      retried = true;
+      await click('#generate');
+      publishingTask = (await until(() => findStagedTask(appRequest, requirement, first.id), 90000)).id;
+      evidence.tests.push('真模型阶段异常后明确提交新任务');
     }
     if (current?.state === 'unsupported') throw new Error('真实任务被误判不支持');
     return evaluate('typeof window.releaseFixturePreview === "function"');
@@ -185,12 +197,12 @@ export async function verifyStagedFlow(ctx) {
   assert.equal(await evaluate('document.querySelectorAll("#record-board article").length', restored.context), 2);
   assert.match(await evaluate('document.querySelector("[data-board-column=面试中] article").textContent', restored.context), /现场复核/);
   const receipts = (await readFile(join(root, 'runs', 'staged-usage.jsonl'), 'utf8')).trim().split('\n').map(JSON.parse);
-  evidence.runs = receipts.filter(item => item.task === first.id);
+  evidence.runs = receipts.filter(item => item.task === publishingTask);
   assert.equal(evidence.runs.filter(item => item.stage === 'spec').length, 1);
   const expected = stagedLive ? ['spec','entry'] : ['spec','entry','filters','summary','export'];
   assert.deepEqual(evidence.runs.filter(item => item.status === 'ok').map(item => item.stage), expected);
   if (!stagedLive) {
-    const rejection = evidence.runs.find(item => item.validation === 'bad_field_reference');
+    const rejection = receipts.find(item => item.task === first.id && item.validation === 'bad_field_reference');
     assert.equal(rejection?.reference_slot, 'board');
     assert.equal(rejection.reference_problem, 'unknown_id');
   }
@@ -368,7 +380,7 @@ export async function verifyLedgerTheme(ctx) {
     '按待投递、已投递、简历筛选、面试中、已发offer、已结束分栏；默认待投递，能移动、编辑和删除。';
   const live = process.env.ROOT_STAGED_LIVE === '1';
   async function settle(text) {
-    const task = await until(async () => (await appRequest('/api/staged')).body.tasks?.find(item => item.requirement === text), 12000);
+    const task = await until(() => findStagedTask(appRequest, text), 12000);
     return until(async () => {
       const current = (await appRequest(taskPath + task.id)).body.task;
       return ['published','unsupported','failed'].includes(current.state) && current;
@@ -583,7 +595,7 @@ export async function verifyStagedQuotaFeedback(ctx) {
   await click('#new-tool');
   await generate(next);
   const task = await until(async () => {
-    const { body } = await appRequest('/api/staged');
+    const { body } = await appRequest('/api/staged/history');
     return body.tasks.find(item => item.requirement === next && item.state === 'failed');
   });
   assert.equal(task.reason, 'generation_total_limit');
@@ -595,10 +607,140 @@ export async function verifyStagedQuotaFeedback(ctx) {
   assert.equal(await text('staged-status'), '全站共享的生成额度已用完');
   assert.match(await text('staged-reason'), /所有账号共用.*联系管理员/);
   assert.equal(await visible('#staged-issue'), false);
-  assert.equal(await evaluate('document.querySelector("#staged-resume").disabled'), true);
+  assert.equal(await visible('#staged-resume'), false);
   assert.equal(await evaluate('document.querySelector("#requirement").value'), next);
   assert.equal((await activeTool()).id, old.id);
   assert.deepEqual((await appRequest('/api/trial')).body.generation, before);
   await screenshot('shared-generation-quota-narrow');
   evidence.tests.push({id:'TEST-017-06', personalRemaining:before.remaining, siteRemaining:before.totalRemaining});
+}
+
+export async function verifyStagedHistory(ctx) {
+  const { cdp, evaluate, until, base, click, type, visible, appRequest, login, generate,
+    activeTool, accountA, root, stored, evidence, screenshot } = ctx;
+  const initial = '做一份简单读书清单，新增书名并保存。';
+  const failedRequirement = '做一个小工具，历史验证首次失败';
+  const revisedRequirement = '修改原工具的说明，历史验证首次失败';
+  const balance = async () => (await appRequest('/api/trial')).body.generation;
+  const waitTask = (id, state) => until(async () => {
+    const {body:{task}} = await appRequest(taskPath + id);
+    return task.state === state && task;
+  });
+  const historyButton = id => '#staged-history-list button[data-history-task-id="' + id + '"]';
+  const bringBack = async id => {
+    await click('#staged-history summary');
+    await until(() => visible(historyButton(id)));
+    await click(historyButton(id));
+  };
+  const fixtureSql = script => execFileSync('python3', ['-B', '-c', script,
+    join(root, 'runs', 'workspace.sqlite3'), accountA], {encoding:'utf8'}).trim();
+  await cdp('Page.navigate', {url:base});
+  await login(accountA, true);
+  if (await visible('#workspace-guide')) await click('#guide-skip');
+  await generate(initial);
+  const old = await activeTool();
+  await type('#book', '原工具的数据', old.context);
+  await click('#add', old.context);
+  await until(async () => JSON.stringify((await stored(old.id)).entries).includes('原工具的数据'));
+  const repo = () => fixtureSql(`
+import sqlite3, sys
+with sqlite3.connect(sys.argv[1]) as db:
+    print(db.execute("SELECT repo_id FROM tool_git_repositories WHERE tool_id=?", (${JSON.stringify(old.id)},)).fetchone()[0])
+`);
+  const originalRepo = repo();
+  const oldBalance = await balance();
+  const ready = (await appRequest('/api/generate', {
+    requirement:'另一个等待预览的任务', requestId:'4'.repeat(32),
+  })).body.task;
+  await waitTask(ready.id, 'complete');
+
+  await click('#new-tool');
+  await generate(failedRequirement);
+  const failed = await until(() => findStagedTask(appRequest, failedRequirement));
+  await waitTask(failed.id, 'failed');
+  await until(() => visible('#staged-reason'));
+  assert.equal(await evaluate('document.querySelector("#requirement").value'), failedRequirement);
+  assert.equal(await visible('#staged-resume'), false);
+  assert.equal((await balance()).used, oldBalance.used);
+  assert.equal((await activeTool()).id, old.id);
+  assert.equal((await appRequest('/api/tools')).body.items.length, 1);
+  fixtureSql(`
+import sqlite3, sys, time, uuid
+with sqlite3.connect(sys.argv[1]) as db:
+    owner = db.execute("SELECT id FROM accounts WHERE username=?", (sys.argv[2],)).fetchone()[0]
+    now = time.time()
+    for index in range(36):
+        expiry = now - 20 if index % 2 else now + 1000
+        db.execute("INSERT INTO staged_jobs(id,owner,request_id,requirement,head,expires,state,updated_at) VALUES(?,?,?,?,?,?,?,?)",
+                   (uuid.uuid4().hex, owner, uuid.uuid4().hex, f'旧失败 {index}', '0'*40, expiry, 'failed', now-30-index))
+`);
+  await cdp('Page.reload');
+  await until(() => evaluate('document.documentElement.dataset.ready === "true"'));
+  await click('#new-tool');
+  const listed = (await appRequest('/api/staged')).body.tasks;
+  assert.deepEqual(listed.map(task => [task.id, task.state]), [[ready.id, 'complete']]);
+  assert.equal(await visible('#staged-task-list button[data-task-id="' + ready.id + '"]'), true);
+  const beforeBringBack = await balance();
+  await bringBack(failed.id);
+  assert.equal(await evaluate('document.querySelector("#requirement").value'), failedRequirement);
+  assert.equal(await visible('#staged-resume'), false);
+  assert.deepEqual(await balance(), beforeBringBack);
+  await screenshot('failure-history-brought-back');
+  const edited = '做一个小工具，历史验证重新提交';
+  await generate(edited);
+  const tool = await activeTool(old.id);
+  const published = (await appRequest(taskPath + failed.id)).body.task;
+  assert.equal(published.state, 'failed');
+  assert.equal((await appRequest('/api/tools')).body.items.length, 2);
+  assert.equal((await balance()).used, oldBalance.used + 1);
+
+  const previous = (await appRequest('/api/tools/' + old.id + '/revise', {
+    requirement:revisedRequirement, version:1, requestId:'5'.repeat(32),
+  })).body.task;
+  await waitTask(previous.id, 'failed');
+  await click('#new-tool');
+  const beforeRevise = await balance();
+  await bringBack(previous.id);
+  await until(async () => (await activeTool()).id === old.id);
+  assert.equal(await evaluate('document.querySelector("#requirement").value'), revisedRequirement);
+  assert.equal(await evaluate('document.querySelector("#generate").textContent'), '生成新版');
+  assert.deepEqual(await balance(), beforeRevise);
+  await evaluate(`(() => {
+    const original = window.fetch;
+    window.fetch = async (path, options) => {
+      if (options?.method === 'POST' && String(path).endsWith('/publish')) {
+        const response = await original(path, options);
+        window.historyPublishedPath = String(path).replace(/\\/publish$/, '');
+        if (response.ok) throw new TypeError('替身模拟保存响应丢失');
+        return response;
+      }
+      if (path === window.historyPublishedPath && !options?.method && !window.historyAllowRead) {
+        throw new TypeError('替身模拟暂时无法读取保存结果');
+      }
+      return original(path, options);
+    };
+  })()`);
+  const revised = '修改原工具的说明，历史验证重新提交';
+  await generate(revised);
+  const pendingTaskPath = await until(async () => {
+    if (!await visible('#staged-sync')) return;
+    return evaluate('!document.querySelector("#staged-sync").disabled && window.historyPublishedPath');
+  });
+  await evaluate('window.historyAllowRead = true');
+  await click('#staged-sync');
+  await until(async () => (await appRequest(pendingTaskPath)).body.task.state === 'published' && !await visible('#staged-sync'));
+  const {body:{task:current}} = await appRequest(pendingTaskPath);
+  assert.equal(current.toolId, old.id);
+  assert.notEqual(current.id, previous.id);
+  assert.equal((await appRequest('/api/tools/' + old.id + '/versions')).body.current, 2);
+  assert.equal(repo(), originalRepo);
+  assert.equal((await appRequest('/api/tools')).body.items.length, 2);
+  assert.match(JSON.stringify((await stored(old.id)).entries), /原工具的数据/);
+  assert.equal((await balance()).used, beforeRevise.used + 1);
+  const receipts = (await readFile(join(root, 'runs', 'staged-usage.jsonl'), 'utf8')).trim().split('\n').map(JSON.parse);
+  assert.deepEqual(receipts.filter(item => item.task === failed.id).map(item => item.stage), ['spec','implementation']);
+  assert.deepEqual(receipts.filter(item => item.task === current.id).map(item => item.stage), ['spec','implementation']);
+  assert.notEqual(tool.id, old.id);
+  evidence.tests.push({id:'TEST-018-09', historyLimitSeparate:true, failedPersonalCharge:0,
+    newTool:tool.id, revisedTool:old.id, originalRepository:originalRepo, savedOperation:current.id});
 }

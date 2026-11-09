@@ -6,7 +6,7 @@ import sys
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from accounts import Store
+from accounts import ApiError, Store
 import assistant_model
 import staged_blueprint
 import staged_revision
@@ -32,9 +32,27 @@ modules = {
 }
 failed = set()
 theme_check = "--ledger-theme" in sys.argv[5:]
+history_check = "--staged-history" in sys.argv[5:]
 
 
-def staged(stage, requirement, prior, key, admit, record):
+def history_program(stage, requirement, admit, record, base=None):
+    admit()
+    if stage == "implementation" and requirement.endswith("首次失败"):
+        record({"stage":stage, "status":"invalid_staged_result", "dispatched":True})
+        raise ApiError(502, "invalid_staged_result", "替身模拟无效实现")
+    record({"stage":stage, "status":"ok", "dispatched":True})
+    if base:
+        content = dict(base["source"][stage])
+        if stage == "implementation":
+            content["markup"] += '<p id="history-revised">同一工具的新版本</p>'
+    elif stage == "spec":
+        content = {"kind":"program", "title":"历史复测工具", "goal":"验证明确重新提交后的保存"}
+    else:
+        content = {"markup":'<p id="history-saved">历史复测工具已保存</p>', "script":"void 0;"}
+    return json.dumps(content, ensure_ascii=False).encode()
+
+
+def staged(stage, requirement, prior, key, admit, record, *, category="auto"):
     if requirement.startswith("做一份简单读书清单"):
         admit()
         content = {"kind":"program","title":"旧清单","goal":"录入并保存书名"} if stage == "spec" else {
@@ -52,7 +70,9 @@ render();
         record({"stage":stage,"status":"ok","dispatched":True})
         return json.dumps(content, ensure_ascii=False).encode()
     if live:
-        return staged_blueprint.provide(stage, requirement, prior, key, admit, record)
+        return staged_blueprint.provide(stage, requirement, prior, key, admit, record, category=category)
+    if history_check:
+        return history_program(stage, requirement, admit, record)
     if not theme_check and stage == "entry" and not requirement.startswith("做一个公益活动雨具归还登记"):
         content = modules["entry"]
         if requirement not in failed:
@@ -96,6 +116,8 @@ if not key:
 runs = Path(sys.argv[3])
 Store(runs / "workspace.sqlite3").create_invite("fixture-invite", uses=2)
 def revise(stage, requirement, prior, key, admit, record, *, base):
+    if history_check and not live:
+        return history_program(stage, requirement, admit, record, base)
     if live or (base["kind"] != "table" and not theme_check):
         return staged_revision.provide(stage, requirement, prior, key, admit, record, base=base)
 
@@ -123,5 +145,9 @@ def revise(stage, requirement, prior, key, admit, record, *, base):
 
 
 limits = (2, 2) if "--quota-feedback" in sys.argv[5:] else (5, 30)
+provider = staged
+if "--demo-site" in sys.argv[5:] and not live:
+    from demo_site_fixture import demo_site_provider
+    provider = demo_site_provider
 workbench.serve(key, int(sys.argv[2]), runs, staged_enabled=True, generation_limits=limits,
-                staged_provider=staged, staged_revision_provider=revise)
+                staged_provider=provider, staged_revision_provider=revise)

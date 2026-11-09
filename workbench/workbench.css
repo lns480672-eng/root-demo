@@ -78,6 +78,19 @@ button:enabled { cursor: pointer; }
   #composer-title { font-size: clamp(21px, 3vw, 28px); }
   .elys-intro { margin-block-start: 10px; color: var(--elys-muted); }
   .elys-requirement { margin-block-start: 28px; }
+  #generation-scope label { display: block; font-weight: 650; margin-block-end: 5px; }
+  #generation-category {
+    box-sizing: border-box;
+    width: 100%;
+    min-height: 40px;
+    padding: 6px 10px;
+    border: 1px solid var(--elys-line);
+    border-radius: 8px;
+    color: inherit;
+    background: white;
+    font: inherit;
+  }
+  #generation-scope-copy { font-size: 0.875rem; margin-block: 8px 0; }
   .elys-product label { display: block; font-size: 13px; font-weight: 650; }
   .elys-product :is(input, textarea) {
     inline-size: 100%;
@@ -466,3 +479,8 @@ button:enabled { cursor: pointer; }
 .staged-detail li[aria-current="step"] { font-weight: 700; color: #38539c; }
 .staged-panel .entry-actions:has(button:not([hidden])) { margin-block-start: 9px; }
 .staged-panel .entry-actions:not(:has(button:not([hidden]))) { display: none; }
+#staged-history { margin-block-start: 10px; border-top: 1px solid var(--elys-line); padding-block-start: 8px; }
+#staged-history summary { cursor: pointer; font-weight: 650; }
+#staged-history-list li { display: grid; gap: 5px; padding: 8px; border: 1px solid var(--elys-line); border-radius: 9px; }
+#staged-history-list p { white-space: pre-wrap; overflow-wrap: anywhere; }
+#staged-history-list button { inline-size: fit-content; }

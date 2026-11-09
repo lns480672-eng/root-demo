@@ -13,6 +13,8 @@ import { setTimeout as delay } from 'node:timers/promises';
 const live = process.argv.includes('--live');
 const stagedFlow = process.argv.includes('--staged-flow');
 const ledgerTheme = stagedFlow && process.argv.includes('--ledger-theme');
+const demoSite = stagedFlow && process.argv.includes('--demo-site');
+const stagedHistory = stagedFlow && process.argv.includes('--staged-history');
 const quotaFeedback = process.argv.includes('--quota-feedback');
 if (quotaFeedback && (!stagedFlow || process.env.ROOT_STAGED_LIVE === '1')) throw new Error('--quota-feedback requires the staged fixture');
 if (live && stagedFlow) throw new Error('--staged-flow uses ROOT_STAGED_LIVE=1 for real staged generation');
@@ -83,7 +85,8 @@ try {
     const fixture = stagedFlow ? 'tests/staged_fixtures.py' : 'tests/fixtures.py';
     const server = launch('python3', [fixture, 'fixture-key', '0', join(root, 'runs'), probeUrl,
       ...(adminFlow ? ['--admin-flow'] : []), ...(entryFlow ? ['--entry-flow'] : []),
-      ...(ledgerTheme ? ['--ledger-theme'] : []), ...(quotaFeedback ? ['--quota-feedback'] : [])]);
+      ...(ledgerTheme ? ['--ledger-theme'] : []), ...(quotaFeedback ? ['--quota-feedback'] : []),
+      ...(demoSite ? ['--demo-site'] : []), ...(stagedHistory ? ['--staged-history'] : [])]);
     const [line] = await Promise.race([once(server.stdout, 'data'), once(server, 'exit').then(() => [''])]);
     base = String(line).match(/http:\/\/127\.0\.0\.1:\d+/)?.[0];
     assert.ok(base, '工作台应启动并提供本机地址');
@@ -413,9 +416,12 @@ try {
     const registration = process.env.ROOT_STAGED_REGISTRATION === '1';
     const revision = process.env.ROOT_STAGED_REVISION === '1';
     const reconnect = process.argv.includes('--reconnect-fallback');
-    stage = quotaFeedback ? 'TEST-017-06 shared generation quota feedback' : ledgerTheme ? 'ROOT-REV-VIS-01 ledger theme' : reconnect ? 'AC-020 staged reconnect fallback' : tableJourney ? 'CHG-029 same imported tool journey' : registration ? 'staged workbench registration' : revision ? 'staged workbench revision' :
+    stage = demoSite ? 'CHG-046 website generation' : stagedHistory ? 'TEST-018-09 generation history' :
+      quotaFeedback ? 'TEST-017-06 shared generation quota feedback' : ledgerTheme ? 'ROOT-REV-VIS-01 ledger theme' : reconnect ? 'AC-020 staged reconnect fallback' : tableJourney ? 'CHG-029 same imported tool journey' : registration ? 'staged workbench registration' : revision ? 'staged workbench revision' :
       calculator ? 'staged workbench calculator' : 'staged workbench board flow';
-    const verify = quotaFeedback ? verifyStagedQuotaFeedback : ledgerTheme ? verifyLedgerTheme : reconnect ? verifyStagedReconnect : tableJourney ? verifyTableJourney : registration ? verifyStagedRegistration : revision ? verifyStagedRevision :
+    const verify = demoSite ? (await import('./verify-demo-site.mjs')).verifyDemoSite :
+      stagedHistory ? (await import('./verify-staged-flow.mjs')).verifyStagedHistory :
+      quotaFeedback ? verifyStagedQuotaFeedback : ledgerTheme ? verifyLedgerTheme : reconnect ? verifyStagedReconnect : tableJourney ? verifyTableJourney : registration ? verifyStagedRegistration : revision ? verifyStagedRevision :
       calculator ? verifyStagedCalculator : verifyStagedFlow;
     const anotherBrowser = async (name, action) => {
       const original = socket;

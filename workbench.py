@@ -52,6 +52,7 @@ CLAIM_ANALYSIS_DRAFT = "/api/assistant/claim-draft"
 TRIAL = "/api/trial"
 TRIAL_ADMIN = "/api/trial/admin"
 STAGED = "/api/staged"
+STAGED_HISTORY = STAGED + "/history"
 STAGED_TASK = re.compile(STAGED + r"/([a-f0-9]{32})")
 STAGED_ACTION = re.compile(STAGED + r"/([a-f0-9]{32})/(resume|candidate|publish|resolve-publish)")
 ADMIN_INVITES = "/api/admin/invites"
@@ -110,6 +111,7 @@ def build_id(assets):
     digest = hashlib.sha256()
     for name in ("generate.py", "workbench.py", "accounts.py", "assistant_fixture.py", "assistant_model.py",
                  "table_import.py", "trial_budget.py", "staged_blueprint.py", "staged_jobs.py", "staged_program.py", "staged_revision.py",
+                 "staged_website.py",
                  "workbench/staged-runtime.js"):
         digest.update(name.encode() + b"\0" + (ROOT / name).read_bytes() + b"\0")
     for path, body in assets.items():
@@ -159,12 +161,14 @@ def serve(key, port, runs=generate.RUNS, *, generation_limits=(5, 30), analysis_
     history = StagedJobs(store, budget, runs, staged_blueprint, record=stage_receipt, revision=staged_revision)
     staged = history if staged_enabled else None
 
-    def stage_provider(stage, requirement, prior, admit, record, base=None):
+    def stage_provider(stage, requirement, prior, admit, record, base=None, category="auto"):
         if not model_lock.acquire(timeout=20):
             raise ApiError(409, "staged_busy", "模型服务正在处理其他请求，请稍后继续。")
         try:
             if base is not None:
                 return staged_revision_provider(stage, requirement, prior, key, admit, record, base=base)
+            if staged_provider is staged_blueprint.provide or category != "auto":
+                return staged_provider(stage, requirement, prior, key, admit, record, category=category)
             return staged_provider(stage, requirement, prior, key, admit, record)
         finally:
             model_lock.release()
@@ -173,9 +177,10 @@ def serve(key, port, runs=generate.RUNS, *, generation_limits=(5, 30), analysis_
         fence = staged.claim(token, marker, task, resume=resume)
         if fence is not None:
             base = staged.revision_context(task)
+            category = staged.generation_category(task)
 
             def provider(stage, requirement, prior, admit, record):
-                return stage_provider(stage, requirement, prior, admit, record, base)
+                return stage_provider(stage, requirement, prior, admit, record, base, category)
 
             threading.Thread(target=staged.run, args=(task, fence, provider), daemon=True).start()
         return staged.status(token, marker, task)
@@ -295,6 +300,8 @@ def serve(key, port, runs=generate.RUNS, *, generation_limits=(5, 30), analysis_
                     "fixture" if analysis_provider is assistant_fixture.provider else "deepseek")})
             elif staged and self.path == STAGED:
                 self.send_json(200, {"tasks":staged.list(self.cookie_token(), self.marker())})
+            elif staged and self.path == STAGED_HISTORY:
+                self.send_json(200, {"tasks":staged.list(self.cookie_token(), self.marker(), history=True)})
             elif staged and (match := STAGED_TASK.fullmatch(self.path)):
                 self.send_json(200, {"task":staged.status(self.cookie_token(), self.marker(), match[1])})
             elif self.path == TRIAL_ADMIN:
@@ -553,7 +560,7 @@ def serve(key, port, runs=generate.RUNS, *, generation_limits=(5, 30), analysis_
                 return
             if staged:
                 task = staged.create(token, marker, requirement, data.get("requestId"),
-                                     tool_id=tool_id, version=data.get("version"))
+                                     tool_id=tool_id, version=data.get("version"), category=data.get("category", "auto"))
                 self.send_json(202, {"task":start_staged(token, marker, task["id"], resume=False)})
                 return
             model_input = None

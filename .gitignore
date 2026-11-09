@@ -9,6 +9,7 @@
 !/质量门禁设计.md
 !/workbench-harness.yaml
 !/generate.py
+!/staged_website.py
 !/assistant_fixture.py
 !/assistant_model.py
 !/trial_budget.py
@@ -47,6 +48,8 @@
 /tests/*
 !/tests/fixtures.py
 !/tests/verify-workbench.mjs
+!/tests/verify-demo-site.mjs
+!/tests/demo_site_fixture.py
 !/tests/verify-site.mjs
 !/tests/test_generation.py
 !/tests/test_table_import.py

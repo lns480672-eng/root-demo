@@ -118,6 +118,17 @@
           <p id="generation-balance" class="elys-config" role="status" hidden></p>
           <p id="generation-block" class="elys-error" role="status" hidden></p>
           <form id="composer">
+            <div id="generation-scope" hidden>
+              <label for="generation-category">生成类别</label>
+              <select id="generation-category" aria-describedby="generation-scope-copy">
+                <option value="auto">按需求自动选择</option>
+                <option value="ledger">清单、台账或看板</option>
+                <option value="program">计算工具</option>
+                <option value="landing">单页落地页</option>
+                <option value="brand">多页品牌官网</option>
+              </select>
+              <p id="generation-scope-copy" class="auth-muted">本版支持清单、台账、看板、计算工具、单页落地页和多页品牌官网。结果可在工作台预览、保存和重新打开。后续计划包括自定义组件、数据库、外部服务与公开发布。</p>
+            </div>
             <div class="elys-requirement">
               <label id="requirement-label" for="requirement">工具需求</label>
               <textarea id="requirement" rows="5" maxlength="2000" placeholder="例如：做一个读书清单，添加书名后，刷新页面还能看见。"></textarea>
@@ -140,11 +151,17 @@
               <p id="staged-issue" class="auth-muted" hidden></p>
             </div>
             <div class="entry-actions">
-              <button id="staged-resume" type="button" hidden>继续生成</button>
+              <button id="staged-resume" type="button" hidden>恢复中断</button>
               <button id="staged-preview" type="button" hidden>检查预览</button>
               <button id="staged-sync" type="button" hidden>核对保存</button>
               <button id="staged-refresh" type="button" hidden>重新读取任务</button>
             </div>
+            <details id="staged-history">
+              <summary>生成历史</summary>
+              <p id="staged-history-status" class="auth-muted" role="status"></p>
+              <button id="staged-history-refresh" type="button" hidden>重新读取历史</button>
+              <ul id="staged-history-list" aria-label="失败或过期的生成任务"></ul>
+            </details>
           </section>
           <div id="loading" class="elys-loading" role="status" hidden>
             <p id="phase"></p>

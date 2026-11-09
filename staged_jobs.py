@@ -80,6 +80,8 @@ class StagedJobs:
                 db.execute("ALTER TABLE staged_jobs ADD COLUMN plan TEXT")
             if "repo_id" not in columns:
                 db.execute("ALTER TABLE staged_jobs ADD COLUMN repo_id TEXT")
+            if "category" not in columns:
+                db.execute("ALTER TABLE staged_jobs ADD COLUMN category TEXT NOT NULL DEFAULT 'auto'")
 
     @staticmethod
     def unavailable():
@@ -124,6 +126,8 @@ class StagedJobs:
                   "steps":list(steps), "completed":list(steps[:done]), "stage":steps[done] if done < len(steps) else None,
                   "issue":row["issue"], "reason":row["failure"],
                   "resumable":state in ("queued", "failed", "interrupted")}
+        if row["category"] != "auto":
+            result["category"] = row["category"]
         if db is not None:
             revision = self.revision_record(db, row["id"])
             if revision:
@@ -140,19 +144,22 @@ class StagedJobs:
             row = self.latest(db, owner)
             return self.view(row, db) if row else None
 
-    def list(self, token, marker):
+    def list(self, token, marker, *, history=False):
         with self.store.connection() as db:
             owner = self.store.session(db, token, marker)["id"]
             rows = db.execute("""
                 SELECT * FROM staged_jobs WHERE owner=? AND state!='published'
+                AND (expires>? AND state IN ('queued','running','complete'))=?
                 ORDER BY updated_at DESC, expires DESC LIMIT 30
-            """, (owner,)).fetchall()
+            """, (owner, self.clock(), not history)).fetchall()
             return [self.view(row, db) for row in rows]
 
-    def create(self, token, marker, requirement, request_id, *, tool_id=None, version=None):
+    def create(self, token, marker, requirement, request_id, *, tool_id=None, version=None, category="auto"):
         if (not isinstance(request_id, str) or not IDENTIFIER.fullmatch(request_id)
                 or not isinstance(requirement, str) or not 0 < len(requirement.strip()) <= 2000):
             raise ApiError(400, "staged_input", "生成请求编号或需求无效。")
+        if category != "auto" and (tool_id or category not in self.blueprint.CATEGORIES):
+            raise ApiError(400, "staged_category", "请选择有效的新建类别。已有工具的修改沿用原类别。")
         requirement = requirement.strip()
         with self.store.connection(write=True) as db:
             owner = self.store.session(db, token, marker)["id"]
@@ -160,7 +167,7 @@ class StagedJobs:
                                   (owner, request_id)).fetchone()
             if existing is not None:
                 revision = self.revision_record(db, existing["id"])
-                if (existing["requirement"] != requirement or bool(revision) != bool(tool_id)
+                if (existing["requirement"] != requirement or existing["category"] != category or bool(revision) != bool(tool_id)
                         or (revision and (revision["tool_id"], revision["base_version"]) != (tool_id, version))):
                     raise ApiError(409, "staged_request_changed", "同一请求编号的需求或版本不能变更。")
                 return self.view(existing, db)
@@ -172,10 +179,10 @@ class StagedJobs:
                 self.store.require_version(version, row["version"])
                 repo_id, head, source_digest, context = self.revision_source(db, row)
             db.execute("""
-                INSERT INTO staged_jobs(id,owner,request_id,requirement,head,expires,updated_at,repo_id)
-                VALUES (?,?,?,?,?,?,?,?)
+                INSERT INTO staged_jobs(id,owner,request_id,requirement,head,expires,updated_at,repo_id,category)
+                VALUES (?,?,?,?,?,?,?,?,?)
             """, (identifier, owner, request_id, requirement, head,
-                  self.clock() + self.retain_seconds, self.clock(), repo_id))
+                  self.clock() + self.retain_seconds, self.clock(), repo_id, category))
             if tool_id:
                 db.execute("INSERT INTO staged_revisions VALUES (?,?,?,?,?)",
                            (identifier, tool_id, version, source_digest, encoded(context).decode()))
@@ -189,6 +196,10 @@ class StagedJobs:
         with self.store.connection() as db:
             row = self.revision_record(db, identifier)
             return json.loads(row["context"]) if row else None
+
+    def generation_category(self, identifier):
+        with self.store.connection() as db:
+            return self.row(db, identifier)["category"]
 
     @staticmethod
     def published_source(db, run_id):
@@ -341,6 +352,8 @@ class StagedJobs:
         elif stage == "spec" and self.revision is not None:
             if self.blueprint.stage_plan(content) == self.blueprint.TABLE_PLAN:
                 raise ValueError("unexpected table specification")
+            if row["category"] != "auto":
+                self.blueprint.validate_category(self.blueprint.read_artifact(content), row["category"])
 
     def recover(self, db, row):
         tip = self.tip(row)

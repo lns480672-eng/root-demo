@@ -65,6 +65,10 @@ const generationRestrictions = new Map([
 ]);
 let stagedEnabled = false;
 let stagedTasks = [];
+let stagedHistory = [];
+let stagedHistoryRead = 0;
+let stagedHistoryStatus = '';
+let stagedHistoryFailed = false;
 let selectedStagedId = null;
 let stagedAutoId = null;
 let stagedRead = 0;
@@ -95,8 +99,9 @@ function render() {
   const stagedEditsPaused = Boolean(stagedPendingId && active?.iframe.inert);
   const blocked = pending || syncing || Boolean(stagedPendingId);
   const stagedTask = selectedStagedTask();
+  const generationCategory = byId('generation-category');
   const returning = !editing && stagedTask?.requirement === requirement.value.trim() &&
-    ['queued', 'running', 'failed', 'interrupted', 'complete'].includes(stagedTask.state);
+    isActiveStagedTask(stagedTask) && (stagedTask.category || 'auto') === generationCategory.value;
   const tableMode = entryMode === 'table';
   const showingSample = Boolean(sampleTemplate);
   const showingTool = Boolean(active) && !showingSample;
@@ -105,6 +110,8 @@ function render() {
   generate.disabled = !session || !configured || !networkIsolated || phase === 'startup' || blocked ||
     tableMode || returning || !requirement.value.trim();
   requirement.readOnly = blocked;
+  byId('generation-scope').hidden = !stagedEnabled || editing || tableMode;
+  generationCategory.disabled = blocked;
   byId('new-tool').disabled = byId('idea-entry').disabled = byId('library-entry').disabled = blocked;
   const assistantOpen = !byId('assistant-panel').hidden;
   const browsing = workspace.dataset.mode === 'browse' && !assistantOpen && welcome.hidden;
@@ -273,6 +280,10 @@ function selectedStagedTask() {
   return stagedTasks.find(task => task.id === selectedStagedId);
 }
 
+function isActiveStagedTask(task) {
+  return ['queued', 'running', 'interrupted', 'complete'].includes(task?.state);
+}
+
 function clearStagedSelection() {
   selectedStagedId = stagedAutoId = null;
   stagedMessage = '';
@@ -299,7 +310,7 @@ function stagedReason(task, restriction) {
   if (task.resumable && restriction) return restriction.message;
   const previous = generationRestrictions.get(task.reason);
   if (previous) return trial && task.resumable
-    ? '上次生成时，' + previous.label + '。可以尝试继续原任务。' : previous.message;
+    ? '上次生成时，' + previous.label + '。可以重新提交需求。' : previous.message;
   if (task.state === 'expired') return '任务已过期。可用保留的原需求重新生成。';
   if (task.state === 'exhausted') return '已达到此任务的调用上限。可用保留的原需求重新生成。';
   if (task.reason === 'revision_no_change') return '这次修改没有产生可应用的变化。旧版仍可用，未扣除个人生成次数。';
@@ -314,23 +325,52 @@ function stagedReason(task, restriction) {
     staged_rate_limit: '模型请求过多，请稍后继续。',
     invalid_staged_result: '本阶段的模型结果未通过校验。',
     staged_storage: '本阶段的结果未能保存。',
-  }[task.reason] || (task.state === 'failed' ? '本阶段未完成，可继续生成。' : '');
+  }[task.reason] || (task.state === 'failed' ? '本阶段未完成，可编辑原需求后重新提交。' : '');
+}
+
+function renderStagedHistory(blocked) {
+  const list = byId('staged-history-list');
+  byId('staged-history-status').textContent = stagedHistoryStatus;
+  byId('staged-history-refresh').hidden = !stagedHistoryFailed;
+  const signature = JSON.stringify(stagedHistory);
+  if (list.dataset.signature !== signature) {
+    list.dataset.signature = signature;
+    list.replaceChildren(...stagedHistory.map(task => {
+      const row = document.createElement('li');
+      const title = document.createElement('strong');
+      const original = document.createElement('p');
+      const reason = document.createElement('p');
+      const button = document.createElement('button');
+      title.textContent = stagedStatus(task);
+      original.textContent = task.requirement;
+      reason.className = 'auth-muted';
+      reason.textContent = stagedReason(task) + (task.issue && !generationRestrictions.has(task.reason)
+        ? ' 问题编号 ' + task.issue + '。' : '');
+      button.type = 'button';
+      button.dataset.historyTaskId = task.id;
+      button.textContent = '带回需求';
+      row.append(title, original, reason, button);
+      return row;
+    }));
+  }
+  for (const button of list.querySelectorAll('button')) button.disabled = blocked;
 }
 
 function renderStagedTasks(blocked, restriction) {
   const panel = byId('staged-panel');
   const task = selectedStagedTask();
-  panel.hidden = !session || !stagedEnabled || (editing && !task && !stagedPendingId);
+  panel.hidden = !session || !stagedEnabled;
   if (panel.hidden) return;
   const canAct = phase === 'idle' && networkIsolated && !pendingPublication;
   const list = byId('staged-task-list');
   list.hidden = editing;
   byId('staged-list-status').hidden = editing && !stagedLoadError;
-  const signature = JSON.stringify(stagedTasks.map(item => [item.id, item.requirement, stagedStatus(item, restriction)]));
+  const activeTasks = stagedTasks.filter(isActiveStagedTask);
+  const signature = JSON.stringify(activeTasks.map(item => [item.id, item.requirement, stagedStatus(item, restriction)]));
   if (list.dataset.signature !== signature) {
     list.dataset.signature = signature;
     const focusedId = document.activeElement?.dataset.taskId;
-    list.replaceChildren(...stagedTasks.map(item => {
+    list.replaceChildren(...activeTasks.map(item => {
       const row = document.createElement('li');
       const button = document.createElement('button');
       button.type = 'button';
@@ -348,9 +388,9 @@ function renderStagedTasks(blocked, restriction) {
     button.setAttribute('aria-current', String(button.dataset.taskId === selectedStagedId));
   }
   byId('staged-list-status').textContent = stagedLoadError ||
-    (stagedTasks.length || stagedPendingId ? '' : '暂无未完成任务。');
+    (activeTasks.length || stagedPendingId ? '' : '暂无未完成任务。');
   const quotaBlocked = Boolean(restriction);
-  byId('staged-refresh').hidden = !stagedLoadError && !(task?.resumable && quotaBlocked);
+  byId('staged-refresh').hidden = !stagedLoadError && !(isActiveStagedTask(task) && task.resumable && quotaBlocked);
   byId('staged-refresh').disabled = phase !== 'idle';
   byId('staged-detail').hidden = !task && !stagedPendingId && !stagedActivity && !stagedMessage;
   const status = byId('staged-status');
@@ -382,7 +422,7 @@ function renderStagedTasks(blocked, restriction) {
   issue.hidden = !task?.issue || generationRestrictions.has(task.reason) || Boolean(task.resumable && restriction);
   issue.textContent = issue.hidden ? '' : '问题编号 ' + task.issue;
   const resume = byId('staged-resume');
-  resume.hidden = !task?.resumable || Boolean(stagedPendingId);
+  resume.hidden = !['queued', 'interrupted'].includes(task?.state) || Boolean(stagedPendingId);
   resume.disabled = !canAct || !configured || quotaBlocked;
   const reopen = byId('staged-preview');
   reopen.hidden = task?.state !== 'complete' || Boolean(stagedPendingId);
@@ -391,6 +431,7 @@ function renderStagedTasks(blocked, restriction) {
   const sync = byId('staged-sync');
   sync.hidden = !stagedPendingId;
   sync.disabled = !canAct;
+  renderStagedHistory(blocked);
 }
 
 function scheduleStagedRefresh(delay = 850) {
@@ -406,13 +447,20 @@ async function refreshStagedTasks() {
   try {
     const result = await workspaceApi('/api/staged', undefined, publicationTimeout);
     if (request !== stagedRead) return;
-    const followed = stagedAutoId;
+    const selected = selectedStagedTask();
+    const followed = stagedAutoId || (isActiveStagedTask(selected) ? selected.id : null);
     let tasks = result.tasks;
-    // Published tasks leave the list. Follow the exact task if another tab saved it.
+    // A task can leave the list on save or confirmed failure. Read its exact state.
     if (followed && !tasks.some(task => task.id === followed)) {
       const { task } = await workspaceApi('/api/staged/' + followed, undefined, publicationTimeout);
       if (request !== stagedRead) return;
       tasks = [task, ...tasks];
+      if (!isActiveStagedTask(task) && task.state !== 'published' && stagedAutoId === followed) {
+        stagedAutoId = null;
+        if (byId('staged-history').open) refreshStagedHistory();
+      }
+    } else if (selected && !followed) {
+      tasks = [selected, ...tasks];
     }
     stagedTasks = tasks;
     stagedLoadError = '';
@@ -437,13 +485,59 @@ async function refreshStagedTasks() {
   }
 }
 
-byId('staged-task-list').addEventListener('click', event => {
+async function restoreStagedRequirement(task, source) {
+  if (!task || phase !== 'idle' || stagedPendingId || pendingPublication) return false;
+  if (task.baseToolId && active?.id !== task.baseToolId) {
+    await selectTool(task.baseToolId, source);
+    if (active?.id !== task.baseToolId) {
+      stagedHistoryStatus = '暂时无法打开原工具，请稍后重试。';
+      render();
+      return false;
+    }
+  }
+  beginComposition(Boolean(task.baseToolId), task.requirement, task.category);
+  return true;
+}
+
+byId('staged-task-list').addEventListener('click', async event => {
   const id = event.target.closest('button')?.dataset.taskId;
   const task = stagedTasks.find(item => item.id === id);
-  if (!task || phase !== 'idle' || stagedPendingId || pendingPublication) return;
-  beginComposition(false, task.requirement);
+  if (!await restoreStagedRequirement(task, event.target)) return;
+  rememberStagedTask(task);
   selectedStagedId = id;
   if (['queued', 'running'].includes(task.state)) stagedAutoId = id;
+  render();
+});
+
+async function refreshStagedHistory() {
+  if (!stagedEnabled || !session || !byId('staged-history').open) return;
+  const request = ++stagedHistoryRead;
+  stagedHistoryStatus = '正在读取生成历史…';
+  stagedHistoryFailed = false;
+  render();
+  try {
+    const result = await workspaceApi('/api/staged/history', undefined, publicationTimeout);
+    if (request !== stagedHistoryRead) return;
+    stagedHistory = result.tasks;
+    stagedHistoryStatus = stagedHistory.length ? '' : '暂无失败或过期任务。';
+  } catch {
+    if (request !== stagedHistoryRead) return;
+    stagedHistoryStatus = '暂时无法读取生成历史。';
+    stagedHistoryFailed = true;
+  }
+  render();
+}
+
+byId('staged-history').addEventListener('toggle', refreshStagedHistory);
+byId('staged-history-refresh').addEventListener('click', refreshStagedHistory);
+byId('staged-history-list').addEventListener('click', async event => {
+  const id = event.target.closest('button')?.dataset.historyTaskId;
+  const task = stagedHistory.find(item => item.id === id);
+  if (!await restoreStagedRequirement(task, event.target)) return;
+  stagedSubmission = null;
+  rememberStagedTask(task);
+  selectedStagedId = task.id;
+  byId('staged-history').open = false;
   render();
 });
 
@@ -454,7 +548,7 @@ byId('staged-refresh').addEventListener('click', () => {
 
 byId('staged-resume').addEventListener('click', async () => {
   const task = selectedStagedTask();
-  if (!task?.resumable || byId('staged-resume').disabled) return;
+  if (!['queued', 'interrupted'].includes(task?.state) || byId('staged-resume').disabled) return;
   stagedAutoId = task.id;
   stagedMessage = '';
   phase = 'model';
@@ -615,6 +709,7 @@ function hideSample() {
 function enterQuickExperience() {
   clearStagedSelection();
   if (entryMode === 'table') tableImport.close();
+  byId('generation-category').value = 'auto';
   editing = false;
   entryMode = 'fast';
   failure = '';
@@ -1450,6 +1545,7 @@ async function generateTable(table) {
   }
 }
 
+byId('generation-category').addEventListener('change', render);
 form.addEventListener('submit', async event => {
   event.preventDefault();
   if (generate.disabled) return;
@@ -1462,12 +1558,13 @@ form.addEventListener('submit', async event => {
     const path = editing ? '/api/tools/' + active.id + '/revise' : '/api/generate';
     const text = requirement.value.trim();
     const version = editing ? active.version : undefined;
-    const submission = JSON.stringify([path, version, text]);
+    const category = stagedEnabled && !editing ? byId('generation-category').value : undefined;
+    const submission = JSON.stringify([path, version, text, category]);
     if (stagedEnabled && stagedSubmission?.submission !== submission) {
       stagedSubmission = { submission, id: crypto.randomUUID().replaceAll('-', '') };
     }
     const tool = await workspaceApi(path, {
-      requirement: text, version,
+      requirement: text, version, category,
       requestId: stagedEnabled ? stagedSubmission.id : undefined,
     }, stagedEnabled ? publicationTimeout : undefined);
     stagedSubmission = null;
@@ -1541,7 +1638,7 @@ async function selectTool(id, source) {
   }
 }
 
-function beginComposition(revise, value = '') {
+function beginComposition(revise, value = '', category = 'auto') {
   chooseWelcomePath();
   requirementAssistant.close();
   byId('first-tool-saved').hidden = true;
@@ -1552,6 +1649,7 @@ function beginComposition(revise, value = '') {
   entryMode = 'direct';
   compose(true);
   requirement.value = value;
+  byId('generation-category').value = category;
   failure = '';
   render();
   requirement.focus();

@@ -1609,7 +1609,7 @@
           "生成任务"
         ],
         "summary": "发起统一模型生成任务",
-        "description": "所有新工具模型生成默认使用同一编排，服务端决定阶段和实现块。返回 202 表示已接受，不代表生成完成。相同账号用同一 requestId 和需求可取回同一任务。不同内容重放返回 staged_request_changed。在关闭编排的本地测试对照中，此接口可返回传统 200 预览候选；该对照不属于默认契约。",
+        "description": "所有新工具使用同一分阶段编排，可显式指定类别或按需求自动选择。202 表示已接受。按账号和 requestId 重放时，需求和类别必须一致。",
         "responses": {
           "202": {
             "description": "发起统一模型生成任务",
@@ -1667,10 +1667,50 @@
           "生成任务"
         ],
         "summary": "列出当前账号的生成任务",
-        "description": "按最近更新排序，至多 30 条。不列已发布任务；它们可通过任务 ID 单独读取。",
+        "description": "按最近更新排序，至多 30 条，列出当前账号未过期、仍在处理或待保存的任务。",
         "responses": {
           "200": {
             "description": "列出当前账号的生成任务",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StagedTaskList"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Http401"
+          },
+          "404": {
+            "$ref": "#/components/responses/Http404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Http409"
+          },
+          "403": {
+            "$ref": "#/components/responses/Http403"
+          },
+          "503": {
+            "$ref": "#/components/responses/Http503"
+          },
+          "default": {
+            "$ref": "#/components/responses/UnexpectedError"
+          }
+        }
+      }
+    },
+    "/api/staged/history": {
+      "get": {
+        "operationId": "listGenerationHistory",
+        "tags": [
+          "生成任务"
+        ],
+        "summary": "列出当前账号的生成历史",
+        "description": "按最近更新排序，至多 30 条。包含失败、已达上限、不支持和过期的任务。历史可带回需求。",
+        "responses": {
+          "200": {
+            "description": "当前账号的失败及过期生成任务",
             "content": {
               "application/json": {
                 "schema": {
@@ -3861,6 +3901,9 @@
           "requestId": {
             "type": "string",
             "pattern": "^[a-f0-9]{32}$"
+          },
+          "category": {
+            "$ref": "#/components/schemas/GenerationCategory"
           }
         },
         "required": [
@@ -3984,6 +4027,9 @@
             "type": "integer",
             "minimum": 1,
             "description": "仅修订任务返回。发起时绑定的基准版本。"
+          },
+          "category": {
+            "$ref": "#/components/schemas/GenerationCategory"
           }
         },
         "required": [
@@ -4350,6 +4396,17 @@
           "currentPassword",
           "newPassword"
         ]
+      },
+      "GenerationCategory": {
+        "type": "string",
+        "enum": [
+          "auto",
+          "ledger",
+          "program",
+          "landing",
+          "brand"
+        ],
+        "description": "生成类别。auto 表示由模型依据需求选择。省略时采用 auto。"
       }
     }
   },

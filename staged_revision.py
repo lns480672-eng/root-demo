@@ -135,7 +135,7 @@ def prepare(prior_artifacts, legacy_html=None):
                 blueprint.validate(stage, payload, prior_artifacts)
                 limit = staged_program.MAX_ARTIFACT_BYTES if stage == "implementation" else blueprint.MAX_ARTIFACT_BYTES
                 source[stage] = blueprint.read_artifact(payload, limit=limit)
-            kind = "program" if plan == staged_program.PLAN else "ledger"
+            kind = source["spec"].get("kind", "ledger")
         keys = storage_keys(source["implementation"]["script"]) if kind == "program" else []
         base = {"kind":kind, "source":source, "storageKeys":keys}
         if len(json.dumps(base, ensure_ascii=False).encode()) > MAX_BASE_BYTES:
@@ -255,8 +255,12 @@ def check(stage, payload, base, requirement="", *, previous=None):
         if base["kind"] == "table":
             _check_table(candidate, base, requirement)
             return
-        if candidate.get("kind") == "table" or (candidate.get("kind") == "program") != (base["kind"] == "program"):
+        if candidate.get("kind", "ledger") != base["kind"]:
             raise _incompatible()
+        if base["kind"] == "website":
+            if candidate["layout"] != base["source"]["spec"]["layout"]:
+                raise _incompatible()
+            return
         if base["kind"] == "program":
             return
         old = {field["id"]:field for field in base["source"]["spec"]["fields"]}
@@ -275,11 +279,19 @@ def check(stage, payload, base, requirement="", *, previous=None):
             raise _incompatible()
     elif stage == "implementation":
         result = blueprint.read_artifact(payload, limit=staged_program.MAX_ARTIFACT_BYTES)
+        if base["kind"] == "website":
+            return
         if not set(base["storageKeys"]) <= set(storage_keys(result["script"])):
             raise _incompatible()
     elif stage == "assemble" and base["kind"] == "ledger":
         source = {name[:-5]: blueprint.read_artifact(data) for name, data in previous.items() if name != "app.html"}
         if _effective_ledger(source) == _effective_ledger(base["source"]):
+            raise _no_change()
+    elif stage == "assemble" and base["kind"] == "website":
+        source = {name[:-5]: blueprint.read_artifact(data, limit=staged_program.MAX_ARTIFACT_BYTES)
+                  for name, data in previous.items() if name != "app.html"}
+        if (source["spec"]["title"] == base["source"]["spec"]["title"]
+                and source["implementation"] == base["source"]["implementation"]):
             raise _no_change()
 
 
@@ -308,6 +320,7 @@ def provide(stage, requirement, previous, key, admit, record, *, base):
             return json.dumps(base["source"][stage], ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
     if stage in base["source"]:
         context["prior_stage"] = base["source"][stage]
+    category = base["source"]["spec"]["layout"] if base["kind"] == "website" else "auto"
     return blueprint.provide(stage, requirement, previous, key, admit, record,
                              revision_context=context, spec_patch=spec_patch,
-                             accept=lambda payload: check(stage, payload, base))
+                             accept=lambda payload: check(stage, payload, base), category=category)

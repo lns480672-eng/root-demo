@@ -43,6 +43,34 @@ class StagedJobsTest(unittest.TestCase):
             "username":name, "password":"staged-test-only", "invite":self.store.create_invite()})
         return token, view["marker"]
 
+    def test_failure_history_cannot_crowd_out_active_jobs(self):
+        now = [1000]
+        self.jobs.clock = lambda: now[0]
+        ready = self.jobs.create(*self.owner, "可预览任务", uuid.uuid4().hex)["id"]
+        interrupted = self.jobs.create(*self.owner, "读取中断任务", uuid.uuid4().hex)["id"]
+        failed = self.jobs.create(*self.owner, "录入失败的原需求", uuid.uuid4().hex)["id"]
+        other = self.jobs.create(*self.other, "其他账号的需求", uuid.uuid4().hex)["id"]
+        with self.store.connection(write=True) as db:
+            db.execute("UPDATE staged_jobs SET state='complete' WHERE id=?", (ready,))
+            db.execute("UPDATE staged_jobs SET state='running', lease_until=999 WHERE id=?", (interrupted,))
+            db.execute("UPDATE staged_jobs SET state='failed', failure='fixture_failure', updated_at=2000 WHERE id IN (?,?)",
+                       (failed, other))
+        expired_ids = []
+        for index in range(32):
+            now[0] += 1
+            expired_ids.append(self.jobs.create(*self.owner, f"过期需求{index}", uuid.uuid4().hex)["id"])
+        with self.store.connection(write=True) as db:
+            db.executemany("UPDATE staged_jobs SET expires=999 WHERE id=?", [(item,) for item in expired_ids])
+        self.assertEqual({row["id"]:row["state"] for row in self.jobs.list(*self.owner)},
+                         {ready:"complete", interrupted:"interrupted"})
+        history = self.jobs.list(*self.owner, history=True)
+        self.assertEqual(len(history), 30)
+        self.assertEqual((history[0]["id"], history[0]["requirement"], history[0]["reason"]),
+                         (failed, "录入失败的原需求", "fixture_failure"))
+        self.assertEqual({row["state"] for row in history}, {"failed", "expired"})
+        self.assertEqual([row["id"] for row in self.jobs.list(*self.other, history=True)], [other])
+        self.assertEqual(self.jobs.status(*self.owner, failed)["state"], "failed")
+
     def test_same_account_resumes_only_unchecked_stages(self):
         requirement = "新增台账并按状态筛选、统计、导出"
         request = uuid.uuid4().hex

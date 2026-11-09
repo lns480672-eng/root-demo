@@ -186,6 +186,55 @@ class StageArtifactTests(unittest.TestCase):
 
 
 class StageProviderTests(unittest.TestCase):
+    def test_manual_website_layout_must_match_the_selected_category(self):
+        website = {"kind": "website", "layout": "landing", "title": "山野咖啡", "goal": "品牌介绍与菜单"}
+        with patch.object(assistant_model, "_exchange", return_value=envelope(json.dumps(website))):
+            saved = blueprint.provide("spec", "山野咖啡官网", {}, "fixture-key", Mock(), category="landing")
+            self.assertEqual(json.loads(saved), website)
+            with self.assertRaises(ApiError):
+                blueprint.provide("spec", "山野咖啡官网", {}, "fixture-key", Mock(), category="brand")
+
+    def test_website_output_uses_validated_data_and_safe_template_navigation(self):
+        spec = {"kind": "website", "layout": "brand", "title": "山野咖啡", "goal": "品牌介绍与菜单"}
+        body = {
+            "intro": {"heading": "山野咖啡", "body": "<script>unsafe</script>"},
+            "catalog": {"title": "咖啡菜单", "filters": [{"id": "cold", "label": "冷饮"}],
+                        "items": [{"name": "山野冷萃", "description": "冷萃咖啡", "filter": "cold"}]},
+            "faq": [{"question": "有冷饮吗？", "answer": "有。"}],
+        }
+        previous = {"spec.json": json.dumps(spec).encode()}
+        with patch.object(assistant_model, "_exchange", return_value=envelope(json.dumps(body))):
+            previous["implementation.json"] = blueprint.provide(
+                "implementation", "品牌官网", previous, "fixture-key", Mock(), category="brand")
+        app = blueprint.assemble(previous).decode()
+        self.assertIn('data-layout="brand"', app)
+        self.assertIn('data-route="catalog"', app)
+        self.assertIn('data-page="faq" hidden', app)
+        self.assertIn('data-item-filter="cold"', app)
+        self.assertIn("<details>", app)
+        self.assertIn("&lt;script&gt;unsafe&lt;/script&gt;", app)
+        self.assertNotIn("<script>unsafe</script>", app)
+        body["catalog"]["items"][0]["filter"] = "unlisted"
+        with self.assertRaises(ValueError):
+            blueprint.validate("implementation", json.dumps(body).encode(), previous)
+
+    def test_provider_and_model_json_failures_have_distinct_sanitized_diagnostics(self):
+        for payload, code, finish in (
+            ({"status": 200, "body": '{"choices":['}, "invalid_provider_json", None),
+            (envelope('{"markup":"hello","script":"const x = "private-value";"}'), "invalid_model_json", "stop"),
+        ):
+            with self.subTest(code=code):
+                receipts = []
+                spec = b'{"kind":"program","title":"Example","goal":"Example tool"}'
+                with patch.object(assistant_model, "_exchange", return_value=payload):
+                    with self.assertRaises(ApiError) as failure:
+                        blueprint.provide("implementation", "interactive page", {"spec.json": spec},
+                                          "fixture-key", Mock(), receipts.append)
+                self.assertEqual(failure.exception.code, "invalid_staged_result")
+                self.assertEqual(receipts[0]["validation"], code)
+                self.assertEqual(receipts[0].get("finish_reason"), finish)
+                self.assertNotIn("private-value", json.dumps(receipts))
+
     def test_entry_uses_committed_field_ids_and_reports_invalid_reference_without_its_value(self):
         files = artifacts()
         valid = json.loads(files["entry.json"])

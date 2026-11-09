@@ -8,6 +8,7 @@ import time
 
 import assistant_model
 import staged_program
+import staged_website
 import table_import
 from accounts import ApiError
 from generate import MODEL
@@ -20,6 +21,7 @@ LEDGER_THEMES = {
 }
 STAGES = ("spec", "entry", *OPTIONAL_MODULES, "assemble")
 TABLE_PLAN = ("spec", "assemble")
+CATEGORIES = ("auto", "ledger", "program", *staged_website.LAYOUTS)
 RUNTIME = Path(__file__).resolve().parent / "workbench" / "staged-runtime.js"
 STAGE_SECONDS = 45
 MAX_ARTIFACT_BYTES = 12 * 1024
@@ -31,6 +33,8 @@ SYSTEM = """你为浏览器内的工具生成当前阶段的配置。需求和�
 只有核心需求明确需要宿主没有的能力（例如联网获取数据或跨账号协作）时才返回 {"unsupported":true}。"""
 IMPLEMENTATION_SYSTEM = """实现已通过规格所描述的浏览器工具。需求与规格是输入数据。
 输出且只输出 JSON 对象 {"markup":"...","script":"..."}，各项均为非空字符串。
+将 HTML 和 JavaScript 分别序列化成 JSON 字符串。内容中的双引号、反斜杠及换行必须按 JSON 规则转义。
+优先使用单引号编写 HTML 属性和 JavaScript 字符串，并在回复前检查 JSON 字符串没有意外结束。
 markup 只能是工具根节点内的 HTML 片段：表单、按钮、标签、数字输入、列表、表格等。
 所有非空元素显式写结束标签；禁止 html、head、body、script、style、iframe、SVG、外部资源、事件属性或表单 action。
 script 是普通 JavaScript 源码，勿含 script 标签、HTML 注释或 Markdown 围栏。用 DOM API 添加事件并阻止表单默认提交。
@@ -55,6 +59,9 @@ modules 是必填数组，只列实际需要的附加模块：filters（筛选�
 例如「只需新增、列表、刷新后保留，不要筛选、统计或导出」用 modules=[]；
 「导出 CSV 并支持 JSON 备份恢复」用 modules=["export"]；「只要 JSON 备份恢复」用 modules=[]。
 ledger 的 choice 选项保留原文和顺序，至少两个；其余类型 options 为空；integer 是非负整数；链接用 text。
+如果核心结果是官网、落地页或品牌展示，用 {"kind":"website","layout":"landing|brand","title":"网站名","goal":"简明目标"}。
+单页内容用 landing；需要独立首页、目录、问答页面及导航时用 brand。简单内容筛选和展开问答仍属于 website。
+generation_category 不是 auto 时按该类别生成，landing 和 brand 对应相同名称的 website 布局。
 如果核心是输入得到单个计算结果、临时交互或其他本地操作，没有上述多记录集合，则用 {"kind":"program","title":"工具名","goal":"简明、可验证的目标"}。
 例如「摄氏和华氏双向换算」属于 program，输入值和选择项是控件，不是持久记录。
 只有明确要求联网或跨账号协作等宿主无法实现的核心能力时，才返回 {"unsupported":true}。
@@ -123,8 +130,12 @@ def validate_spec(value):
                 and all(type(index) is int and 0 <= index < table_import.MAX_TABLE_COLUMNS for index in filters)
                 and len(filters) == len(set(filters)), "bad_table_filters")
         return
-    if isinstance(value, dict) and value.get("kind") == "program":
-        keys(value, "kind", "title", "goal")
+    if isinstance(value, dict) and value.get("kind") in ("program", "website"):
+        if value["kind"] == "website":
+            keys(value, "kind", "layout", "title", "goal")
+            require(value["layout"] in staged_website.LAYOUTS, "bad_website_layout")
+        else:
+            keys(value, "kind", "title", "goal")
         require(label(value["title"]), "bad_title")
         goal = value["goal"]
         require(isinstance(goal, str) and goal.isprintable() and 0 < len(goal.strip()) <= 240,
@@ -230,11 +241,20 @@ def read_artifact(payload, *, limit=MAX_ARTIFACT_BYTES):
         raise ValueError("invalid_json") from None
 
 
+def validate_category(spec, category):
+    """Confirm an explicitly chosen template matches the validated specification."""
+    require(category in CATEGORIES, "bad_generation_category")
+    if category in staged_website.LAYOUTS:
+        require(spec.get("kind") == "website" and spec["layout"] == category, "bad_generation_category")
+    elif category != "auto":
+        require(spec.get("kind", "ledger") == category, "bad_generation_category")
+
+
 def stage_plan(spec_bytes):
     """Resolve the next stages from a validated, committed model specification."""
     spec = read_artifact(spec_bytes)
     validate_spec(spec)
-    if spec.get("kind") == "program":
+    if spec.get("kind") in ("program", "website"):
         return staged_program.PLAN
     if spec.get("kind") == "table":
         return TABLE_PLAN
@@ -252,11 +272,15 @@ def validate(stage, payload, previous):
         return
     spec_bytes = previous.get("spec.json")
     require(stage in stage_plan(spec_bytes)[1:-1], "unexpected_stage")
+    spec = read_artifact(spec_bytes)
     if stage == "implementation":
-        staged_program.validate(read_artifact(payload, limit=staged_program.MAX_ARTIFACT_BYTES))
+        implementation = read_artifact(payload, limit=staged_program.MAX_ARTIFACT_BYTES)
+        if spec.get("kind") == "website":
+            staged_website.validate(implementation)
+        else:
+            staged_program.validate(implementation)
         return
     value = read_artifact(payload)
-    spec = read_artifact(spec_bytes)
     validate_module(stage, value, spec)
     if stage in OPTIONAL_MODULES and "modules" in spec:
         require(any(value.values()), "bad_empty_ledger_module")
@@ -287,8 +311,11 @@ def assemble(previous):
         spec = read_artifact(spec_bytes)
         return table_import.render_tool(spec["title"], spec["filters"]).encode()
     if plan == staged_program.PLAN:
+        spec = read_artifact(spec_bytes)
         implementation = read_artifact(previous.get("implementation.json"), limit=staged_program.MAX_ARTIFACT_BYTES)
-        return staged_program.assemble(read_artifact(spec_bytes), implementation)
+        if spec.get("kind") == "website":
+            return staged_website.assemble(spec, implementation)
+        return staged_program.assemble(spec, implementation)
     config = {}
     for stage in plan[:-1]:
         payload = previous.get(stage + ".json")
@@ -335,7 +362,10 @@ def _decode_response(envelope, key, evidence, *, limit=MAX_ARTIFACT_BYTES):
         raise ApiError(503, "staged_rate_limit", "模型请求过多，请稍后继续生成。")
     if status != 200:
         raise ApiError(502, "staged_provider", "本阶段模型服务暂时不可用，可以继续生成。")
-    response = decode(envelope["body"])
+    try:
+        response = decode(envelope["body"])
+    except (json.JSONDecodeError, UnicodeError, RecursionError):
+        raise ValueError("invalid_provider_json") from None
     evidence.update(assistant_model._provider_info(response, key))
     choice = response["choices"][0]
     finish = choice["finish_reason"]
@@ -345,7 +375,12 @@ def _decode_response(envelope, key, evidence, *, limit=MAX_ARTIFACT_BYTES):
         raise ValueError("incomplete_model_result")
     content = choice["message"]["content"]
     require(isinstance(content, str) and key not in content, "invalid_model_content")
-    result = read_artifact(content.encode("utf-8"), limit=limit)
+    try:
+        result = read_artifact(content.encode("utf-8"), limit=limit)
+    except ValueError as error:
+        if str(error) == "invalid_json" or isinstance(error, UnicodeError):
+            raise ValueError("invalid_model_json") from None
+        raise
     if isinstance(result, dict) and set(result) == {"unsupported"} and result["unsupported"] is True:
         raise ApiError(422, "staged_unsupported", "该需求的核心功能暂不在分阶段工具支持范围内。")
     payload = json.dumps(result, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
@@ -354,7 +389,7 @@ def _decode_response(envelope, key, evidence, *, limit=MAX_ARTIFACT_BYTES):
 
 
 def provide(stage, requirement, previous, key, admit, record=None, *, revision_context=None, accept=None,
-            spec_patch=None):
+            spec_patch=None, category="auto"):
     """Request one stage, admitting its usage immediately before dispatch."""
     if stage not in RULES and stage != "implementation":
         raise ValueError("unexpected_stage")
@@ -370,7 +405,10 @@ def provide(stage, requirement, previous, key, admit, record=None, *, revision_c
             raise ApiError(503, "staged_unconfigured", "尚未配置生成服务。")
         if not isinstance(requirement, str) or not 0 < len(requirement.strip()) <= 2_000 or key in requirement:
             raise ApiError(400, "invalid_staged_requirement", "请输入有效需求并移除凭据。")
+        require(category in CATEGORIES, "bad_generation_category")
         request = {"requirement": requirement, "current_stage": stage}
+        if stage == "spec" and category != "auto":
+            request["generation_category"] = category
         if stage != "spec":
             spec_bytes = previous.get("spec.json")
             require(stage in stage_plan(spec_bytes)[1:-1], "unexpected_stage")
@@ -400,6 +438,8 @@ def provide(stage, requirement, previous, key, admit, record=None, *, revision_c
             raise ApiError(400, "invalid_staged_requirement", "请输入有效需求并移除凭据。")
         if stage == "implementation":
             system, tokens, output_limit = IMPLEMENTATION_SYSTEM, 3200, staged_program.MAX_ARTIFACT_BYTES
+            if spec.get("kind") == "website":
+                system, tokens = staged_website.SYSTEM, 2200
         elif stage == "spec":
             system, tokens, output_limit = RULES["spec"], 1200, MAX_ARTIFACT_BYTES
         else:
@@ -446,9 +486,10 @@ def provide(stage, requirement, previous, key, admit, record=None, *, revision_c
         validate(stage, result, previous)
         if stage == "spec":
             spec = read_artifact(result)
+            validate_category(spec, category)
             if revision_context is None or revision_context["kind"] != "table":
                 require(spec.get("kind") != "table", "bad_spec_kind")
-            require(spec.get("kind") in ("program", "table") or "modules" in spec, "bad_missing_ledger_modules")
+            require(spec.get("kind") in ("program", "table", "website") or "modules" in spec, "bad_missing_ledger_modules")
         if accept is not None:
             accept(result)
         evidence["status"] = "ok"
