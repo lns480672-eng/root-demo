@@ -244,6 +244,20 @@ try {
         ['需求助手', '直接开发', '我的工具'].every(name => document.body.textContent.includes(name))];
     })()`);
     assert.deepEqual(layout, [workbench + '/', workbench + '/', true, true, true]);
+    const invitation = await evaluate(`(() => {
+      const question = [...document.querySelectorAll('.faq summary')]
+        .find(summary => summary.textContent.trim() === '邀请码从哪里获取？');
+      if (!question) return null;
+      const answer = question.parentElement;
+      question.click();
+      const visible = answer.open && answer.querySelector('p').checkVisibility();
+      const text = answer.querySelector('p').textContent;
+      question.click();
+      return {visible, text};
+    })()`);
+    assert.ok(invitation?.visible, '官网应能展开查看邀请码来源和注册指引');
+    assert.match(invitation.text, /向邀请你体验 ROOT 的项目方获取邀请码/);
+    assert.match(invitation.text, /凭邀请码注册/);
   }
 
   const sample = await evaluate(`(() => {
@@ -273,8 +287,10 @@ try {
   const first = await until(async () => (await tabs()).find(tab => tab.url === workbench + '/'));
   const account = await connect(first);
   await until(() => account.evaluate('document.documentElement?.dataset.ready === "true" && document.querySelector("#auth")?.hidden === false'));
+  assert.match(await account.evaluate('document.querySelector("#auth-mode").textContent'), /凭邀请码注册/);
+  await account.evaluate('document.querySelector("#auth-mode").click()');
+  assert.equal(await account.evaluate('document.querySelector("#invite").checkVisibility()'), true);
   await account.evaluate(`(() => {
-    document.querySelector('#auth-mode').click();
     document.querySelector('#invite').value = ${JSON.stringify(invite)};
     document.querySelector('#username').value = 'site-check';
     document.querySelector('#password').value = 'root-browser-test-only!';
