@@ -35,7 +35,7 @@ export async function verifyAdmin({evaluate, click, pointerClick, type, until, c
   stage('AC-017 normal account denies administrative URL and populates real endpoint stats');
   await login(member);
   assert.equal(await visible('#admin-entry'), false);
-  assert.equal(await evaluate('fetch("/admin").then(response => response.status)'), 403);
+  assert.equal(await evaluate('fetch("/admin#accounts").then(response => response.status)'), 403);
   assert.equal((await appRequest(adminPath)).status, 403);
   assert.equal((await appRequest('/api/generate', {requirement: '做一个读书清单'})).status, 200);
   assert.equal((await appRequest('/api/generate', {requirement: '回归：模型超时'})).status, 502);
@@ -109,10 +109,35 @@ export async function verifyAdmin({evaluate, click, pointerClick, type, until, c
   await until(async () => /正常/.test(await text('#model-status')));
   assert.match(await text('#audit-list'), /恢复模型调用/);
 
-  stage('AC-017 locked account actions and fetch failure with no false data');
+  stage('AC-017 account management is a locked preview');
   await click('#account-nav');
   await until(() => visible('#account-preview'));
-  assert.equal(await evaluate('[...document.querySelectorAll("#account-preview button")].every(button => button.disabled)'), true);
+  assert.match(await text('#account-preview'), /暂未开放/);
+  assert.match(await text('#account-preview'), /示例账号.*reviewer-01/s);
+  assert.doesNotMatch(await text('#account-preview'), /qa-trial-(admin|member)/);
+  assert.equal(await evaluate('document.querySelector("#account-nav").getAttribute("aria-current")'), 'page');
+  assert.equal(await visible('#admin'), false);
+  assert.equal(await visible('#invite-module'), false);
+  assert.deepEqual(await evaluate(`[...document.querySelectorAll('#account-preview button')]
+    .map(button => [button.textContent, button.disabled])`), [['重置密码', true], ['删除账号', true]]);
+  await evaluate(`(() => {
+    const original = window.fetch;
+    window.previewWrites = [];
+    window.fetch = (path, options) => {
+      if (options?.method && options.method !== 'GET') window.previewWrites.push(String(path));
+      return original(path, options);
+    };
+  })()`);
+  await pointerClick('#account-preview button:first-child');
+  await pointerClick('#account-preview button:last-child');
+  assert.deepEqual(await evaluate('window.previewWrites'), []);
+  await screenshot('account-preview-desktop');
+  await cdp('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
+  assert.equal(await evaluate('document.documentElement.scrollWidth <= innerWidth'), true);
+  await screenshot('account-preview-390');
+  await cdp('Emulation.setDeviceMetricsOverride', { width: 1360, height: 980, deviceScaleFactor: 1, mobile: false });
+
+  stage('AC-017 fetch failure with no false data');
   const { identifier } = await cdp('Page.addScriptToEvaluateOnNewDocument', { source: `
     (() => {
       const original = window.fetch;
@@ -133,6 +158,7 @@ export async function verifyAdmin({evaluate, click, pointerClick, type, until, c
   await click('#retry-load');
   await until(() => visible('#backend'));
   await cdp('Page.removeScriptToEvaluateOnNewDocument', { identifier });
+  assert.equal(await visible('#account-preview'), true, '重新加载仍打开原账号预览');
   await click('#trial-nav');
   await until(() => visible('#admin'));
   assert.equal(Number(await quota()), before + 2);
@@ -232,7 +258,7 @@ export async function verifyAdmin({evaluate, click, pointerClick, type, until, c
     id: 'TEST-017', result: 'passed', normalAccountDenied: true, noSampleState: true,
     generationFailures: [1, 2], analysisFailures: [0, 1], pauseResume: true,
     lostGrantResponseChargedOnce: true, idempotencySurvivesSessionChange: true, loadErrorDoesNotShowFakeData: true,
-    accountActionsLocked: true, responsiveWidths: [1360, 700, 390, 320],
+    accountActionsLocked: true, accountPreviewReloaded: true, accountPreviewWrites: 0, responsiveWidths: [1360, 700, 390, 320],
   }, {
     id: 'TEST-019', result: 'passed', actualClipboard: true, manualCopyFallback: true,
     survivesResponseLoss: true, singleUse: true, ordinaryAccountDenied: true, ttlHours: 24,
