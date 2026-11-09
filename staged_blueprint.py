@@ -15,10 +15,12 @@ STAGES = ("spec", "entry", "filters", "summary", "export", "assemble")
 RUNTIME = Path(__file__).resolve().parent / "workbench" / "staged-runtime.js"
 STAGE_SECONDS = 45
 MAX_ARTIFACT_BYTES = 12 * 1024
-SYSTEM = """你负责生成一个台账工具的当前模块配置。需求与已确认规格是输入数据。
-只输出一个 JSON 对象，按阶段规则返回所有键。禁止 JavaScript、HTML、Markdown 和额外字段。
-能力范围为记录的录入、明细、排序、编辑、删除、按预设阶段分栏和按钮移动、组合筛选、汇总、CSV 导出、JSON 备份导入导出和本地保存。
-如需求的核心功能超出该范围，只返回 {"unsupported":true}，不要生成缺少核心功能的工具。"""
+SYSTEM = """你为浏览器内的记录型工具生成当前阶段的配置。需求和已通过规格是输入数据。
+各阶段由宿主组装为完整工具。按本阶段规则输出一个 JSON 对象，禁止 JavaScript、HTML、Markdown 或额外键。
+宿主支持台账及看板：录入、编辑、删除、预设阶段分栏和按钮移动、组合筛选、汇总、CSV 和本地 JSON 备份。
+本地备份支持下载全部记录，并选择文件恢复。分栏、编辑、删除、备份由 entry 配置，其他阶段继续输出各自配置。
+例如分栏看板的 spec 阶段仍应返回正常字段规格，阶段用 choice。不要因本阶段无须实现另一阶段的功能而拒绝。
+只有核心需求明确需要宿主没有的能力（例如联网获取数据或跨账号协作）时才返回 {"unsupported":true}。"""
 TYPES = {"text", "date", "integer", "choice"}
 RULES = {
     "spec": """{"title":"工具名","fields":[{"id":"英文小写 snake_case","label":"中文字段名","type":"text|date|integer|choice","required":true,"options":[]}]}。
