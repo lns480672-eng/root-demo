@@ -39,12 +39,12 @@ let guideTarget = null;
 let trial = null;
 let trialRequest = 0;
 const validStagedId = id => typeof id === 'string' && /^[a-f0-9]{32}$/.test(id);
-const stagedSteps = {
-  spec: '理解需求', entry: '设计录入和明细', filters: '设计筛选',
-  summary: '设计统计', export: '设计导出', assemble: '组装工具',
+const stagedStepLabels = {
+  spec: '理解需求', implementation: '生成工具', entry: '设计录入和明细',
+  filters: '设计筛选', summary: '设计统计', export: '设计导出', assemble: '组装工具',
 };
 const stagedStates = {
-  queued: '等待生成', running: '正在分阶段生成', failed: '阶段未完成', interrupted: '生成已中断',
+  queued: '等待生成', running: '正在生成工具', failed: '阶段未完成', interrupted: '生成已中断',
   complete: '等待检查预览', published: '已保存', expired: '已过期', exhausted: '已达调用上限',
   unsupported: '暂不支持此需求',
 };
@@ -233,7 +233,7 @@ function stagedReason(task) {
   if (!task) return '';
   if (task.state === 'expired') return '任务已过期。可用保留的原需求重新生成。';
   if (task.state === 'exhausted') return '已达到此任务的调用上限。可用保留的原需求重新生成。';
-  if (task.state === 'unsupported') return '此需求含当前无法分阶段生成的功能。可编辑原需求后重新生成。';
+  if (task.state === 'unsupported') return '此需求含当前工作台暂不支持的功能。可编辑原需求后重新生成。';
   if (task.state === 'interrupted') return '执行中断。可从首个未完成阶段继续。';
   return {
     model_paused: '模型调用暂时暂停，恢复后可继续此任务。',
@@ -285,18 +285,22 @@ function renderStagedTasks(blocked) {
   const statusText = stagedActivity || (stagedPendingId ? '保存结果待核对' : task ? stagedStates[task.state] || '' : '');
   if (status.textContent !== statusText) status.textContent = statusText;
   const steps = byId('staged-steps');
-  const progress = JSON.stringify([task?.completed, task?.stage]);
+  const completed = task?.completed || [];
+  const stage = task?.stage || (task?.state === 'queued' ? 'spec' : null);
+  const plan = task ? (task.steps?.length ? task.steps : [...new Set([...completed, stage].filter(Boolean))]) : [];
+  const progress = JSON.stringify([plan, completed, stage]);
   if (steps.dataset.progress !== progress) {
     steps.dataset.progress = progress;
-    steps.replaceChildren(...(task ? Object.entries(stagedSteps).map(([name, label]) => {
+    steps.replaceChildren(...plan.map((name, index) => {
       const step = document.createElement('li');
-      const done = task.completed.includes(name);
+      const done = completed.includes(name);
       step.dataset.stage = name;
       step.toggleAttribute('data-completed', done);
+      const label = Object.hasOwn(stagedStepLabels, name) ? stagedStepLabels[name] : '处理步骤 ' + (index + 1);
       step.textContent = label + (done ? '（已完成）' : '');
-      if (name === task.stage) step.setAttribute('aria-current', 'step');
+      if (name === stage) step.setAttribute('aria-current', 'step');
       return step;
-    }) : []));
+    }));
   }
   const reason = stagedMessage || stagedReason(task);
   const reasonNode = byId('staged-reason');
@@ -1270,12 +1274,14 @@ form.addEventListener('submit', async event => {
   try {
     const path = editing ? '/api/tools/' + active.id + '/revise' : '/api/generate';
     const text = requirement.value.trim();
-    if (stagedEnabled && !editing && stagedSubmission?.text !== text) {
-      stagedSubmission = { text, id: crypto.randomUUID().replaceAll('-', '') };
+    const version = editing ? active.version : undefined;
+    const submission = JSON.stringify([path, version, text]);
+    if (stagedEnabled && stagedSubmission?.submission !== submission) {
+      stagedSubmission = { submission, id: crypto.randomUUID().replaceAll('-', '') };
     }
     const tool = await workspaceApi(path, {
-      requirement: text, version: editing ? active.version : undefined,
-      requestId: stagedEnabled && !editing ? stagedSubmission.id : undefined,
+      requirement: text, version,
+      requestId: stagedEnabled ? stagedSubmission.id : undefined,
     });
     stagedSubmission = null;
     if (stagedEnabled && tool.task) {
