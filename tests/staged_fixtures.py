@@ -122,5 +122,6 @@ def revise(stage, requirement, prior, key, admit, record, *, base):
         return staged_revision.provide(stage, requirement, prior, key, admit, record, base=base)
 
 
-workbench.serve(key, int(sys.argv[2]), runs, staged_enabled=True,
+limits = (2, 2) if "--quota-feedback" in sys.argv[5:] else (5, 30)
+workbench.serve(key, int(sys.argv[2]), runs, staged_enabled=True, generation_limits=limits,
                 staged_provider=staged, staged_revision_provider=revise)

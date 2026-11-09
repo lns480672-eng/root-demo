@@ -49,6 +49,20 @@ const stagedStates = {
   complete: '等待检查预览', published: '已保存', expired: '已过期', exhausted: '已达调用上限',
   unsupported: '暂不支持此需求',
 };
+const generationRestrictions = new Map([
+  ['generation_total_limit', {
+    label: '全站共享的生成额度已用完',
+    message: '所有账号共用的生成额度已用完。请联系管理员补充全站额度后再试。',
+  }],
+  ['generation_account_limit', {
+    label: '个人生成额度已用完',
+    message: '你的个人生成额度已用完。请联系管理员补充个人额度后再试。',
+  }],
+  ['model_paused', {
+    label: '全站生成已暂停',
+    message: '管理员已暂停模型调用。恢复后可以继续生成。',
+  }],
+]);
 let stagedEnabled = false;
 let stagedTasks = [];
 let selectedStagedId = null;
@@ -61,6 +75,18 @@ let stagedLoadError = '';
 let stagedPendingId = null;
 let stagedPendingNonce = null;
 let stagedSubmission = null;
+
+function currentGenerationRestriction() {
+  if (!trial) return;
+  if (trial.paused) return generationRestrictions.get('model_paused');
+  if (!trial.generation.totalRemaining) return generationRestrictions.get('generation_total_limit');
+  if (!trial.generation.remaining) return generationRestrictions.get('generation_account_limit');
+}
+
+function generationError(error) {
+  return generationRestrictions.get(error.code)?.message
+    || error.message + (error.issue ? ' 问题编号 ' + error.issue + '。' : '');
+}
 
 function render() {
   const pending = ['model', 'preview', 'restore', 'sync', 'table'].includes(phase);
@@ -124,12 +150,15 @@ function render() {
   byId('error').hidden = !failure;
   byId('admin-entry').hidden = !session || !trial?.admin;
   const balance = byId('generation-balance');
+  const restriction = currentGenerationRestriction();
   balance.hidden = tableMode || !trial;
   if (trial) {
     const usage = trial.generation;
-    balance.textContent = '剩余 ' + usage.remaining + ' / ' + usage.limit + ' 次'
-      + (trial.paused ? ' · 模型调用暂时暂停' : !usage.totalRemaining ? ' · 试用的总生成额度已用完' : '');
+    balance.textContent = '个人生成额度剩余 ' + usage.remaining + ' / ' + usage.limit + ' 次';
   }
+  const generationBlock = byId('generation-block');
+  generationBlock.hidden = tableMode || !restriction;
+  generationBlock.textContent = restriction?.label || '';
   byId('generation-retry-note').hidden = tableMode || !failure;
   byId('loading').hidden = syncing || !pending || Boolean(stagedActivity);
   byId('phase').textContent = {
@@ -167,7 +196,7 @@ function render() {
   }
   byId('template-generate').disabled = blocked || !configured || !networkIsolated;
   byId('guide-start').disabled = blocked;
-  renderStagedTasks(blocked);
+  renderStagedTasks(blocked, restriction);
   renderGuide();
 }
 
@@ -255,8 +284,22 @@ function rememberStagedTask(task) {
   stagedTasks = task.state === 'published' ? other : [task, ...other];
 }
 
-function stagedReason(task) {
+function stagedStatus(task, restriction) {
   if (!task) return '';
+  if (task.resumable) {
+    if (restriction) return restriction.label;
+    const previous = generationRestrictions.get(task.reason);
+    if (previous) return trial ? '上次生成被限制' : previous.label;
+  }
+  return stagedStates[task.state] || '';
+}
+
+function stagedReason(task, restriction) {
+  if (!task) return '';
+  if (task.resumable && restriction) return restriction.message;
+  const previous = generationRestrictions.get(task.reason);
+  if (previous) return trial && task.resumable
+    ? '上次生成时，' + previous.label + '。可以尝试继续原任务。' : previous.message;
   if (task.state === 'expired') return '任务已过期。可用保留的原需求重新生成。';
   if (task.state === 'exhausted') return '已达到此任务的调用上限。可用保留的原需求重新生成。';
   if (task.reason === 'revision_no_change') return '这次修改没有产生可应用的变化。旧版仍可用，未扣除个人生成次数。';
@@ -265,9 +308,6 @@ function stagedReason(task) {
     : '此需求含当前工作台暂不支持的功能。可编辑原需求后重新生成。';
   if (task.state === 'interrupted') return '执行中断。可从首个未完成阶段继续。';
   return {
-    model_paused: '模型调用暂时暂停，恢复后可继续此任务。',
-    generation_account_limit: '个人生成额度已用完，补充额度后可继续。',
-    generation_total_limit: '试用的总生成额度已用完。',
     staged_busy: '模型正在处理其他请求，请稍后继续。',
     staged_timeout: '本阶段模型请求超时。',
     staged_balance: '模型服务余额不足，请联系管理员。',
@@ -277,7 +317,7 @@ function stagedReason(task) {
   }[task.reason] || (task.state === 'failed' ? '本阶段未完成，可继续生成。' : '');
 }
 
-function renderStagedTasks(blocked) {
+function renderStagedTasks(blocked, restriction) {
   const panel = byId('staged-panel');
   const task = selectedStagedTask();
   panel.hidden = !session || !stagedEnabled || (editing && !task && !stagedPendingId);
@@ -286,7 +326,7 @@ function renderStagedTasks(blocked) {
   const list = byId('staged-task-list');
   list.hidden = editing;
   byId('staged-list-status').hidden = editing && !stagedLoadError;
-  const signature = JSON.stringify(stagedTasks.map(({id, requirement, state}) => [id, requirement, state]));
+  const signature = JSON.stringify(stagedTasks.map(item => [item.id, item.requirement, stagedStatus(item, restriction)]));
   if (list.dataset.signature !== signature) {
     list.dataset.signature = signature;
     const focusedId = document.activeElement?.dataset.taskId;
@@ -295,7 +335,7 @@ function renderStagedTasks(blocked) {
       const button = document.createElement('button');
       button.type = 'button';
       button.dataset.taskId = item.id;
-      button.textContent = (stagedStates[item.state] || '待确认') + ' · ' + item.requirement.slice(0, 70);
+      button.textContent = (stagedStatus(item, restriction) || '待确认') + ' · ' + item.requirement.slice(0, 70);
       row.append(button);
       return row;
     }));
@@ -309,12 +349,12 @@ function renderStagedTasks(blocked) {
   }
   byId('staged-list-status').textContent = stagedLoadError ||
     (stagedTasks.length || stagedPendingId ? '' : '暂无未完成任务。');
-  const quotaBlocked = Boolean(trial && (trial.paused || !trial.generation.remaining || !trial.generation.totalRemaining));
+  const quotaBlocked = Boolean(restriction);
   byId('staged-refresh').hidden = !stagedLoadError && !(task?.resumable && quotaBlocked);
   byId('staged-refresh').disabled = phase !== 'idle';
   byId('staged-detail').hidden = !task && !stagedPendingId && !stagedActivity && !stagedMessage;
   const status = byId('staged-status');
-  const statusText = stagedActivity || (stagedPendingId ? '保存结果待核对' : task ? stagedStates[task.state] || '' : '');
+  const statusText = stagedActivity || (stagedPendingId ? '保存结果待核对' : stagedStatus(task, restriction));
   if (status.textContent !== statusText) status.textContent = statusText;
   const steps = byId('staged-steps');
   const completed = task?.completed || [];
@@ -334,13 +374,13 @@ function renderStagedTasks(blocked) {
       return step;
     }));
   }
-  const reason = stagedMessage || stagedReason(task);
+  const reason = stagedMessage || stagedReason(task, restriction);
   const reasonNode = byId('staged-reason');
   reasonNode.hidden = !reason;
   reasonNode.textContent = reason;
   const issue = byId('staged-issue');
-  issue.hidden = !task?.issue;
-  issue.textContent = task?.issue ? '问题编号 ' + task.issue : '';
+  issue.hidden = !task?.issue || generationRestrictions.has(task.reason) || Boolean(task.resumable && restriction);
+  issue.textContent = issue.hidden ? '' : '问题编号 ' + task.issue;
   const resume = byId('staged-resume');
   resume.hidden = !task?.resumable || Boolean(stagedPendingId);
   resume.disabled = !canAct || !configured || quotaBlocked;
@@ -424,7 +464,7 @@ byId('staged-resume').addEventListener('click', async () => {
     const result = await workspaceApi('/api/staged/' + task.id + '/resume', {}, publicationTimeout);
     rememberStagedTask(result.task);
   } catch (error) {
-    stagedMessage = error.message;
+    stagedMessage = generationError(error);
   } finally {
     phase = 'idle';
     stagedActivity = '';
@@ -1229,7 +1269,7 @@ async function openStagedCandidate(task) {
     }
     await finishStagedComposition(task.id);
   } catch (error) {
-    stagedMessage = error.message + (error.issue ? ' 问题编号 ' + error.issue + '。' : '');
+    stagedMessage = generationError(error);
   } finally {
     phase = 'idle';
     stagedActivity = '';
@@ -1455,7 +1495,7 @@ form.addEventListener('submit', async event => {
       if (error.code !== 'transport') stagedSubmission = null;
       failure = stagedEnabled && error.code === 'transport'
         ? '暂时无法连接工作台，需求已保留。服务恢复后可重试。'
-        : error.message + (error.issue ? ' 问题编号 ' + error.issue + '。' : '');
+        : generationError(error);
     }
   } finally {
     phase = 'idle';

@@ -564,3 +564,41 @@ export async function verifyStagedRevision(ctx) {
   evidence.tests.push('新版关键词筛选实际生效，刷新恢复同工具及版本，重新预览没有重派发模型');
   await screenshot('staged-revision-restored');
 }
+
+export async function verifyStagedQuotaFeedback(ctx) {
+  const { cdp, evaluate, until, base, click, visible, appRequest, login, generate,
+    activeTool, accountA, evidence, screenshot } = ctx;
+  const original = '做一份简单读书清单，新增书名并保存。';
+  const next = '做一个 AA 分账计算器，根据总金额和人数计算人均费用。';
+  const text = id => evaluate('document.getElementById(' + JSON.stringify(id) + ').textContent');
+  await cdp('Emulation.setDeviceMetricsOverride', {width:390,height:844,deviceScaleFactor:1,mobile:true});
+  await cdp('Page.navigate', {url:base});
+  await login(accountA, true);
+  if (await visible('#workspace-guide')) await click('#guide-skip');
+  await generate(original);
+  const old = await activeTool();
+  const before = (await appRequest('/api/trial')).body.generation;
+  assert.equal(before.remaining, 1);
+  assert.equal(before.totalRemaining, 0);
+  await click('#new-tool');
+  await generate(next);
+  const task = await until(async () => {
+    const { body } = await appRequest('/api/staged');
+    return body.tasks.find(item => item.requirement === next && item.state === 'failed');
+  });
+  assert.equal(task.reason, 'generation_total_limit');
+  assert.match(task.issue, /^[a-f0-9]{12}$/);
+  await until(() => visible('#staged-reason'));
+  assert.equal(await text('generation-balance'), '个人生成额度剩余 1 / 2 次');
+  assert.ok(await visible('#generation-block'));
+  assert.match(await text('generation-block'), /全站共享的生成额度已用完/);
+  assert.equal(await text('staged-status'), '全站共享的生成额度已用完');
+  assert.match(await text('staged-reason'), /所有账号共用.*联系管理员/);
+  assert.equal(await visible('#staged-issue'), false);
+  assert.equal(await evaluate('document.querySelector("#staged-resume").disabled'), true);
+  assert.equal(await evaluate('document.querySelector("#requirement").value'), next);
+  assert.equal((await activeTool()).id, old.id);
+  assert.deepEqual((await appRequest('/api/trial')).body.generation, before);
+  await screenshot('shared-generation-quota-narrow');
+  evidence.tests.push({id:'TEST-017-06', personalRemaining:before.remaining, siteRemaining:before.totalRemaining});
+}
