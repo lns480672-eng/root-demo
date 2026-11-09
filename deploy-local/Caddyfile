@@ -32,10 +32,9 @@ https://127.0.0.1:{$ROOT_LOCAL_PORT} {
 		method POST
 		not header Content-Length *
 	}
-	@oversized expression `{method} == 'POST' && {http.request.header.Content-Length} != '' && int({http.request.header.Content-Length}) > (path('/api/table/inspect') ? {$ROOT_LOCAL_INSPECT_LIMIT:6356992} : (path('/api/table/generate', '/api/tools/*') ? 16777216 : (path('/api/staged/*/publish') ? 524288 : 16000)))`
+	@oversized expression `{method} == 'POST' && {http.request.header.Content-Length} != '' && int({http.request.header.Content-Length}) > (path('/api/table/inspect') ? {$ROOT_LOCAL_INSPECT_LIMIT:6356992} : (path('/api/table/generate', '/api/tools/*', '/api/staged/*/publish') ? 16777216 : 16000))`
 	@table_inspect path /api/table/inspect
-	@table_write path /api/table/generate /api/tools/*
-	@staged_write path /api/staged/*/publish
+	@tool_write path /api/table/generate /api/tools/* /api/staged/*/publish
 	@standard {
 		not path /api/table/inspect /api/table/generate /api/tools/* /api/staged/*/publish
 	}
@@ -46,11 +45,8 @@ https://127.0.0.1:{$ROOT_LOCAL_PORT} {
 		respond @missing_length 411
 		header @oversized Content-Type application/json
 		respond @oversized `{"code":"payload_too_large","message":"请求内容超过本机工作台大小限制。"}` 413
-		request_body @table_write {
+		request_body @tool_write {
 			max_size 16777216
-		}
-		request_body @staged_write {
-			max_size 524288
 		}
 		request_body @table_inspect {
 			max_size {$ROOT_LOCAL_INSPECT_LIMIT:6356992}

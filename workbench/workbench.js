@@ -1311,6 +1311,7 @@ example.addEventListener('click', () => {
 function finishComposition(saved = false) {
   if (saved && guideActive) {
     guideActive = false;
+    chooseWelcomePath();
     byId('first-tool-saved').hidden = false;
   }
   editing = false;
