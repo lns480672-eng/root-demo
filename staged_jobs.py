@@ -70,6 +70,8 @@ class StagedJobs:
                 db.execute("ALTER TABLE staged_jobs ADD COLUMN updated_at REAL NOT NULL DEFAULT 0")
             if "failure" not in columns:
                 db.execute("ALTER TABLE staged_jobs ADD COLUMN failure TEXT")
+            if "plan" not in columns:
+                db.execute("ALTER TABLE staged_jobs ADD COLUMN plan TEXT")
 
     @staticmethod
     def unavailable():
@@ -97,6 +99,11 @@ class StagedJobs:
             ORDER BY updated_at DESC, expires DESC LIMIT 1
         """, (owner, self.clock())).fetchone()
 
+    def steps(self, row):
+        if row["plan"]:
+            return tuple(json.loads(row["plan"]))
+        return self.stages if row["next_stage"] else ("spec",)
+
     def view(self, row, db=None):
         state = row["state"]
         if row["expires"] <= self.clock() and state != "published":
@@ -104,8 +111,9 @@ class StagedJobs:
         elif state == "running" and row["lease_until"] <= self.clock():
             state = "interrupted"
         done = row["next_stage"]
+        steps = self.steps(row)
         result = {"id":row["id"], "requirement":row["requirement"], "state":state,
-                  "completed":list(self.stages[:done]), "stage":self.stages[done] if done < len(self.stages) else None,
+                  "steps":list(steps), "completed":list(steps[:done]), "stage":steps[done] if done < len(steps) else None,
                   "issue":row["issue"], "reason":row["failure"],
                   "resumable":state in ("queued", "failed", "interrupted")}
         if state == "published" and db is not None:
@@ -171,25 +179,26 @@ class StagedJobs:
 
     def files(self, row):
         return {filename(stage): self.read(row, row["head"], filename(stage))
-                for stage in self.stages[:row["next_stage"]]}
+                for stage in self.steps(row)[:row["next_stage"]]}
 
     def manifest(self, row, stage, files, content):
         return {"task":row["id"], "owner":row["owner"], "fence":row["fence"],
                 "stage":stage, "parent":row["head"], "sha256":digest(content),
                 "depends":{name:digest(data) for name,data in files.items()}}
 
-    def advance_row(self, db, row, oid):
+    def advance_row(self, db, row, oid, stage, content):
         next_stage = row["next_stage"] + 1
-        complete = next_stage == len(self.stages)
-        db.execute("UPDATE staged_jobs SET next_stage=?,head=?,state=?,lease_until=?,updated_at=? WHERE id=?",
+        steps = self.blueprint.stage_plan(content) if stage == "spec" else self.steps(row)
+        complete = stage == "assemble"
+        db.execute("UPDATE staged_jobs SET next_stage=?,head=?,state=?,lease_until=?,updated_at=?,plan=? WHERE id=?",
                    (next_stage, oid, "complete" if complete else "running",
-                    0 if complete else self.clock() + self.lease_seconds, self.clock(), row["id"]))
+                    0 if complete else self.clock() + self.lease_seconds, self.clock(), json.dumps(steps), row["id"]))
 
     def recover(self, db, row):
         tip = self.tip(row)
         if tip in (ZERO, row["head"]):
             return
-        stage = self.stages[row["next_stage"]]
+        stage = self.steps(row)[row["next_stage"]]
         prior = self.files(row)
         name = filename(stage)
         content = self.read(row, tip, name)
@@ -202,7 +211,7 @@ class StagedJobs:
                 or set(self.git(row, "ls-tree", "--name-only", tip).decode().splitlines())
                 != set(prior) | {name, "manifest.json"}):
             raise ValueError("unexpected staged checkpoint")
-        self.advance_row(db, row, tip)
+        self.advance_row(db, row, tip, stage, content)
 
     def claim(self, token, marker, identifier, *, resume=True):
         with self.store.connection(write=True) as db:
@@ -257,17 +266,17 @@ class StagedJobs:
             if previous not in (ZERO, row["head"]):
                 raise ValueError("staged reference changed")
             self.git(row, "update-ref", self.ref(row), oid, previous)
-            self.advance_row(db, row, oid)
+            self.advance_row(db, row, oid, stage, content)
 
     def run(self, identifier, fence, provider):
         index = 0
         try:
             with self.store.connection() as db:
                 index = self.row(db, identifier)["next_stage"]
-            for index in range(index, len(self.stages)):
+            while True:
                 with self.store.connection() as db:
                     row = self.worker(db, identifier, fence, index)
-                stage = self.stages[index]
+                stage = self.steps(row)[index]
                 prior = self.files(row)
                 if stage == "assemble":
                     content = self.blueprint.assemble(prior)
@@ -281,6 +290,9 @@ class StagedJobs:
                     content = provider(stage, row["requirement"], prior,
                                        lambda: self.dispatch(identifier, fence, index, dispatch_id), record)
                 self.checkpoint(identifier, fence, index, stage, content, prior)
+                if stage == "assemble":
+                    return
+                index += 1
         except (ApiError, OSError, ValueError, subprocess.SubprocessError, sqlite3.Error) as error:
             issue = uuid.uuid4().hex[:12]
             code = error.code if isinstance(error, ApiError) else ""
@@ -329,8 +341,7 @@ class StagedJobs:
             return result
 
     def permits_backup(self, row):
-        previous = {name:self.read(row, row["head"], name) for name in ("spec.json","entry.json")}
-        return self.blueprint.permits_backup(previous)
+        return self.blueprint.permits_backup(self.files(row))
 
     def published_backup(self, tool_id, html):
         with self.store.connection() as db:

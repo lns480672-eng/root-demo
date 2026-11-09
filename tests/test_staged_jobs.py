@@ -14,6 +14,9 @@ from staged_jobs import StagedJobs
 class Blueprint:
     STAGES = ("spec", "entry", "filters", "assemble")
 
+    def stage_plan(self, spec):
+        return self.STAGES
+
     @staticmethod
     def validate(stage, content, prior):
         if content == b"invalid":

@@ -177,3 +177,48 @@ export async function verifyStagedFlow(ctx) {
   evidence.tests.push('刷新恢复同一看板和状态，父页与外部探针隔离');
   await screenshot('staged-board-restored');
 }
+
+export async function verifyStagedCalculator(ctx) {
+  const { cdp, evaluate, until, base, click, visible, appRequest, login, generate,
+    activeTool, accountA, root, evidence, screenshot } = ctx;
+  const input = '做一个摄氏和华氏温度双向换算工具，保留两位小数。使用数字输入 id=temperature，' +
+    '单位下拉 id=unit，选项值 celsius（输入摄氏）、fahrenheit（输入华氏），' +
+    '点击按钮 id=convert 进行换算，将可见结果写入 id=result。无效输入提示错误。无需联网。';
+  await cdp('Page.navigate', {url:base});
+  await login(accountA, true);
+  if (await visible('#workspace-guide')) await click('#guide-skip');
+  await evaluate('window.holdFixturePreview = true; window.releaseFixturePreview = undefined');
+  await generate(input);
+  let identifier;
+  await until(async () => {
+    const {body} = await appRequest('/api/staged');
+    const task = body.tasks?.find(item => item.requirement === input);
+    if (!task) return false;
+    identifier = task.id;
+    if (['failed','unsupported'].includes(task.state)) throw new Error('计算器生成失败 ' + task.stage + ' / ' + task.reason);
+    return evaluate('typeof window.releaseFixturePreview === "function"');
+  }, 90000);
+  const {body:{task}} = await appRequest(taskPath + identifier);
+  assert.deepEqual(task.steps, ['spec','implementation','assemble']);
+  assert.deepEqual(task.completed, task.steps);
+  await evaluate('window.releaseFixturePreview()');
+  const tool = await activeTool();
+  const run = expression => evaluate(expression, tool.context);
+  async function check(value, unit, expected) {
+    await run('document.getElementById("temperature").value=' + JSON.stringify(value) +
+      ';document.getElementById("unit").value=' + JSON.stringify(unit) + ';');
+    await click('#convert', tool.context);
+    assert.match(await run('document.querySelector("#result").textContent'), expected);
+  }
+  await check('100','celsius',/212(?:\.00)?/);
+  await check('32','fahrenheit',/(^|[^0-9])0(?:\.00)?/);
+  assert.equal(await evaluate('document.querySelector("#preview iframe[data-tool]").getAttribute("sandbox")'), 'allow-scripts allow-forms');
+  const published = (await appRequest(taskPath + identifier)).body.task;
+  assert.equal(published.toolId, tool.id);
+  const receipts = (await readFile(join(root, 'runs', 'staged-usage.jsonl'),'utf8')).trim().split('\n').map(JSON.parse);
+  evidence.runs = receipts.filter(item => item.task === identifier);
+  assert.deepEqual(evidence.runs.map(item => item.stage), ['spec','implementation']);
+  assert.ok(evidence.runs.every(item => item.request_id && item.usage?.total_tokens > 0));
+  evidence.tests.push('统一生成任务走两次真实模型调用并发布，100℃→212℉ 和 32℉→0℃ 均正确');
+  await screenshot('staged-calculator');
+}

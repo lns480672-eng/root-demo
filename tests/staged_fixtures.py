@@ -6,7 +6,6 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from accounts import ApiError, Store
-import generate
 import staged_blueprint
 import workbench
 
@@ -32,6 +31,24 @@ failed = set()
 
 
 def staged(stage, requirement, prior, key, admit, record):
+    if requirement.startswith("做一份简单读书清单"):
+        admit()
+        content = {"kind":"program","title":"旧清单","goal":"录入并保存书名"} if stage == "spec" else {
+            "markup":'<label for="book">书名</label><input id="book"><button id="add" type="button">添加</button><ul id="list"></ul>',
+            "script":"""
+const old = JSON.parse(localStorage.getItem("books") || "[]");
+const render = () => document.querySelector("#list").textContent = old.join("，");
+document.querySelector("#add").onclick = () => {
+  old.push(document.querySelector("#book").value);
+  localStorage.setItem("books", JSON.stringify(old));
+  render();
+};
+render();
+"""}
+        record({"stage":stage,"status":"ok","dispatched":True})
+        return json.dumps(content, ensure_ascii=False).encode()
+    if live:
+        return staged_blueprint.provide(stage, requirement, prior, key, admit, record)
     admit()
     if stage == "entry" and requirement not in failed:
         failed.add(requirement)
@@ -41,27 +58,11 @@ def staged(stage, requirement, prior, key, admit, record):
     return json.dumps(modules[stage], ensure_ascii=False).encode()
 
 
-def ordinary(requirement, key):
-    html = """<!doctype html><html><head><title>旧清单</title></head><body>
-    <label>书名 <input id="book"></label><button id="add" type="button">添加</button><ul id="list"></ul>
-    <script>
-    const old = JSON.parse(localStorage.getItem("books") || "[]");
-    const render = () => document.querySelector("#list").textContent = old.join("，");
-    document.querySelector("#add").onclick = () => {
-      old.push(document.querySelector("#book").value); localStorage.setItem("books", JSON.stringify(old)); render();
-    };
-    render();
-    </script></body></html>"""
-    return 200, json.dumps({"id":"fixture-staged-ordinary", "model":generate.MODEL,
-                            "choices":[{"finish_reason":"stop","message":{"content":html}}]}).encode()
-
-
 live = os.environ.get("ROOT_STAGED_LIVE") == "1"
 key = os.environ.get("DEEPSEEK_API_KEY", "").strip() if live else "fixture-key"
 if not key:
     raise SystemExit("Missing configured model key")
 runs = Path(sys.argv[3])
 Store(runs / "workspace.sqlite3").create_invite("fixture-invite", uses=2)
-generate.request_completion = ordinary
 workbench.serve(key, int(sys.argv[2]), runs, staged_enabled=True,
-                staged_provider=staged_blueprint.provide if live else staged)
+                staged_provider=staged)

@@ -13,7 +13,6 @@ from urllib.request import Request, urlopen
 from uuid import uuid4
 
 from accounts import Store
-from staged_route import choose_route
 
 
 PROGRAM = """
@@ -44,6 +43,14 @@ modules = {
 failed = set()
 def stages(stage, requirement, prior, key, admit, record):
     admit()
+    if requirement.startswith("超出"):
+        record({"stage":stage,"status":"staged_unsupported","dispatched":True})
+        raise ApiError(422, "staged_unsupported", "固定替身表示不支持")
+    if requirement.startswith("计算"):
+        content = {"kind":"program","title":"加法计算器","goal":"计算两数和"} if stage == "spec" else {
+            "markup":'<p id="answer"></p>', "script":'document.querySelector("#answer").textContent="5";'}
+        record({"stage":stage,"status":"ok","dispatched":True})
+        return json.dumps(content).encode()
     success = stage != "summary" or requirement in failed
     record({"stage":stage,"status":"ok" if success else "fixture_failed","dispatched":True})
     if not success:
@@ -101,20 +108,23 @@ class StagedHTTP(unittest.TestCase):
             time.sleep(0.05)
         self.fail(f"{state} not reached: {body['task']}")
 
-    def test_classification_uses_capabilities_and_does_not_charge_rejections(self):
+    def test_one_endpoint_uses_the_plan_for_a_simple_tool(self):
         user = self.account("staged-routing")
-        self.assertEqual(choose_route("新增看板卡片，分栏、跨栏移动、编辑和删除、备份导出与导入。"), "staged")
-        self.assertEqual(choose_route("帮我整理找工作的申请：按申请阶段分组，移动卡片，新建和改写申请，能保存成文件再加载。"), "staged")
-        self.assertEqual(choose_route("帮我写一份工作申请文案。"), "single")
         before = self.request("/api/trial", auth=user)[1]["generation"]["totalUsed"]
-        for requirement in ("计算两个数字之和", "一个只添加书名的清单。" * 30,
-                            "一个记事清单。不需要统计和导出，不需要组合筛选。"):
-            status, tool, _ = self.gen(user, requirement)
-            self.assertEqual(status, 200)
-            self.assertIn("html", tool)
-            self.assertNotIn("stagedBackup", tool)
-        status, error, _ = self.gen(user, "做一个工单台账，筛选并统计和导出，要求连接外部接口多人实时协同。")
-        self.assertEqual((status, error["code"]), (422, "staged_unsupported"))
+        status, response, _ = self.gen(user, "计算两个数字之和")
+        self.assertEqual(status, 202)
+        self.assertNotIn("html", response)
+        task = response["task"]["id"]
+        complete = self.wait_task(user, task, "complete")
+        self.assertEqual(complete["steps"], ["spec", "implementation", "assemble"])
+        path = "/api/staged/" + task
+        code, candidate, _ = self.request(path + "/candidate", {}, user)
+        self.assertEqual(code, 200)
+        self.assertIn('id="answer"', candidate["html"])
+        self.assertNotIn("stagedBackup", candidate)
+        status, response, _ = self.gen(user, "超出边界的复杂需求")
+        self.assertEqual(status, 202)
+        self.wait_task(user, response["task"]["id"], "unsupported")
         after = self.request("/api/trial", auth=user)[1]["generation"]["totalUsed"]
         self.assertEqual(after - before, 3)
 
@@ -138,7 +148,8 @@ class StagedHTTP(unittest.TestCase):
         self.assertTrue(failed["issue"])
         self.assertEqual(self.request(path + "/candidate", {}, owner)[0], 409)
         self.assertEqual(self.request(path + "/resume", {}, owner)[0], 202)
-        self.wait_task(owner, task, "complete")
+        complete = self.wait_task(owner, task, "complete")
+        self.assertEqual(complete["steps"], ["spec","entry","filters","summary","export","assemble"])
         self.assertEqual(self.request(path + "/candidate", {}, other)[0], 404)
         code, candidate, _ = self.request(path + "/candidate", {}, owner)
         self.assertEqual(code, 200)

@@ -19,7 +19,6 @@ import assistant_model
 import table_import
 import staged_blueprint
 from staged_jobs import StagedJobs
-from staged_route import choose_route
 from accounts import ApiError, SESSION_SECONDS, Store, TABLE_STORAGE_BYTES, TOOL_STORAGE_BYTES
 from trial_budget import TrialBudget
 
@@ -99,7 +98,7 @@ class ToolTitle(HTMLParser):
 def build_id(assets):
     digest = hashlib.sha256()
     for name in ("generate.py", "workbench.py", "accounts.py", "assistant_fixture.py", "assistant_model.py",
-                 "table_import.py", "trial_budget.py", "staged_blueprint.py", "staged_jobs.py", "staged_route.py",
+                 "table_import.py", "trial_budget.py", "staged_blueprint.py", "staged_jobs.py", "staged_program.py",
                  "workbench/staged-runtime.js"):
         digest.update(name.encode() + b"\0" + (ROOT / name).read_bytes() + b"\0")
     for path, body in assets.items():
@@ -452,13 +451,9 @@ def serve(key, port, runs=generate.RUNS, *, generation_limits=(5, 30), analysis_
                 self.error(503, "key_required", "请在本机服务配置 DeepSeek Key。")
                 return
             if staged and tool_id is None:
-                route = choose_route(requirement)
-                if route == "unsupported":
-                    raise ApiError(422, "staged_unsupported", "此复杂需求包含外部协同或联网操作，当前分阶段工具无法支持。原需求仍可编辑。")
-                if route == "staged":
-                    task = staged.create(token, marker, requirement, data.get("requestId"))
-                    self.send_json(202, {"task":start_staged(token, marker, task["id"], resume=False)})
-                    return
+                task = staged.create(token, marker, requirement, data.get("requestId"))
+                self.send_json(202, {"task":start_staged(token, marker, task["id"], resume=False)})
+                return
             model_input = None
             if tool_id:
                 previous = self.read_tool_html(row["run_id"])
@@ -544,7 +539,7 @@ def main():
         parser.error(str(error))
     serve(key, args.port, args.runs_dir, generation_limits=generation_limits, analysis_limits=analysis_limits,
           admin_usernames=admins, table_limits=table_limits,
-          staged_enabled=os.environ.get("ROOT_STAGED_ENABLED") == "1")
+          staged_enabled=os.environ.get("ROOT_STAGED_ENABLED", "1") != "0")
     return 0
 
 

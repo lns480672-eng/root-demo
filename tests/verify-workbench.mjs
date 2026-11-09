@@ -1,6 +1,6 @@
 // TEST-001 / TEST-002 / TEST-004 / TEST-005 / TEST-006. Default uses a deterministic provider fixture. --live uses DeepSeek.
 import assert from 'node:assert/strict';
-import { verifyStagedFlow } from './verify-staged-flow.mjs';
+import { verifyStagedFlow, verifyStagedCalculator } from './verify-staged-flow.mjs';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { createServer } from 'node:http';
@@ -392,8 +392,10 @@ try {
   }
   if (stagedFlow) {
     evidence.mode = process.env.ROOT_STAGED_LIVE === '1' ? 'deepseek-staged' : 'fixture-staged';
-    stage = 'staged workbench board flow';
-    await verifyStagedFlow({ cdp, evaluate, until, base, click, pointerClick, type, visible, appRequest, login,
+    const calculator = process.env.ROOT_STAGED_CALCULATOR === '1';
+    stage = calculator ? 'staged workbench calculator' : 'staged workbench board flow';
+    const verify = calculator ? verifyStagedCalculator : verifyStagedFlow;
+    await verify({ cdp, evaluate, until, base, click, pointerClick, type, visible, appRequest, login,
       generate, activeTool, accountA, root, probeUrl, probeRequests, probeControls, library, stored, evidence, screenshot });
   } else {
   await cdp('Emulation.setDeviceMetricsOverride', { width: 1360, height: 980, deviceScaleFactor: 1, mobile: false });
