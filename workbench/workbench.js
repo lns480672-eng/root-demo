@@ -12,6 +12,8 @@ const composer = form.closest('section');
 const library = byId('tool-list').closest('section');
 const toolHistory = byId('tool-version-panel');
 const maxStorageBytes = 256 * 1024;
+const publicationKey = 'root:pending-publication';
+const publicationTimeout = 6000;
 const validToolId = id => typeof id === 'string' && /^run-[a-z0-9_]{8}$/.test(id);
 const previewPolicy = "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; "
   + "img-src data:; connect-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'";
@@ -26,30 +28,40 @@ let phase = 'startup';
 let failure = '';
 let restored = false;
 let editing = false;
+let pendingPublication = null;
 
 function render() {
-  const pending = ['model', 'preview', 'restore'].includes(phase);
+  const pending = ['model', 'preview', 'restore', 'sync'].includes(phase);
+  const syncing = Boolean(pendingPublication);
+  const blocked = pending || syncing;
   product.dataset.state = pending ? 'loading' : failure ? 'failure' : active ? 'success' : 'initial';
   generate.textContent = pending ? '生成中…' : failure ? '重试' : editing ? '生成新版' : '生成工具';
-  generate.disabled = !session || !configured || !networkIsolated || phase === 'startup' || pending || !requirement.value.trim();
-  requirement.readOnly = pending;
-  byId('new-tool').disabled = pending;
+  generate.disabled = !session || !configured || !networkIsolated || phase === 'startup' || blocked || !requirement.value.trim();
+  requirement.readOnly = blocked;
+  byId('new-tool').disabled = blocked;
   let currentTitle = '工具预览';
   for (const button of byId('tool-list').querySelectorAll('button')) {
-    button.disabled = pending || !networkIsolated;
+    button.disabled = blocked || !networkIsolated;
     const selected = button.dataset.id === active?.id;
     button.setAttribute('aria-current', String(selected));
     if (selected) currentTitle = button.textContent;
   }
   byId('preview-title').textContent = currentTitle;
   byId('composer-title').textContent = editing ? '要怎样修改这个工具？' : '你想做什么工具？';
-  byId('revise-tool').hidden = byId('tool-history').hidden = !active;
+  byId('revise-tool').hidden = byId('tool-history').hidden = syncing || !active;
   byId('revise-tool').disabled = pending || !configured;
   byId('tool-history').textContent = active ? '工具 v' + active.version + ' · 版本历史' : '版本历史';
-  example.hidden = editing || pending || Boolean(failure);
+  const sync = byId('sync-tool');
+  sync.hidden = !syncing;
+  sync.disabled = pending;
+  const publicationMessage = byId('publication-message');
+  publicationMessage.hidden = !syncing;
+  publicationMessage.textContent = pending ? '正在核对已发布版本，编辑暂时暂停。'
+    : '暂时无法确认发布结果。编辑已暂停，请点击「同步工具」后继续。';
+  example.hidden = editing || blocked || Boolean(failure);
   byId('error').textContent = failure;
   byId('error').hidden = !failure;
-  byId('loading').hidden = !pending;
+  byId('loading').hidden = syncing || !pending;
   byId('phase').textContent = {
     model: '正在等待 DeepSeek 响应',
     preview: '正在准备预览',
@@ -61,11 +73,11 @@ function render() {
     else item.removeAttribute('aria-current');
   }
   const status = byId('preview-status');
-  status.toggleAttribute('data-usable', Boolean(active));
-  status.textContent = active
+  status.toggleAttribute('data-usable', Boolean(active) && !syncing);
+  status.textContent = syncing ? '待同步 · 暂停编辑' : active
     ? pending || failure ? '上次工具仍可用' : restored ? '已恢复' : '已就绪'
     : pending ? '等待预览' : '待生成';
-  byId('empty').hidden = Boolean(active);
+  byId('empty').hidden = Boolean(active) || syncing;
   byId('empty-title').textContent = pending ? '等待预览' : '还没有生成工具';
   byId('empty-copy').textContent = pending ? '工具准备好后，会在这里显示。' : '输入需求后，工具会在这里出现。';
 }
@@ -93,9 +105,10 @@ function post(data) {
   return { method: 'POST', body: JSON.stringify(data), headers: { 'Content-Type': 'application/json' } };
 }
 
-async function workspaceApi(path, data) {
+async function workspaceApi(path, data, timeout) {
   const options = data === undefined ? { headers: {} } : post(data);
   options.headers['X-Root-Session'] = session.marker;
+  if (timeout) options.signal = AbortSignal.timeout(timeout);
   try {
     return await api(path, options);
   } catch (error) {
@@ -340,6 +353,7 @@ window.addEventListener('message', event => {
   if (!frame) return;
   const { type, entries } = event.data;
   if (type === 'storage') {
+    if (frame === active && pendingPublication) return;
     try {
       const snapshot = serializeEntries(entries);
       frame.snapshot = snapshot;
@@ -395,12 +409,57 @@ async function publishRevision(frame, old, tool) {
   if (old.saveFailed) throw new Error('旧版还有未保存的修改，请先解决保存问题再试。');
   const path = '/api/tools/' + frame.id + '/publish';
   const payload = { runId: tool.runId, revision: frame.revision, entries: JSON.parse(frame.snapshot) };
+  const operation = { id: frame.id, runId: tool.runId, marker: session.marker };
+  sessionStorage.setItem(publicationKey, JSON.stringify(operation));
+  pendingPublication = operation;
+  showToolHistory(false);
+  render();
+  let uncertain = false;
   try {
-    return await workspaceApi(path, payload);
+    const saved = await workspaceApi(path, payload, publicationTimeout).catch(error => {
+      if (error.code !== 'transport') throw error;
+      uncertain = true;
+      // A single replay can recover an acknowledgement without rebuilding the candidate.
+      return workspaceApi(path, payload, publicationTimeout);
+    });
+    clearPublication();
+    return saved;
   } catch (error) {
-    if (error.code !== 'transport') throw error;
-    // The response may have been lost after SQLite committed the same draft.
-    return workspaceApi(path, payload);
+    if (!uncertain && error.code !== 'version_conflict') clearPublication();
+    throw error;
+  }
+}
+
+function clearPublication() {
+  pendingPublication = null;
+  sessionStorage.removeItem(publicationKey);
+}
+
+function pendingPublicationForSession() {
+  try {
+    const operation = JSON.parse(sessionStorage.getItem(publicationKey));
+    return operation?.marker === session.marker && validToolId(operation.id) && validToolId(operation.runId)
+      ? operation : null;
+  } catch {
+    return null;
+  }
+}
+
+async function synchronizePublication() {
+  const { id, runId } = pendingPublication;
+  try {
+    const current = await workspaceApi('/api/tools/' + id + '/resolve-publish', { runId }, publicationTimeout);
+    if (active?.id === id && active.version === current.version && active.revision === current.revision) {
+      resumeStorage(active);
+    } else {
+      await openTool(current, true);
+    }
+    clearPublication();
+    if (current.applied) finishComposition();
+    else if (editing) failure = '本次修改未发布，已同步当前工具。你可以重试。';
+    else warnStorage('本次修改未发布，已恢复当前工具。');
+  } catch {
+    // Keep the preview and its writes paused until a later synchronization succeeds.
   }
 }
 
@@ -446,7 +505,8 @@ async function openTool(tool, restore = false) {
       });
       frame.revision = saved.revision;
     } else {
-      await workspaceApi('/api/tools/' + frame.id + '/open', { version: frame.version });
+      await workspaceApi('/api/tools/' + frame.id + '/open', { version: frame.version },
+        pendingPublication ? publicationTimeout : undefined);
     }
     old?.iframe.remove();
     active = frame;
@@ -462,7 +522,7 @@ async function openTool(tool, restore = false) {
     clearTimeout(deadline);
     if (active !== frame) {
       iframe.remove();
-      if (tool.runId && old.iframe.inert && old.iframe.isConnected) resumeStorage(old);
+      if (tool.runId && !pendingPublication && old.iframe.inert && old.iframe.isConnected) resumeStorage(old);
     }
     candidate = null;
   }
@@ -472,7 +532,7 @@ async function openRevision(tool) {
   try {
     await openTool(tool);
   } catch (error) {
-    if (error.code !== 'revision_conflict') throw error;
+    if (pendingPublication || error.code !== 'revision_conflict') throw error;
     const current = await workspaceApi('/api/tools/' + tool.id);
     if (current.version !== tool.version - 1) throw new Error('工具已更新，请重新打开后再修改。');
     await openTool({ ...tool, entries: current.entries, revision: current.revision });
@@ -485,6 +545,12 @@ example.addEventListener('click', () => {
   requirement.focus();
   render();
 });
+function finishComposition() {
+  editing = false;
+  requirement.value = '';
+  compose(false);
+}
+
 form.addEventListener('submit', async event => {
   event.preventDefault();
   if (generate.disabled) return;
@@ -501,20 +567,28 @@ form.addEventListener('submit', async event => {
     render();
     if (editing) await openRevision(tool);
     else await openTool(tool);
-    editing = false;
-    requirement.value = '';
-    compose(false);
+    finishComposition();
     await loadLibrary().catch(error => warnStorage(error.message));
   } catch (error) {
-    failure = error.message;
+    if (pendingPublication) await synchronizePublication();
+    else failure = error.message;
   } finally {
     phase = 'idle';
     render();
   }
 });
 
+byId('sync-tool').addEventListener('click', async () => {
+  if (!pendingPublication || phase !== 'idle') return;
+  phase = 'sync';
+  render();
+  await synchronizePublication();
+  phase = 'idle';
+  render();
+});
+
 async function selectTool(id) {
-  if (!networkIsolated || phase !== 'idle' || !validToolId(id)) return;
+  if (!networkIsolated || pendingPublication || phase !== 'idle' || !validToolId(id)) return;
   phase = 'restore';
   failure = '';
   render();
@@ -668,10 +742,17 @@ async function start() {
       byId('config').textContent = '本机服务尚未配置 DeepSeek Key。';
       byId('config').hidden = false;
     }
+    pendingPublication = networkIsolated ? pendingPublicationForSession() : null;
     const latest = await loadLibrary();
-    if (networkIsolated && latest) {
-      phase = 'idle';
-      await selectTool(latest);
+    if (networkIsolated) {
+      if (pendingPublication) {
+        phase = 'sync';
+        render();
+        await synchronizePublication();
+      } else if (latest) {
+        phase = 'idle';
+        await selectTool(latest);
+      }
     }
   } catch (error) {
     if (!session) {

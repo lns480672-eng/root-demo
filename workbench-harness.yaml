@@ -138,3 +138,16 @@ stage3_checkpoint:
   evidence: runs/stage3-final/开发自测.md
   handoff: runs/stage3-final/handoff.json
   first_unfinished_oracle: "独立验收以本轮固定提交与专用运行目录验证"
+
+stage3_publish_recovery:
+  defect: ROOT-S3-IA-02
+  rejected_commit: a62047f
+  scope: [AC-007, AC-008]
+  strategy_boxes_used: 1
+  current_strategy: "真实 SQLite 写事务回读和撤销，浏览器注入响应丢失"
+  failing_oracle: "服务端已发布 v2，预览仍允许旧版编辑且数据未保存"
+  done_state: "同步到权威版本，结果未知时暂停写入，明确未提交时旧版可编辑"
+  red: runs/stage3-publish-fix/red-browser/workbench-check.json
+  build: v4-4551c7a53315
+  evidence: runs/stage3-publish-fix/开发复验.md
+  handoff: runs/stage3-publish-fix/handoff.json

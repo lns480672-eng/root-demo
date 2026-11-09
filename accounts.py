@@ -201,6 +201,19 @@ class Store:
             db.execute("INSERT INTO revision_drafts VALUES (?,?,?,?)", (run_id, tool_id, version, note))
             return dict(row)
 
+    def resolve_publication(self, token, marker, tool_id, run_id):
+        if not isinstance(run_id, str):
+            raise ApiError(400, "invalid_draft", "修改候选无效。")
+        with self.connection(write=True) as db:
+            user = self.session(db, token, marker)
+            row = self.owned_tool(db, user, tool_id)
+            # Share the publication write lock so a pending request cannot commit after this readback.
+            db.execute("DELETE FROM revision_drafts WHERE tool_id=? AND run_id=?", (tool_id, run_id))
+            applied = db.execute(
+                "SELECT 1 FROM tool_versions WHERE tool_id=? AND run_id=? AND version>1", (tool_id, run_id),
+            ).fetchone() is not None
+            return row, applied
+
     def publish_revision(self, db, row, data):
         run_id = data.get("runId")
         if not isinstance(run_id, str):

@@ -136,6 +136,14 @@ class AccountHTTP(unittest.TestCase):
         self.assertEqual(self.request(path + "/revise", instruction, other, other_marker)[0], 404)
         status, draft, _ = self.request(path + "/revise", instruction, owner, marker)
         self.assertEqual((status, draft["id"], draft["version"]), (200, tool["id"], 2))
+        _, abandoned, _ = self.request(path + "/revise", {"requirement": "待取消", "version": 1}, owner, marker)
+        resolution = {"runId": abandoned["runId"]}
+        self.assertEqual(self.request(path + "/resolve-publish", resolution, other, other_marker)[0], 404)
+        status, resolved, _ = self.request(path + "/resolve-publish", resolution, owner, marker)
+        self.assertEqual((status, resolved["version"], resolved["applied"]), (200, 1, False))
+        self.assertEqual(self.request(path + "/publish", {
+            "revision": abandoned["revision"], "runId": abandoned["runId"], "entries": original,
+        }, owner, marker)[0], 404)
         status, competing, _ = self.request(path + "/revise", {"requirement": "改标题", "version": 1}, owner, marker)
         self.assertEqual(status, 200)
         self.assertEqual(self.request("/api/tools/" + draft["runId"], cookie=owner, marker=marker)[0], 404)
@@ -153,6 +161,10 @@ class AccountHTTP(unittest.TestCase):
         self.assertEqual(self.request(path + "/publish", publish, other, other_marker)[0], 404)
         self.assertEqual(self.request(path + "/publish", publish, owner, marker)[0], 200)
         self.assertEqual(self.request(path + "/publish", publish, owner, marker)[0], 200)
+        for _ in range(2):
+            status, resolved, _ = self.request(path + "/resolve-publish", {"runId": draft["runId"]}, owner, marker)
+            self.assertEqual((status, resolved["version"], resolved["applied"], resolved["entries"]),
+                             (200, 2, True, updated))
         status, current, _ = self.request(path, cookie=owner, marker=marker)
         self.assertEqual((status, current["version"], current["entries"]), (200, 2, updated))
         self.assertEqual(self.request(path + "/data", {

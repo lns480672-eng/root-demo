@@ -23,7 +23,7 @@ STATIC = {
     "/workbench.js": ("workbench.js", "text/javascript; charset=utf-8"),
 }
 TOOL_PATH = re.compile(r"/api/tools/(run-[a-z0-9_]{8})")
-TOOL_ACTION = re.compile(r"/api/tools/(run-[a-z0-9_]{8})/(commit|open|data|publish|revise)")
+TOOL_ACTION = re.compile(r"/api/tools/(run-[a-z0-9_]{8})/(commit|open|data|publish|revise|resolve-publish)")
 TOOL_VERSIONS = re.compile(r"/api/tools/(run-[a-z0-9_]{8})/versions")
 RELEASES = (
     ("0.3", "2026-11-09", None, "支持继续修改已有工具、查看工具版本历史，并调整窄屏生成流程。"),
@@ -202,11 +202,12 @@ def serve(key, port, runs=generate.RUNS):
             else:
                 self.error(404, "not_found", "页面不存在。")
 
-        def send_tool(self, row, draft=None):
+        def send_tool(self, row, draft=None, *, applied=None):
             self.send_json(200, {
                 "id": row["id"], "html": self.read_tool_html(draft or row["run_id"]),
                 "entries": json.loads(row["entries"]), "revision": row["revision"],
                 "version": row["version"] + bool(draft), **({"runId": draft} if draft else {}),
+                **({"applied": applied} if applied is not None else {}),
             })
 
         def read_tool_html(self, tool_id):
@@ -260,6 +261,9 @@ def serve(key, port, runs=generate.RUNS):
             if match := TOOL_ACTION.fullmatch(self.path):
                 if match[2] == "revise":
                     self.handle_generation(data, match[1])
+                elif match[2] == "resolve-publish":
+                    row, applied = store.resolve_publication(token, self.marker(), match[1], data.get("runId"))
+                    self.send_tool(row, applied=applied)
                 else:
                     self.send_json(200, store.change_tool(token, self.marker(), match[1], match[2], data))
                 return

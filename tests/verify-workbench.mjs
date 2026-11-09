@@ -555,6 +555,130 @@ try {
     await until(async () => JSON.stringify((await stored(restored.id)).entries).includes(name));
   }
 
+  if (!live && process.argv.includes('--publish-recovery')) {
+    const toolPath = '/api/tools/' + first.id;
+    const historyVersion = () => evaluate('document.querySelector("#tool-history").textContent');
+    const waitForVersion = version => until(async () => {
+      const state = await readPage();
+      if (state.error) throw new Error(state.error);
+      return (await historyVersion()).includes('v' + version + ' ·');
+    });
+    async function revise() {
+      await click('#revise-tool');
+      await generate('增加已读筛选');
+    }
+    async function injectPublishFault(drops, holdReadback = false, deliverPublish = true) {
+      await evaluate(`(() => {
+        const realFetch = window.fetch;
+        window.fixturePublishResponses = [];
+        window.fixtureBlockReadback = ${holdReadback};
+        window.fetch = async (url, options) => {
+          const path = String(url);
+          if (path.endsWith('/publish') && ${drops} === 0) {
+            return new Response(JSON.stringify({ code: 'storage_unavailable', message: '本机数据暂时无法保存' }), { status: 503 });
+          }
+          if (path.endsWith('/publish') && !${deliverPublish}) {
+            throw new TypeError('fixture: publish did not reach service');
+          }
+          if (path.endsWith('/resolve-publish') && window.fixtureBlockReadback) {
+            throw new TypeError('fixture: reconciliation unavailable');
+          }
+          const response = await realFetch(url, options);
+          if (path.endsWith('/publish') && response.ok) {
+            window.fixturePublishResponses.push(await response.clone().json());
+            if (window.fixturePublishResponses.length <= ${drops}) throw new TypeError('fixture: publish acknowledgement lost');
+          }
+          return response;
+        };
+        window.fixtureRestoreFetch = () => { window.fetch = realFetch; };
+      })()`);
+    }
+    stage = 'publish refused before commit, old tool stays editable';
+    await injectPublishFault(0);
+    await revise();
+    assert.match(await until(() => evaluate('document.querySelector("#error").textContent')), /暂时无法保存/);
+    assert.match(await historyVersion(), /v1 ·/);
+    await addOldRecord('明确拒绝后仍可保存');
+    await evaluate('window.fixtureRestoreFetch()');
+
+    stage = 'unacknowledged requests that never reached the server restore the old preview';
+    await injectPublishFault(2, false, false);
+    await revise();
+    assert.match(await until(() => evaluate('document.querySelector("#error").textContent')), /本次修改未发布/);
+    assert.equal((await appRequest(toolPath)).body.version, 1);
+    assert.equal((await activeTool()).loader, restored.loader);
+    await addOldRecord('核对未发布后仍可保存');
+    await evaluate('window.fixtureRestoreFetch()');
+
+    stage = 'one lost publish response is retried once';
+    await injectPublishFault(1);
+    await revise();
+    await waitForVersion(2);
+    assert.deepEqual(await evaluate('window.fixturePublishResponses.map(item => item.version)'), [2, 2]);
+    await evaluate('window.fixtureRestoreFetch()');
+
+    stage = 'two lost publish responses recover the authoritative preview';
+    await injectPublishFault(2);
+    await revise();
+    await waitForVersion(3);
+    assert.deepEqual(await evaluate('window.fixturePublishResponses.map(item => item.version)'), [3, 3]);
+    assert.deepEqual((await appRequest(toolPath + '/versions')).body.items.map(item => item.version), [3, 2, 1]);
+    await click('#tool-history');
+    assert.match(await until(() => evaluate('document.querySelector("#tool-version-list li[aria-current=true] strong")?.textContent')), /v3 · 当前/);
+    restored = await activeTool();
+    await addOldRecord('双确认丢失后仍可保存');
+    await evaluate('window.fixtureRestoreFetch()');
+    await screenshot('recovered-after-two-lost-confirmations');
+
+    stage = 'unknown result disables writes until explicit synchronization';
+    await injectPublishFault(2, true);
+    await revise();
+    await until(() => evaluate('document.querySelector("#sync-tool")?.checkVisibility()'));
+    assert.equal(await evaluate('document.querySelector("#preview iframe[data-tool]").inert'), true);
+    assert.equal(await evaluate('document.querySelector("#tool-history").hidden'), true);
+    assert.equal(await evaluate('document.querySelector("#generate").disabled'), true);
+    assert.equal(await evaluate('document.querySelector("#preview-status").hasAttribute("data-usable")'), false);
+    const before = await stored(first.id);
+    assert.equal((await appRequest(toolPath)).body.version, 4);
+    assert.equal(await evaluate(`(() => {
+      const script = document.createElement('script');
+      script.textContent = "try { localStorage.setItem('books', '[]'); } catch (e) { document.body.dataset.pauseError = e.name; }";
+      document.body.append(script);
+      return document.body.dataset.pauseError;
+    })()`, restored.context), 'InvalidStateError');
+    assert.deepEqual(await stored(first.id), before);
+    await screenshot('publication-awaiting-sync');
+    await click('#sync-tool');
+    await until(() => evaluate('!document.querySelector("#sync-tool").disabled'));
+    assert.equal(await evaluate('document.querySelector("#preview iframe[data-tool]").inert'), true);
+    const { identifier } = await cdp('Page.addScriptToEvaluateOnNewDocument', { source: `
+      if (window === top) {
+        const realFetch = window.fetch;
+        window.fetch = (url, options) => String(url).endsWith('/resolve-publish')
+          ? Promise.reject(new TypeError('fixture: reconciliation unavailable after reload'))
+          : realFetch(url, options);
+        window.fixtureRestoreFetch = () => { window.fetch = realFetch; };
+      }
+    ` });
+    await cdp('Page.reload', { ignoreCache: true });
+    await until(() => evaluate('document.documentElement.dataset.ready === "true" && document.querySelector("#sync-tool").checkVisibility()'));
+    assert.equal(await evaluate('document.querySelector("#preview iframe") === null'), true);
+    await cdp('Page.removeScriptToEvaluateOnNewDocument', { identifier });
+    await evaluate('window.fixtureRestoreFetch()');
+    await click('#sync-tool');
+    await waitForVersion(4);
+    restored = await activeTool();
+    await addOldRecord('手动同步后保存');
+    await cdp('Page.reload', { ignoreCache: true });
+    await until(() => evaluate('document.documentElement.dataset.ready === "true"'));
+    const refreshed = await activeTool();
+    assert.match(await historyVersion(), /v4 ·/);
+    assert.match(await evaluate('document.querySelector("#list").innerText', refreshed.context), /手动同步后保存/);
+    evidence.tests.push({ id: 'ROOT-S3-IA-02', result: 'passed', rejectedBeforeCommit: true,
+      droppedAcknowledgements: [1, 2], confirmedVersions: [1, 2, 3, 4], blockedWhileUnknown: true,
+      abandonedDraftResolvedToOldVersion: true, recoveredAfterReloadDuringOutage: true, manualSyncAndReload: true });
+  }
+
   if (!mainOnly) {
     stage = 'generate budget tool';
     await click('#new-tool');
