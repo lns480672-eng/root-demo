@@ -13,6 +13,14 @@ import table_import
 
 MAX_LEGACY_HTML = 24 * 1024
 MAX_BASE_BYTES = 14 * 1024
+THEME_NAMES = {
+    "gray": ("灰白", "灰色", "浅灰", "淡灰"),
+    "yellow": ("黄色", "浅黄", "淡黄"),
+    "blue": ("蓝色", "浅蓝", "淡蓝"),
+    "green": ("绿色", "浅绿", "淡绿"),
+    "pink": ("粉色", "粉红", "浅粉", "淡粉"),
+    "purple": ("紫色", "浅紫", "淡紫"),
+}
 VARIABLES = re.compile(
     r"\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*"
     r"""(["'])([^"'\\\r\n]{1,160})\2\s*(?:;|$)""",
@@ -210,13 +218,17 @@ def _theme(spec):
     return spec.get("theme", "gray")
 
 
-def _ledger_patch(payload, base, active_modules):
+def _ledger_patch(payload, base, active_modules, requirement):
     candidate = blueprint.read_artifact(payload)
     original = base["source"]["spec"]
     if isinstance(candidate, dict) and candidate.keys() == {"theme"}:
         theme = candidate["theme"]
         if not isinstance(theme, str) or theme not in blueprint.LEDGER_THEMES:
             raise ApiError(422, "staged_unsupported", "工作台暂不支持这个配色，旧版仍可用。")
+        if not any(name in requirement for name in THEME_NAMES[theme]) and not re.search(
+            r"(?<![a-z])" + theme + r"(?![a-z])", requirement, re.I
+        ):
+            raise ApiError(422, "staged_unsupported", "工作台暂不支持请求的配色，旧版仍可用。")
         if theme == _theme(original):
             raise _no_change()
         candidate = {**original, "modules": active_modules, "theme": theme}
@@ -289,7 +301,7 @@ def provide(stage, requirement, previous, key, admit, record, *, base):
             module for module in blueprint.OPTIONAL_MODULES
             if any(base["source"].get(module, {}).values())
         ]
-        spec_patch = lambda payload: _ledger_patch(payload, base, active_modules)
+        spec_patch = lambda payload: _ledger_patch(payload, base, active_modules, requirement)
     elif base["kind"] == "ledger":
         spec = blueprint.read_artifact(previous["spec.json"])
         if _theme(spec) != _theme(base["source"]["spec"]):

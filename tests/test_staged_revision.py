@@ -29,6 +29,15 @@ def encode(value):
 
 
 class RevisionContextTests(unittest.TestCase):
+    def test_ledger_color_rejects_model_substitution_for_unsupported_request(self):
+        original = artifacts()
+        original["spec.json"] = encode({**json.loads(original["spec.json"]), "theme": "yellow"})
+        base = revision.prepare(original)
+        with patch.object(assistant_model, "_exchange", return_value=envelope('{"theme":"gray"}')):
+            with self.assertRaises(ApiError) as raised:
+                revision.provide("spec", "把颜色改成黑色", {}, "fixture-key", Mock(), None, base=base)
+        self.assertEqual(raised.exception.code, "staged_unsupported")
+
     def test_ledger_color_patch_changes_css_and_preserves_the_original_configuration(self):
         original = artifacts()
         base = revision.prepare(original)

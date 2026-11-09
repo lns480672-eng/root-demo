@@ -105,7 +105,7 @@ def revise(stage, requirement, prior, key, admit, record, *, base):
             if requirement == "把颜色改成黄色":
                 content = {"theme":"yellow"}
             elif requirement == "把颜色改成黑色":
-                content = {"unsupported":True}
+                content = {"theme":"gray"}
             else:
                 content = base["source"][stage]
         elif requirement.startswith("增加一个"):
