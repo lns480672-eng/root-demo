@@ -91,7 +91,7 @@ class Store:
                        (digest(code), uses, int(time.time() + 3600 * hours)))
         return code
 
-    def register(self, data):
+    def register(self, data, previous_token=""):
         name, password = credentials(data, registering=True)
         invite = data.get("invite")
         error = ApiError(400, "invalid_invite", "邀请码无效、已过期或已用完，请确认后再试。")
@@ -108,9 +108,12 @@ class Store:
             if not used.rowcount:
                 raise error
             try:
-                db.execute("INSERT INTO accounts(username,salt,password_hash) VALUES (?,?,?)", (name, salt, hashed))
+                account = db.execute("INSERT INTO accounts(username,salt,password_hash) VALUES (?,?,?)",
+                                     (name, salt, hashed))
             except sqlite3.IntegrityError:
                 raise ApiError(409, "username_taken", "用户名已被使用。") from None
+            token, marker = self.create_session(db, account.lastrowid, previous_token)
+        return token, {"user": name, "marker": marker, "latest": None}
 
     def login(self, data, previous_token):
         name, password = credentials(data)
@@ -119,12 +122,17 @@ class Store:
         hashed = password_hash(password, account["salt"] if account else bytes(16))
         if not hmac.compare_digest(hashed, account["password_hash"] if account else bytes(32)):
             raise ApiError(401, "login_failed", "用户名或密码错误。")
+        with self.connection(write=True) as db:
+            token, _ = self.create_session(db, account["id"], previous_token)
+        return token
+
+    @staticmethod
+    def create_session(db, account_id, previous_token):
         token, marker = secrets.token_urlsafe(32), secrets.token_urlsafe(18)
         now = int(time.time())
-        with self.connection(write=True) as db:
-            db.execute("DELETE FROM sessions WHERE digest=? OR expires<=?", (digest(previous_token), now))
-            db.execute("INSERT INTO sessions VALUES (?,?,?,?)", (digest(token), account["id"], marker, now + SESSION_SECONDS))
-        return token
+        db.execute("DELETE FROM sessions WHERE digest=? OR expires<=?", (digest(previous_token), now))
+        db.execute("INSERT INTO sessions VALUES (?,?,?,?)", (digest(token), account_id, marker, now + SESSION_SECONDS))
+        return token, marker
 
     def session(self, db, token, marker=None):
         row = db.execute(

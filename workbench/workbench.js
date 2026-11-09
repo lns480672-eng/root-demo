@@ -171,7 +171,7 @@ function compose(enabled) {
 }
 
 const guideSteps = [
-  ['quick-entry', '第 1 步 · 点「快速体验」，先挑一个示例。'],
+  ['quick-entry', '欢迎使用 ROOT。先选一个模板，试着生成你的第一个工具。'],
   ['template-generate', '第 2 步 · 选一个模板，点「用此模板生成」。也可以先试用样例。'],
   ['preview', '第 3 步 · 在预览中实际操作一次，例如添加一条记录或计算结果。'],
   ['tool-list', '第 4 步 · 到「我的工具」重新打开刚才生成的工具。'],
@@ -196,10 +196,6 @@ function renderGuide() {
   if (copy.textContent !== step[1]) copy.textContent = step[1];
 }
 
-function guidePreference() {
-  return 'root:workbench-guide:' + session.user;
-}
-
 function startGuide() {
   guideTool = null;
   guideStep = 0;
@@ -208,20 +204,6 @@ function startGuide() {
 function dismissGuide() {
   guideTool = null;
   guideStep = -1;
-  try {
-    localStorage.setItem(guidePreference(), 'seen');
-  } catch {
-    // A restricted browser can still dismiss the guide in this document.
-  }
-}
-
-function restoreGuide() {
-  try {
-    if (localStorage.getItem(guidePreference()) === 'seen') return;
-  } catch {
-    // Offer the guide when a preference cannot be read.
-  }
-  startGuide();
 }
 
 function hideSample() {
@@ -353,6 +335,10 @@ function loadReleases() {
 
 function renderRoute(focus = false) {
   const updates = location.pathname === '/updates';
+  if (updates && guideStep >= 0) {
+    dismissGuide();
+    renderGuide();
+  }
   byId('updates').hidden = byId('updates-back').hidden = !updates;
   byId('updates-link').hidden = updates;
   byId('auth').hidden = updates || !identityResolved || Boolean(session);
@@ -817,16 +803,14 @@ byId('auth-form').addEventListener('submit', async event => {
   clearAuthErrors();
   const password = byId('password');
   try {
-    await api(isRegistration ? '/api/register' : '/api/login', post({
+    const identity = await api(isRegistration ? '/api/register' : '/api/login', post({
       username: byId('username').value, password: password.value,
       invite: isRegistration ? byId('invite').value : undefined,
     }));
     password.value = '';
     if (isRegistration) {
       byId('invite').value = '';
-      authMode(false);
-      byId('auth-status').textContent = '注册成功，请登录。';
-      password.focus();
+      await start(identity);
     } else {
       location.reload();
     }
@@ -878,19 +862,23 @@ window.addEventListener('focus', async () => {
   }
 });
 
-async function start() {
+async function start(registration = null) {
+  phase = 'startup';
   try {
     compose(true);
     renderEntryTemplate(templateKey);
     loadReleases();
     renderRoute();
-    const identity = await api('/api/session');
+    const identity = registration || await api('/api/session');
     identityResolved = true;
     session = identity.user ? identity : null;
     renderRoute();
     if (!session) return;
     byId('account-name').textContent = session.user;
-    restoreGuide();
+    if (registration) {
+      startGuide();
+      render();
+    }
     ({ configured } = await api('/api/config'));
     networkIsolated = await confirmsNetworkPolicy();
     if (!networkIsolated) {

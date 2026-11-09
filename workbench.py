@@ -94,6 +94,10 @@ def model_error(evidence):
     return GENERATION_ERRORS.get(evidence["status"], "DeepSeek 暂时无法完成请求，请重试。")
 
 
+def session_cookie(token, max_age=SESSION_SECONDS):
+    return f"root_session={token}; HttpOnly; SameSite=Strict; Path=/; Max-Age={max_age}"
+
+
 def serve(key, port, runs=generate.RUNS):
     generation_lock = threading.Lock()
     store = Store(runs / "workspace.sqlite3")
@@ -247,17 +251,16 @@ def serve(key, port, runs=generate.RUNS):
         def handle_action(self, data):
             token = self.cookie_token()
             if self.path == "/api/register":
-                store.register(data)
-                self.send_json(201, {"ok": True})
+                new_token, identity = store.register(data, token)
+                self.send_json(201, identity, session_cookie(new_token))
                 return
             if self.path == "/api/login":
                 new_token = store.login(data, token)
-                self.send_json(200, {"ok": True},
-                               f"root_session={new_token}; HttpOnly; SameSite=Strict; Path=/; Max-Age={SESSION_SECONDS}")
+                self.send_json(200, {"ok": True}, session_cookie(new_token))
                 return
             if self.path == "/api/logout":
                 store.logout(token, self.marker())
-                self.send_json(200, {"ok": True}, "root_session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0")
+                self.send_json(200, {"ok": True}, session_cookie("", 0))
                 return
             if match := TOOL_ACTION.fullmatch(self.path):
                 if match[2] == "revise":

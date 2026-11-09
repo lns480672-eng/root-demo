@@ -92,6 +92,23 @@ class AccountHTTP(unittest.TestCase):
             statuses = list(pool.map(lambda name: self.register(name, invite)[0], ["invite-race-a", "invite-race-b"]))
         self.assertEqual(sorted(statuses), [201, 400])
 
+    def test_registration_immediately_authenticates_new_account(self):
+        status, registration, cookie = self.request("/api/register", {
+            "username": "register-session",
+            "password": "fixture-test-password!",
+            "invite": self.store.create_invite(),
+        })
+        self.assertEqual(status, 201)
+        self.assertIsNotNone(cookie, "注册成功后应立即返回可用的会话 Cookie")
+        self.assertIn("HttpOnly", cookie)
+        self.assertIn("SameSite=Strict", cookie)
+        cookie = cookie.split(";", 1)[0]
+        status, session, _ = self.request("/api/session", cookie=cookie)
+        self.assertEqual((status, session["user"]), (200, "register-session"))
+        self.assertEqual(registration, session)
+        self.assertEqual(self.request("/api/tools", cookie=cookie, marker=session["marker"])[:2],
+                         (200, {"items": [], "latest": None}))
+
     def test_owner_scope_and_revision(self):
         for name in ("owner-one", "owner-two"):
             self.assertEqual(self.register(name, self.store.create_invite())[0], 201)

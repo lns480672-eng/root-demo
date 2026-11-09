@@ -1894,15 +1894,20 @@ html&gt;body{padding:0}&lt;/style&gt;
     #root-idea-flow [data-guide-focus=&quot;true&quot;] { outline: 2px solid var(--blue); outline-offset: 3px; }
     #root-idea-flow .item { padding: 9px 0; border-top: 1px solid var(--line); }
     #root-idea-flow .item label { display: inline-flex; align-items: center; gap: 7px; }
+    #root-idea-flow .source-table { width: 100%; table-layout: fixed; border-collapse: collapse; margin-top: 8px; text-align: left; }
+    #root-idea-flow .source-table :is(th, td) { padding: 7px 4px; border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }
+    #root-idea-flow .review { margin: 0 0 10px; align-items: center; }
+    #root-idea-flow [data-tool-source] { margin-top: 6px; }
     #root-idea-flow input[type=&quot;checkbox&quot;] { accent-color: var(--blue); }
     #root-idea-flow input[type=&quot;number&quot;] { width: 6em; }
     @media (max-width: 620px) { #root-idea-flow .layout { grid-template-columns: 1fr; margin-top: 15px; } }
     @media (pointer: coarse) { #root-idea-flow button, #root-idea-flow select { min-height: 44px; } #root-idea-flow textarea { font-size: 16px; } }
   &lt;/style&gt;
+  &lt;div class=&quot;templates review&quot; aria-label=&quot;评审状态&quot;&gt;&lt;span class=&quot;muted&quot;&gt;评审入口&lt;/span&gt;&lt;button type=&quot;button&quot; data-review=&quot;signup&quot; aria-pressed=&quot;true&quot; class=&quot;cursor-interaction&quot;&gt;刚注册成功&lt;/button&gt;&lt;button type=&quot;button&quot; data-review=&quot;login&quot; aria-pressed=&quot;false&quot; class=&quot;cursor-interaction&quot;&gt;已有账号登录&lt;/button&gt;&lt;/div&gt;
   &lt;div class=&quot;shell&quot; data-product&gt;
     &lt;header&gt;
       &lt;div class=&quot;brand&quot;&gt;&lt;strong&gt;ROOT&lt;/strong&gt;&lt;span class=&quot;dot&quot; aria-hidden=&quot;true&quot;&gt;&lt;/span&gt;&lt;span class=&quot;muted&quot;&gt;工具工作台&lt;/span&gt;&lt;/div&gt;
-      &lt;nav aria-label=&quot;工作台功能&quot;&gt;&lt;button type=&quot;button&quot; data-go=&quot;home&quot; class=&quot;cursor-interaction&quot;&gt;新建工具&lt;/button&gt; &lt;button type=&quot;button&quot; data-go=&quot;idea&quot; class=&quot;cursor-interaction&quot;&gt;需求助手&lt;/button&gt; &lt;button type=&quot;button&quot; data-go=&quot;library&quot; class=&quot;cursor-interaction&quot;&gt;我的工具&lt;/button&gt;&lt;/nav&gt;
+      &lt;nav aria-label=&quot;工作台功能&quot;&gt;&lt;button type=&quot;button&quot; data-go=&quot;home&quot; class=&quot;cursor-interaction&quot;&gt;新建工具&lt;/button&gt; &lt;button type=&quot;button&quot; data-go=&quot;idea&quot; class=&quot;cursor-interaction&quot;&gt;需求助手&lt;/button&gt; &lt;button type=&quot;button&quot; data-go=&quot;library&quot; class=&quot;cursor-interaction&quot;&gt;我的工具&lt;/button&gt; &lt;button type=&quot;button&quot; data-guide-start class=&quot;cursor-interaction&quot;&gt;新手引导&lt;/button&gt;&lt;/nav&gt;
     &lt;/header&gt;
     &lt;div class=&quot;actions guide&quot; data-guide hidden&gt;&lt;p data-guide-copy aria-live=&quot;polite&quot;&gt;&lt;/p&gt;&lt;button type=&quot;button&quot; class=&quot;cursor-interaction&quot; data-guide-toggle&gt;跳过引导&lt;/button&gt;&lt;/div&gt;
     &lt;div class=&quot;layout full&quot; data-layout&gt;
@@ -1966,10 +1971,24 @@ html&gt;body{padding:0}&lt;/style&gt;
           &lt;div class=&quot;actions&quot;&gt;&lt;button type=&quot;button&quot; data-go=&quot;idea&quot; class=&quot;cursor-interaction&quot;&gt;分析新想法&lt;/button&gt;&lt;/div&gt;
         &lt;/section&gt;
         &lt;section data-screen=&quot;table&quot; hidden&gt;
-          &lt;p class=&quot;kicker&quot;&gt;表格导入 / 确认&lt;/p&gt;&lt;h2&gt;交付跟进表&lt;/h2&gt;
-          &lt;p class=&quot;muted&quot;&gt;示例表已识别 4 列、3 条记录。&lt;/p&gt;
-          &lt;div class=&quot;rows&quot;&gt;&lt;div class=&quot;item&quot;&gt;&lt;span&gt;事项、负责人&lt;/span&gt;&lt;span class=&quot;muted&quot;&gt;文本&lt;/span&gt;&lt;/div&gt;&lt;div class=&quot;item&quot;&gt;&lt;span&gt;截止日&lt;/span&gt;&lt;span class=&quot;muted&quot;&gt;日期&lt;/span&gt;&lt;/div&gt;&lt;div class=&quot;item&quot;&gt;&lt;span&gt;状态&lt;/span&gt;&lt;span class=&quot;muted&quot;&gt;选项&lt;/span&gt;&lt;/div&gt;&lt;/div&gt;
-          &lt;div class=&quot;actions&quot;&gt;&lt;button type=&quot;button&quot; data-go=&quot;build&quot; class=&quot;cursor-interaction&quot;&gt;返回&lt;/button&gt;&lt;button type=&quot;button&quot; class=&quot;primary cursor-interaction&quot; data-confirm-table&gt;确认并生成&lt;/button&gt;&lt;/div&gt;
+          &lt;p class=&quot;kicker&quot;&gt;从表格生成 · 1 / 2&lt;/p&gt;&lt;h2&gt;选择表格&lt;/h2&gt;
+          &lt;p class=&quot;muted&quot;&gt;正式版可上传自己的表格。这里可以试用内置示例。&lt;/p&gt;
+          &lt;div class=&quot;problem&quot;&gt;&lt;p class=&quot;kicker&quot;&gt;示例表格&lt;/p&gt;&lt;h3&gt;交付跟进表.xlsx&lt;/h3&gt;&lt;p class=&quot;muted&quot;&gt;记录待办事项、负责人、截止日和状态。&lt;/p&gt;&lt;/div&gt;
+          &lt;div class=&quot;actions&quot;&gt;&lt;button type=&quot;button&quot; data-go=&quot;build&quot; class=&quot;cursor-interaction&quot;&gt;返回&lt;/button&gt;&lt;button type=&quot;button&quot; data-go=&quot;table-review&quot; class=&quot;primary cursor-interaction&quot;&gt;试用示例表格&lt;/button&gt;&lt;/div&gt;
+        &lt;/section&gt;
+        &lt;section data-screen=&quot;table-review&quot; hidden&gt;
+          &lt;p class=&quot;kicker&quot;&gt;从表格生成 · 2 / 2&lt;/p&gt;&lt;h2&gt;确认识别结果&lt;/h2&gt;
+          &lt;div class=&quot;problem&quot;&gt;&lt;p class=&quot;kicker&quot;&gt;输入 · 示例表格&lt;/p&gt;&lt;h3&gt;交付跟进表.xlsx&lt;/h3&gt;&lt;p class=&quot;muted&quot;&gt;识别到 4 个字段、3 条记录&lt;/p&gt;&lt;/div&gt;
+          &lt;table class=&quot;source-table&quot; aria-label=&quot;识别出的记录&quot;&gt;
+            &lt;thead&gt;&lt;tr&gt;&lt;th scope=&quot;col&quot;&gt;事项 · 文本&lt;/th&gt;&lt;th scope=&quot;col&quot;&gt;负责人 · 文本&lt;/th&gt;&lt;th scope=&quot;col&quot;&gt;截止日 · 日期&lt;/th&gt;&lt;th scope=&quot;col&quot;&gt;状态 · 选项&lt;/th&gt;&lt;/tr&gt;&lt;/thead&gt;
+            &lt;tbody&gt;
+              &lt;tr&gt;&lt;td&gt;确认演示范围&lt;/td&gt;&lt;td&gt;小林&lt;/td&gt;&lt;td&gt;11 月 8 日&lt;/td&gt;&lt;td&gt;待完成&lt;/td&gt;&lt;/tr&gt;
+              &lt;tr&gt;&lt;td&gt;准备样例数据&lt;/td&gt;&lt;td&gt;小周&lt;/td&gt;&lt;td&gt;11 月 10 日&lt;/td&gt;&lt;td&gt;待完成&lt;/td&gt;&lt;/tr&gt;
+              &lt;tr&gt;&lt;td&gt;复核体验入口&lt;/td&gt;&lt;td&gt;小陈&lt;/td&gt;&lt;td&gt;11 月 9 日&lt;/td&gt;&lt;td&gt;已完成&lt;/td&gt;&lt;/tr&gt;
+            &lt;/tbody&gt;
+          &lt;/table&gt;
+          &lt;div class=&quot;problem&quot;&gt;&lt;p class=&quot;kicker&quot;&gt;输出 · 建议生成&lt;/p&gt;&lt;h3&gt;交付跟进板&lt;/h3&gt;&lt;p class=&quot;muted&quot;&gt;保留这 3 条记录，在看板里更新完成状态。&lt;/p&gt;&lt;/div&gt;
+          &lt;div class=&quot;actions&quot;&gt;&lt;button type=&quot;button&quot; data-go=&quot;table&quot; class=&quot;cursor-interaction&quot;&gt;返回选择表格&lt;/button&gt;&lt;button type=&quot;button&quot; class=&quot;primary cursor-interaction&quot; data-confirm-table&gt;确认并生成&lt;/button&gt;&lt;/div&gt;
         &lt;/section&gt;
         &lt;section data-screen=&quot;library&quot; hidden&gt;
           &lt;p class=&quot;kicker&quot;&gt;已保存&lt;/p&gt;&lt;h2&gt;我的工具&lt;/h2&gt;
@@ -1984,6 +2003,7 @@ html&gt;body{padding:0}&lt;/style&gt;
       &lt;section class=&quot;panel&quot; aria-label=&quot;工具预览&quot; data-preview-panel hidden&gt;
         &lt;p class=&quot;kicker&quot;&gt;工具预览 · &lt;span data-status aria-live=&quot;polite&quot;&gt;待生成&lt;/span&gt;&lt;/p&gt;&lt;h2 data-preview-title&gt;生成后在这里试用&lt;/h2&gt;
         &lt;p class=&quot;muted&quot; data-empty-preview&gt;可以先从一条需求、一份表格或一个想法开始。&lt;/p&gt;
+        &lt;p class=&quot;muted&quot; data-tool-source hidden&gt;来源 · 示例表格「交付跟进表.xlsx」&lt;/p&gt;
         &lt;div class=&quot;rows&quot; data-preview-content&gt;&lt;/div&gt;
         &lt;details class=&quot;submitted&quot; data-submitted hidden&gt;&lt;summary&gt;本次生成使用的需求&lt;/summary&gt;&lt;p data-submitted-text&gt;&lt;/p&gt;&lt;/details&gt;
         &lt;div class=&quot;actions publish&quot; data-publish hidden&gt;&lt;button type=&quot;button&quot; disabled aria-describedby=&quot;root-publish-limit&quot;&gt;🔒 发布应用&lt;/button&gt;&lt;p class=&quot;muted&quot; id=&quot;root-publish-limit&quot;&gt;应用发布暂未开放。你仍可在工作台使用和保存这个工具。&lt;/p&gt;&lt;/div&gt;
@@ -2038,36 +2058,32 @@ html&gt;body{padding:0}&lt;/style&gt;
       let screen = &#x27;home&#x27;;
       let guideOn = true;
       let triedTool = false;
-      let guideDone = false;
+      let guideTool = null;
       const tools = [];
       const drafts = [];
       function updateGuide() {
         const guide = find(&#x27;[data-guide]&#x27;);
         const copy = find(&#x27;[data-guide-copy]&#x27;);
-        const toggle = find(&#x27;[data-guide-toggle]&#x27;);
         root.querySelectorAll(&#x27;[data-guide-focus]&#x27;).forEach(element =&gt; element.removeAttribute(&#x27;data-guide-focus&#x27;));
         const steps = {
-          home: [&#x27;第 1 步 · 点「快速体验」，先挑一个示例。&#x27;, &#x27;[data-screen=home] [data-go=fast]&#x27;],
+          home: [&#x27;欢迎使用 ROOT。先选一个模板，试着生成你的第一个工具。&#x27;, &#x27;[data-screen=home] [data-go=fast]&#x27;],
           fast: [&#x27;第 2 步 · 选个模板，点「用此模板生成」。也可以先操作样例。&#x27;, &#x27;[data-fast-generate]&#x27;],
-          ready: triedTool
+          ready: !guideTool ? null : triedTool
             ? [&#x27;第 4 步 · 点「打开我的工具」，以后可以从那里找回。&#x27;, &#x27;[data-screen=ready] [data-go=library]&#x27;]
             : [&#x27;第 3 步 · 在右侧改一个数字，或勾选一项。&#x27;, &#x27;[data-preview-content] input&#x27;],
-          library: guideDone
-            ? [&#x27;已完成 · 你已从「我的工具」找回了刚才的工具。&#x27;, null]
-            : [&#x27;第 4 步 · 点一项已保存的工具，检查刚才的操作。&#x27;, &#x27;[data-saved] button&#x27;],
+          library: triedTool &amp;&amp; guideTool ? [&#x27;第 4 步 · 打开刚生成的工具，检查刚才的操作。&#x27;, &#x27;[data-guided-tool]&#x27;] : null,
         };
         const step = steps[screen];
-        guide.hidden = !step;
-        if (!step) return;
-        copy.textContent = guideDone ? &#x27;引导已完成。&#x27; : guideOn ? step[0] : &#x27;首次使用可以打开操作引导。&#x27;;
-        toggle.textContent = guideDone ? &#x27;重新打开引导&#x27; : guideOn ? &#x27;跳过引导&#x27; : &#x27;打开引导&#x27;;
-        if (guideOn &amp;&amp; !guideDone &amp;&amp; step[1]) find(step[1])?.setAttribute(&#x27;data-guide-focus&#x27;, &#x27;true&#x27;);
+        guide.hidden = !guideOn || !step;
+        if (guide.hidden) return;
+        copy.textContent = step[0];
+        find(step[1])?.setAttribute(&#x27;data-guide-focus&#x27;, &#x27;true&#x27;);
       }
 
       function show(nextScreen) {
         screen = nextScreen;
         root.querySelectorAll(&#x27;[data-screen]&#x27;).forEach(panel =&gt; { panel.hidden = panel.dataset.screen !== screen; });
-        const full = [&#x27;idea&#x27;, &#x27;directions&#x27;, &#x27;question&#x27;, &#x27;brief&#x27;, &#x27;drafts&#x27;].includes(screen);
+        const full = [&#x27;idea&#x27;, &#x27;directions&#x27;, &#x27;question&#x27;, &#x27;brief&#x27;, &#x27;drafts&#x27;, &#x27;table&#x27;, &#x27;table-review&#x27;].includes(screen);
         find(&#x27;[data-layout]&#x27;).classList.toggle(&#x27;full&#x27;, full);
         find(&#x27;[data-preview-panel]&#x27;).hidden = full;
         updateGuide();
@@ -2077,6 +2093,7 @@ html&gt;body{padding:0}&lt;/style&gt;
         find(&#x27;[data-status]&#x27;).textContent = &#x27;已就绪&#x27;;
         find(&#x27;[data-preview-title]&#x27;).textContent = tool.title;
         find(&#x27;[data-empty-preview]&#x27;).hidden = true;
+        find(&#x27;[data-tool-source]&#x27;).hidden = !tool.imported;
         find(&#x27;[data-submitted]&#x27;).hidden = !tool.request;
         find(&#x27;[data-submitted-text]&#x27;).textContent = tool.request;
         find(&#x27;[data-publish]&#x27;).hidden = false;
@@ -2121,18 +2138,22 @@ html&gt;body{padding:0}&lt;/style&gt;
       function generate(kind, imported = false, request = &#x27;&#x27;, example = null) {
         if (running) return;
         running = true;
+        const guided = guideOn &amp;&amp; screen === &#x27;fast&#x27;;
         find(&#x27;[data-status]&#x27;).textContent = &#x27;生成中&#x27;;
         setTimeout(() =&gt; {
-          const tool = { title: example?.title || templates[kind][0], content: createContent(kind, imported, example), request };
+          const tool = { title: example?.title || templates[kind][0], content: createContent(kind, imported, example), request, imported };
           tools.push(tool);
           const item = document.createElement(&#x27;button&#x27;);
           item.type = &#x27;button&#x27;;
           item.className = &#x27;cursor-interaction&#x27;;
           item.textContent = tool.title;
           item.addEventListener(&#x27;click&#x27;, () =&gt; {
-            guideDone = true;
+            if (tool === guideTool &amp;&amp; triedTool) guideOn = false;
             showTool(tool);
           });
+          find(&#x27;[data-guided-tool]&#x27;)?.removeAttribute(&#x27;data-guided-tool&#x27;);
+          guideTool = guided ? tool : null;
+          if (guided) item.setAttribute(&#x27;data-guided-tool&#x27;, &#x27;&#x27;);
           saved.append(item);
           find(&#x27;[data-empty-list]&#x27;).hidden = tools.length &gt; 0;
           triedTool = false;
@@ -2146,15 +2167,21 @@ html&gt;body{padding:0}&lt;/style&gt;
         show(button.dataset.go);
       }));
       find(&#x27;[data-guide-toggle]&#x27;).addEventListener(&#x27;click&#x27;, () =&gt; {
-        if (guideDone) {
-          guideDone = false;
-          guideOn = true;
-          show(&#x27;home&#x27;);
-          return;
-        }
-        guideOn = !guideOn;
+        guideOn = false;
         updateGuide();
       });
+      function enterWorkspace(withGuide) {
+        guideOn = withGuide;
+        guideTool = null;
+        triedTool = false;
+        show(&#x27;home&#x27;);
+      }
+      find(&#x27;[data-guide-start]&#x27;).addEventListener(&#x27;click&#x27;, () =&gt; enterWorkspace(true));
+      const reviewButtons = root.querySelectorAll(&#x27;[data-review]&#x27;);
+      reviewButtons.forEach(button =&gt; button.addEventListener(&#x27;click&#x27;, () =&gt; {
+        reviewButtons.forEach(option =&gt; option.setAttribute(&#x27;aria-pressed&#x27;, String(option === button)));
+        enterWorkspace(button.dataset.review === &#x27;signup&#x27;);
+      }));
       preview.addEventListener(&#x27;input&#x27;, () =&gt; {
         if (screen === &#x27;ready&#x27;) {
           triedTool = true;

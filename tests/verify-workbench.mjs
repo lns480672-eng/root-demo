@@ -142,6 +142,7 @@ try {
     callback?.(reply);
   }
   socket = await connectBrowser(profile);
+  const coverageSources = ['/workbench.js', '/entry.js'];
   const coverage = [];
   async function startCoverage() {
     if (!collectCoverage) return;
@@ -151,12 +152,12 @@ try {
   async function sampleCoverage() {
     if (!collectCoverage) return;
     const { result } = await cdp('Profiler.takePreciseCoverage');
-    coverage.push(...result.filter(script => script.url === base + '/workbench.js'));
+    coverage.push(...result.filter(script => coverageSources.some(source => script.url === base + source)));
   }
   if (collectCoverage) writeCoverage = async () => {
     await sampleCoverage();
     await writeFile(join(artifacts, 'host-js-coverage.json'), JSON.stringify({
-      build: evidence.build, source: '/workbench.js', format: 'CDP detailed V8 ranges', samples: coverage,
+      build: evidence.build, sources: coverageSources, format: 'CDP detailed V8 ranges', samples: coverage,
     }, null, 2) + '\n');
   };
   await startCoverage();
@@ -299,16 +300,21 @@ try {
     await type('#username', username);
     if (register) {
       await click('#auth-mode');
-      await type('#password', password);
       await type('#invite', invite);
-      await click('#auth-submit');
-      await until(() => evaluate('document.querySelector("#auth-status").textContent === "注册成功，请登录。"'));
+      await evaluate('window.fixtureRegistrationDocument = true;');
     }
     await type('#password', password);
     await sampleCoverage();
     await click('#auth-submit');
-    await until(() => evaluate(`document.documentElement.dataset.ready === "true" &&
-      !document.querySelector("#workspace").hidden && document.querySelector("#account-name").textContent === ${JSON.stringify(username)}`));
+    await until(async () => {
+      if (register) {
+        assert.notEqual(await evaluate('document.querySelector("#auth-status").textContent'), '注册成功，请登录。',
+          '提交注册后应直接进入工作台，无需另行登录');
+      }
+      return evaluate(`document.documentElement.dataset.ready === "true" &&
+        !document.querySelector("#workspace").hidden && document.querySelector("#account-name").textContent === ${JSON.stringify(username)}`);
+    });
+    if (register) assert.equal(await evaluate('window.fixtureRegistrationDocument'), true, '首次引导应从同一注册页面进入');
   }
 
   async function logout() {
@@ -459,14 +465,36 @@ try {
     for (const selector of ['#quick-entry', '#direct-entry', '#idea-entry']) {
       assert.equal(await visible(selector), true, `首页入口应可见 ${selector}`);
     }
-    await waitGuide(/快速体验/);
-    await click('#guide-skip');
-    assert.equal(await visible('#workspace-guide'), false);
+    const welcome = '欢迎使用 ROOT。先选一个模板，试着生成你的第一个工具。';
+    await waitGuide(/快速体验|欢迎使用 ROOT/);
+    const firstWelcome = await guideCopy();
+
+    stage = 'guide auto-opens only after registration and stays closed on later login';
+    await sampleCoverage();
     await cdp('Page.reload', { ignoreCache: true });
     await until(() => evaluate('document.documentElement.dataset.ready === "true"'));
-    assert.equal(await visible('#workspace-guide'), false, '跳过引导后重新进入不应自动打开');
+    assert.equal(await visible('#workspace-guide'), false, '首次未完成时重新进入也不应自动打开');
+    const primary = socket;
+    socket = await connectBrowser(join(root, 'chrome-guide-independent'));
+    await startCoverage();
+    await cdp('Page.enable');
+    await cdp('Page.navigate', { url: base });
+    await login(accountA);
+    assert.equal(await visible('#workspace-guide'), false, '同账号换浏览器登录时，未完成引导也不应自动打开');
     await click('#guide-start');
-    await waitGuide(/快速体验/);
+    await waitGuide(/^欢迎使用 ROOT/);
+    assert.equal(await guideCopy(), welcome);
+    await logout();
+    await login(accountB, true);
+    await waitGuide(/^欢迎使用 ROOT/);
+    assert.equal(await guideCopy(), welcome, '另一个新账号应在注册成功后收到同样的首次引导');
+    await click('#guide-skip');
+    assert.equal(await visible('#workspace-guide'), false);
+    await sampleCoverage();
+    socket = primary;
+    assert.equal(firstWelcome, welcome);
+    await click('#guide-start');
+    await waitGuide(/^欢迎使用 ROOT/);
 
     stage = 'three local samples are usable without upstream calls or saved tools';
     const generatedDirectories = async () => (await readdir(join(root, 'runs'))).filter(name => name.startsWith('run-')).sort();
@@ -582,7 +610,8 @@ try {
   assert.match(await evaluate('document.querySelector("#list").innerText', restored.context), /星际旅行手记/);
   if (entryFlow) {
     assert.equal(await visible('#workspace-guide'), false, '完成引导后重新进入不应自动打开');
-    evidence.tests.push({ id: 'TEST-016', result: 'passed', skippedAndReopened: true, sampleDidNotAdvance: true,
+    evidence.tests.push({ id: 'TEST-016', result: 'passed', autoShownOncePerAccountAcrossBrowsers: true,
+      secondFreshAccountShown: true, skippedAndReopened: true, sampleDidNotAdvance: true,
       trustedPreviewOperation: true, foundSameTool: true, dismissedAfterReload: true });
   }
   evidence.tests.push({ id: 'TEST-002', result: 'passed', tool: first.id, record: sample,
@@ -1077,7 +1106,7 @@ try {
       stage = 'same-browser account switch and direct tool authorization';
       const oldMarker = await evaluate('session.marker');
       await logout();
-      await login(accountB, true);
+      await login(accountB, !entryFlow);
       assert.deepEqual((await library()).items, []);
       assert.equal(await evaluate('document.querySelectorAll("#preview iframe").length'), 0);
       assert.equal((await appRequest('/api/tools/' + first.id)).status, 404);

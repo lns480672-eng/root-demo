@@ -153,13 +153,13 @@ stage3_publish_recovery:
   handoff: runs/stage3-publish-fix/handoff.json
 
 entry_checkpoint:
-  scope: [AC-011, AC-015, AC-016]
+  scope: [AC-011, AC-015, AC-016, AC-004 注册直达]
   baseline_commit: 74f4b5b
-  build: v4-6bf99d98e553
+  build: v4-9393fb53a4d3
   entry: "http://127.0.0.1:8779/"
   strategy_boxes_used: 1
-  red: runs/workbench-entry/red-entry-flow/workbench-check.json
-  oracle: "样例可操作且零模型请求，明确提交才生成；发布禁用；引导随真实操作推进并可跳过及重开"
-  evidence: runs/workbench-entry/final/开发自测.md
-  handoff: runs/workbench-entry/final/handoff.json
+  red: [runs/workbench-entry/red-entry-flow/workbench-check.json, runs/workbench-entry/guide-registration/red-http.log]
+  oracle: "样例可操作且零模型请求，明确提交才生成；发布禁用；注册直达，同一账号后续登录不重弹引导"
+  evidence: runs/workbench-entry/registration-final/开发自测.md
+  handoff: runs/workbench-entry/registration-final/handoff.json
   separate_g1_review: runs/workbench-entry/g1-需求助手与草稿.md
