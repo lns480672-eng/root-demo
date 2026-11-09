@@ -32,11 +32,11 @@ https://127.0.0.1:{$ROOT_LOCAL_PORT} {
 		method POST
 		not header Content-Length *
 	}
-	@oversized expression `{method} == 'POST' && {http.request.header.Content-Length} != '' && int({http.request.header.Content-Length}) > (path('/api/table/inspect') ? {$ROOT_LOCAL_INSPECT_LIMIT:6356992} : (path('/api/table/generate', '/api/tools/*', '/api/staged/*/publish') ? 16777216 : 16000))`
+	@oversized expression `{method} == 'POST' && {http.request.header.Content-Length} != '' && int({http.request.header.Content-Length}) > (path('/api/table/inspect') ? {$ROOT_LOCAL_INSPECT_LIMIT:6356992} : (path('/api/table/generate', '/api/tools/*', '/api/staged/*/publish', '/api/staged/*/verify-preview') ? 16777216 : 16000))`
 	@table_inspect path /api/table/inspect
-	@tool_write path /api/table/generate /api/tools/* /api/staged/*/publish
+	@tool_write path /api/table/generate /api/tools/* /api/staged/*/publish /api/staged/*/verify-preview
 	@standard {
-		not path /api/table/inspect /api/table/generate /api/tools/* /api/staged/*/publish
+		not path /api/table/inspect /api/table/generate /api/tools/* /api/staged/*/publish /api/staged/*/verify-preview
 	}
 
 	route {

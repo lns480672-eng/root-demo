@@ -10,6 +10,8 @@
 !/workbench-harness.yaml
 !/generate.py
 !/staged_website.py
+!/runtime_verify.py
+!/runtime-verify.mjs
 !/assistant_fixture.py
 !/assistant_model.py
 !/trial_budget.py
@@ -48,6 +50,7 @@
 /tests/*
 !/tests/fixtures.py
 !/tests/verify-workbench.mjs
+!/tests/test_runtime_verify.py
 !/tests/verify-demo-site.mjs
 !/tests/demo_site_fixture.py
 !/tests/verify-site.mjs

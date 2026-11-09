@@ -70,6 +70,8 @@ def stages(stage, requirement, prior, key, admit, record):
     if requirement.startswith("计算"):
         content = {"kind":"program","title":"加法计算器","goal":"计算两数和"} if stage == "spec" else {
             "markup":'<p id="answer"></p>', "script":'document.querySelector("#answer").textContent="5";'}
+        if stage == "implementation" and requirement.endswith("启动失败探针"):
+            content["script"] = 'throw new Error("synthetic startup failure");'
         record({"stage":stage,"status":"ok","dispatched":True})
         return json.dumps(content).encode()
     if requirement.startswith("登记"):
@@ -126,10 +128,39 @@ def revise(stage, requirement, prior, key, admit, record, *, base):
             ]})}
         with patch.object(assistant_model, "_exchange", exchange):
             return staged_revision.provide(stage, requirement, prior, key, admit, record, base=base)
+    if base["kind"] == "ledger":
+        def exchange(payload, dispatch, **kwargs):
+            dispatch()
+            if stage == "filters":
+                old = base["source"]["filters"]
+                result = {**old, "exact":[*old["exact"], "count"]}
+            elif "错删功能台账" in requirement:
+                result = {**base["source"]["spec"], "kind":"ledger", "title":"错删功能台账", "modules":[]}
+            elif "标题" in requirement:
+                result = {"title":"新版设备台账"}
+            elif "CSV" in requirement:
+                result = {"removeCsv":True}
+            else:
+                result = {"addFilter":True}
+            return {"status": 200, "body": json.dumps({"choices": [
+                {"finish_reason":"stop", "message":{"content":json.dumps(result, ensure_ascii=False)}}
+            ]})}
+        with patch.object(assistant_model, "_exchange", exchange):
+            return staged_revision.provide(stage, requirement, prior, key, admit, record, base=base)
     return stages(stage, requirement, prior, key, admit, record)
 
+def verify_runtime(html, entries, *, backup, storage_limit):
+    if b'throw new Error("synthetic startup failure");' in html:
+        raise ApiError(422, "staged_runtime_failed", "固定替身检测到启动失败")
+    if entries == [["result", "verify-late"]]:
+        (runs / "verify-waiting").touch()
+        deadline = time.monotonic() + 4
+        while not (runs / "verify-go").exists() and time.monotonic() < deadline:
+            time.sleep(.01)
+
 workbench.serve("fixture-key", 0, runs, staged_enabled=True, staged_provider=stages,
-                staged_revision_provider=revise, generation_limits=(5, 100), admin_usernames=("staged-operator",))
+                staged_revision_provider=revise, staged_runtime_verifier=verify_runtime,
+                generation_limits=(5, 100), admin_usernames=("staged-operator",))
 """
 
 
@@ -188,6 +219,9 @@ class StagedHTTPFixture(unittest.TestCase):
     def gen(self, auth, requirement, request=None):
         return self.request("/api/generate", {"requirement":requirement, "requestId":request or uuid4().hex}, auth)
 
+    def assert_preview_verified(self, path, payload, auth):
+        self.assertEqual(self.request(path + "/verify-preview", payload, auth)[:2], (200, {"verified":True}))
+
     def wait_task(self, auth, task, state):
         deadline = time.monotonic() + 10
         path = "/api/staged/" + task
@@ -227,6 +261,7 @@ class StagedReconnectHTTP(StagedHTTPFixture):
         self.assertEqual(status, 200)
         payload = {**candidate["staged"], "toolId":candidate["id"], "entries":[["calculation", "5"]]}
         tool_path = "/api/tools/" + candidate["id"]
+        self.assert_preview_verified(path, payload, owner)
 
         # Keep the response unread while another client observes the committed result.
         with closing(HTTPConnection(urlsplit(self.base).netloc, timeout=5)) as connection:
@@ -260,6 +295,161 @@ class StagedReconnectHTTP(StagedHTTPFixture):
 
 
 class StagedHTTP(StagedHTTPFixture):
+    def test_runtime_proof_is_bound_to_the_candidate_snapshot_and_nonce(self):
+        owner = self.account("runtime-proof-owner")
+        other = self.account("runtime-proof-other")
+        before = self.request("/api/trial", auth=owner)[1]["generation"]["used"]
+        status, response, _ = self.gen(owner, "计算两数之和，验证运行门禁")
+        self.assertEqual(status, 202)
+        task = response["task"]["id"]
+        self.wait_task(owner, task, "complete")
+        path = "/api/staged/" + task
+        status, candidate, _ = self.request(path + "/candidate", {}, owner)
+        self.assertEqual(status, 200)
+        payload = {**candidate["staged"], "toolId":candidate["id"], "entries":[["result", "5"]]}
+        self.assertEqual(self.request(path + "/verify-preview", payload, other)[0], 404)
+        bad_digest = {**payload, "sha256":"0" * 64}
+        self.assertEqual(self.request(path + "/verify-preview", bad_digest, owner)[0], 409)
+        status, body, _ = self.request(path + "/publish", payload, owner)
+        self.assertEqual((status, body.get("code")), (409, "staged_runtime_required"))
+        self.assert_preview_verified(path, payload, owner)
+
+        altered = {**payload, "entries":[["result", "9"]]}
+        status, body, _ = self.request(path + "/publish", altered, owner)
+        self.assertEqual((status, body.get("code")), (409, "staged_runtime_required"))
+        late = {**payload, "entries":[["result", "verify-late"]]}
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            verification = pool.submit(self.request, path + "/verify-preview", late, owner)
+            waiting = self.runs / "verify-waiting"
+            deadline = time.monotonic() + 3
+            try:
+                while not waiting.exists() and time.monotonic() < deadline:
+                    time.sleep(.01)
+                self.assertTrue(waiting.exists())
+                self.assertEqual(self.request(path + "/resolve-publish", {"nonce":payload["nonce"]}, owner)[:2],
+                                 (200, {"applied":False}))
+            finally:
+                (self.runs / "verify-go").touch()
+            status, body, _ = verification.result()
+            self.assertEqual((status, body.get("code")), (409, "staged_candidate_changed"))
+        current = self.request(path + "/candidate", {}, owner)[1]
+        self.assertNotEqual(current["staged"]["nonce"], payload["nonce"])
+        self.assertEqual(self.request(path + "/publish", payload, owner)[1]["code"], "staged_candidate_changed")
+        payload.update(current["staged"])
+        status, body, _ = self.request(path + "/publish", payload, owner)
+        self.assertEqual((status, body.get("code")), (409, "staged_runtime_required"))
+        self.assertEqual(self.request("/api/tools", auth=owner)[1]["items"], [])
+        self.assertEqual(self.request("/api/trial", auth=owner)[1]["generation"]["used"], before)
+
+        self.assert_preview_verified(path, payload, owner)
+        status, saved, _ = self.request(path + "/publish", payload, owner)
+        self.assertEqual(status, 200)
+        self.assertEqual(saved["entries"], payload["entries"])
+        self.assertEqual(self.request(path + "/publish", payload, owner)[:2], (200, saved))
+        versions = self.request("/api/tools/" + candidate["id"] + "/versions", auth=owner)[1]
+        self.assertEqual([item["version"] for item in versions["items"]], [1])
+        self.assertEqual(self.request("/api/trial", auth=owner)[1]["generation"]["used"], before + 1)
+
+    def test_runtime_failure_does_not_publish_or_charge_the_candidate(self):
+        owner = self.account("runtime-failure-owner")
+        before = self.request("/api/trial", auth=owner)[1]["generation"]["used"]
+        status, response, _ = self.gen(owner, "计算两个数字，启动失败探针")
+        self.assertEqual(status, 202)
+        task = response["task"]["id"]
+        self.wait_task(owner, task, "complete")
+        path = "/api/staged/" + task
+        status, candidate, _ = self.request(path + "/candidate", {}, owner)
+        self.assertEqual(status, 200)
+        self.assertIn('throw new Error("synthetic startup failure");', candidate["html"])
+        payload = {**candidate["staged"], "toolId":candidate["id"], "entries":[]}
+        status, body, _ = self.request(path + "/verify-preview", payload, owner)
+        self.assertEqual((status, body.get("code")), (422, "staged_runtime_failed"))
+        status, body, _ = self.request(path + "/publish", payload, owner)
+        self.assertEqual((status, body.get("code")), (409, "staged_runtime_required"))
+        self.assertEqual(self.request("/api/tools", auth=owner)[1]["items"], [])
+        self.assertEqual(self.request("/api/tools/" + candidate["id"], auth=owner)[0], 404)
+        self.assertEqual(self.request("/api/trial", auth=owner)[1]["generation"]["used"], before)
+
+    def test_ledger_local_revisions_preserve_the_other_modules(self):
+        """ROOT-REV-IA-01 / CHG-027 through generation, candidate verification, and publication."""
+        owner = self.account("ledger-revision-scope")
+        status, response, _ = self.gen(owner, "设备台账，需要筛选、统计与 CSV 导出。")
+        self.assertEqual(status, 202)
+        task = response["task"]["id"]
+        path = "/api/staged/" + task
+        self.wait_task(owner, task, "failed")
+        self.assertEqual(self.request(path + "/resume", {}, owner)[0], 202)
+        self.wait_task(owner, task, "complete")
+        status, initial, _ = self.request(path + "/candidate", {}, owner)
+        self.assertEqual(status, 200)
+        entries = [["root-structured-records-v1", json.dumps([
+            {"id":1, "name":"设备甲", "count":3, "status":"待处理"},
+        ], ensure_ascii=False)]]
+        tool = "/api/tools/" + initial["id"]
+
+        def config(snapshot):
+            return json.loads(re.search(r"const config = (.+);", snapshot["html"]).group(1))
+
+        def publish(candidate_path, candidate):
+            payload = {**candidate["staged"], "toolId":candidate["id"], "entries":entries}
+            if "runId" in candidate:
+                payload.update(runId=candidate["runId"], revision=candidate["revision"])
+            self.assert_preview_verified(candidate_path, payload, owner)
+            status, saved, _ = self.request(candidate_path + "/publish", payload, owner)
+            self.assertEqual(status, 200)
+            self.assertEqual((saved["id"], saved["entries"]), (initial["id"], entries))
+            return saved
+
+        def revision_path(requirement, version, state):
+            status, response, _ = self.request(tool + "/revise", {
+                "requirement":requirement, "version":version, "requestId":uuid4().hex,
+            }, owner)
+            self.assertEqual(status, 202)
+            identifier = response["task"]["id"]
+            self.wait_task(owner, identifier, state)
+            return "/api/staged/" + identifier
+
+        def successful_revision(requirement, current_version):
+            candidate_path = revision_path(requirement, current_version, "complete")
+            status, candidate, _ = self.request(candidate_path + "/candidate", {}, owner)
+            self.assertEqual(status, 200)
+            saved = publish(candidate_path, candidate)
+            self.assertEqual(saved["version"], current_version + 1)
+            return config(saved)
+
+        original = publish(path, initial)
+        original_config = config(original)
+        self.assertEqual(original_config["filters"]["search"], ["name"])
+        self.assertEqual(original_config["summary"]["sum"]["field"], "count")
+        self.assertEqual(original_config["export"]["columns"], ["name", "count", "status"])
+        before = self.request("/api/trial", auth=owner)[1]["generation"]["used"]
+        failed = revision_path("只把标题改成错删功能台账，保留筛选、统计和 CSV 导出", 1, "unsupported")
+        self.assertEqual(self.request(failed + "/candidate", {}, owner)[0], 409)
+        self.assertEqual(self.request(tool, auth=owner)[1]["html"], original["html"])
+        self.assertEqual(self.request(tool, auth=owner)[1]["version"], 1)
+        self.assertEqual(self.request("/api/trial", auth=owner)[1]["generation"]["used"], before)
+
+        renamed = successful_revision("只把标题改成新版设备台账，保留筛选、统计和 CSV 导出", 1)
+        self.assertEqual(renamed["spec"]["title"], "新版设备台账")
+        self.assertEqual(self.request("/api/tools", auth=owner)[1]["items"][0]["title"], "新版设备台账")
+        for module in ("entry", "filters", "summary", "export"):
+            self.assertEqual(renamed[module], original_config[module])
+
+        without_csv = successful_revision("只移除 CSV 导出，其他功能保持不变", 2)
+        self.assertEqual(without_csv["export"], {"columns":[], "label":None})
+        for module in ("entry", "filters", "summary"):
+            self.assertEqual(without_csv[module], renamed[module])
+
+        added_filter = successful_revision("增加数量精确筛选，保留原有功能", 3)
+        self.assertEqual(added_filter["filters"], {
+            **without_csv["filters"], "exact":[*without_csv["filters"]["exact"], "count"],
+        })
+        for module in ("entry", "summary", "export"):
+            self.assertEqual(added_filter[module], without_csv[module])
+        history = self.request(tool + "/versions", auth=owner)[1]
+        self.assertEqual([item["version"] for item in history["items"]], [4, 3, 2, 1])
+        self.assertEqual(self.request("/api/trial", auth=owner)[1]["generation"]["used"], before + 3)
+
     def test_generation_category_is_part_of_the_request_identity(self):
         auth = self.account("generation-category")
         path = "/api/generate"
@@ -314,6 +504,7 @@ class StagedHTTP(StagedHTTPFixture):
                 self.assertEqual(status, 200)
                 self.assertEqual(candidate.get("stagedBackup", False), backup)
                 payload = {**candidate["staged"], "toolId":candidate["id"], "entries":[]}
+                self.assert_preview_verified(path, payload, owner)
                 self.assertEqual(self.request(path + "/publish", payload, owner)[0], 200)
                 after = self.request("/api/trial", auth=owner)[1]["generation"]
                 self.assertEqual(after["used"] - before["used"], 1)
@@ -378,6 +569,7 @@ class StagedHTTP(StagedHTTPFixture):
         self.assertEqual(self.request(path + "/publish", large, owner)[1]["code"], "tool_quota")
         self.assertFalse(self.request("/api/tools", auth=owner)[1]["items"])
         self.assertEqual(self.request(path + "/publish", data, other)[0], 404)
+        self.assert_preview_verified(path, data, owner)
         failed_path = self.runs / candidate["id"] / "app.pending"
         if failed_path.exists():
             failed_path.unlink()
@@ -418,6 +610,7 @@ class StagedHTTP(StagedHTTPFixture):
         path = "/api/staged/" + first
         candidate = self.request(path + "/candidate", {}, owner)[1]
         initial = {**candidate["staged"], "toolId":candidate["id"], "entries":[["history","persisted-marker"]]}
+        self.assert_preview_verified(path, initial, owner)
         self.assertEqual(self.request(path + "/publish", initial, owner)[0], 200)
         tool = "/api/tools/" + candidate["id"]
         data = {"requirement":"计算两个数并展示结果的运算历史", "version":1, "requestId":uuid4().hex}
@@ -436,15 +629,19 @@ class StagedHTTP(StagedHTTPFixture):
         self.assertEqual(revised["entries"], [["history","persisted-marker"]])
         self.assertNotEqual(revised["runId"], revised["id"])
         self.assertEqual(self.request(tool + "/versions", auth=owner)[1]["current"], 1)
-        changes = [["history","persisted-marker"],["new","written while generating"]]
-        self.assertEqual(self.request(tool + "/data", {"entries":changes,"revision":1,"version":1}, owner)[0], 200)
         payload = {**revised["staged"], "toolId":revised["id"], "runId":revised["runId"],
                    "entries":revised["entries"], "revision":revised["revision"]}
+        self.assert_preview_verified(rev_path, payload, owner)
+        changes = [["history","persisted-marker"],["new","written while generating"]]
+        self.assertEqual(self.request(tool + "/data", {"entries":changes,"revision":1,"version":1}, owner)[0], 200)
         self.assertEqual(self.request(rev_path + "/publish", payload, owner)[1]["code"], "revision_conflict")
         newest = self.request(rev_path + "/candidate", {}, owner)[1]
         self.assertEqual(newest["staged"], revised["staged"])
         self.assertEqual(newest["entries"], changes)
         payload.update(revision=newest["revision"], entries=newest["entries"])
+        status, body, _ = self.request(rev_path + "/publish", payload, owner)
+        self.assertEqual((status, body.get("code")), (409, "staged_runtime_required"))
+        self.assert_preview_verified(rev_path, payload, owner)
         published = self.request(rev_path + "/publish", payload, owner)
         self.assertEqual(published[0], 200)
         self.assertEqual((published[1]["id"], published[1]["version"], published[1]["entries"]),
@@ -512,6 +709,7 @@ class StagedHTTP(StagedHTTPFixture):
             self.assertNotIn("private-row", candidate["html"])
             data = {**candidate["staged"], "toolId": candidate["id"], "runId": candidate["runId"],
                     "entries": candidate["entries"], "revision": candidate["revision"]}
+            self.assert_preview_verified(path, data, owner)
             status, saved, _ = self.request(path + "/publish", data, owner)
             self.assertEqual(status, 200)
             self.assertEqual(self.request(path + "/publish", data, owner)[1], saved)
@@ -628,7 +826,7 @@ class StagedHTTP(StagedHTTPFixture):
                 db.execute("""INSERT INTO staged_jobs(id,owner,request_id,requirement,head,expires,state)
                               VALUES (?,?,?,?,?,?,'published')""",
                            (task, account_id, task, "历史需求", commit, 1))
-                db.execute("INSERT INTO staged_candidates VALUES (?,?,?,?,?)",
+                db.execute("INSERT INTO staged_candidates(task,tool_id,commit_id,digest,nonce) VALUES (?,?,?,?,?)",
                            (task, run_id, commit, hashlib.sha256(content).hexdigest(), uuid4().hex))
 
         path = "/api/tools/" + tool_id + "/versions"
@@ -657,6 +855,7 @@ class StagedHTTP(StagedHTTPFixture):
         nonce = first["staged"]["nonce"]
         self.assertEqual(self.request(path + "/resolve-publish", {"nonce":nonce}, other)[0], 404)
         payload = {**first["staged"], "toolId":first["id"], "entries":[["late", "test"]]}
+        self.assert_preview_verified(path, payload, owner)
         with ThreadPoolExecutor(max_workers=1) as pool:
             late = pool.submit(self.request, path + "/publish", payload, owner)
             try:
@@ -675,8 +874,9 @@ class StagedHTTP(StagedHTTPFixture):
         self.assertNotEqual(current["staged"]["nonce"], nonce)
         self.assertEqual(self.request(path + "/resolve-publish", {"nonce":nonce}, owner)[1], {"applied":False})
         self.assertEqual(self.request(path + "/candidate", {}, owner)[1], current)
-        status, saved, _ = self.request(path + "/publish",
-                                       {**current["staged"], "toolId":current["id"], "entries":[]}, owner)
+        payload = {**current["staged"], "toolId":current["id"], "entries":[]}
+        self.assert_preview_verified(path, payload, owner)
+        status, saved, _ = self.request(path + "/publish", payload, owner)
         self.assertEqual(status, 200)
         self.assertEqual(self.request(path + "/resolve-publish", {"nonce":current["staged"]["nonce"]}, owner)[1],
                          saved)

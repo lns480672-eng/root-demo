@@ -17,6 +17,7 @@ const maxStorageBytes = 256 * 1024;
 const tableStorageBytes = 8 * 1024 * 1024;
 const publicationKey = 'root:pending-publication';
 const publicationTimeout = 6000;
+const runtimeVerificationTimeout = 20000;
 const validToolId = id => typeof id === 'string' && /^run-[a-z0-9_]{8}$/.test(id);
 const previewPolicy = "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; "
   + "img-src data:; connect-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'";
@@ -1272,14 +1273,20 @@ async function resolveStagedPublication(id) {
 
 async function commitStaged(frame, tool) {
   const { taskId, commit, sha256, nonce } = tool.staged;
+  const payload = {
+    toolId: frame.id, commit, sha256, nonce, entries: JSON.parse(frame.snapshot),
+    runId: tool.runId, revision: tool.runId ? frame.revision : undefined,
+  };
+  const path = '/api/staged/' + taskId;
+  stagedActivity = '正在验证运行';
+  render();
+  const verification = await workspaceApi(path + '/verify-preview', payload, runtimeVerificationTimeout);
+  if (verification.verified !== true) throw new Error('运行检查未通过，请重新检查预览。');
   rememberStagedPublication(taskId, nonce);
   stagedActivity = '正在保存';
   render();
   try {
-    const saved = await workspaceApi('/api/staged/' + taskId + '/publish', {
-      toolId: frame.id, commit, sha256, nonce, entries: JSON.parse(frame.snapshot),
-      runId: tool.runId, revision: tool.runId ? frame.revision : undefined,
-    }, publicationTimeout);
+    const saved = await workspaceApi(path + '/publish', payload, publicationTimeout);
     rememberStagedPublication(null);
     return saved;
   } catch (error) {

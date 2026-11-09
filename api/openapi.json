@@ -1913,6 +1913,88 @@
         ]
       }
     },
+    "/api/staged/{taskId}/verify-preview": {
+      "post": {
+        "operationId": "verifyGenerationPreview",
+        "tags": [
+          "生成任务"
+        ],
+        "summary": "验证候选的实际隔离运行",
+        "description": "服务端独立启动隔离预览。成功后内部记录账号、任务、候选、nonce 和数据快照的绑定。失败不发布也不计个人成功。",
+        "responses": {
+          "200": {
+            "description": "实际运行检查通过",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "verified": {
+                      "const": true
+                    }
+                  },
+                  "required": [
+                    "verified"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Http401"
+          },
+          "404": {
+            "$ref": "#/components/responses/Http404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Http409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Http413"
+          },
+          "429": {
+            "$ref": "#/components/responses/Http429"
+          },
+          "403": {
+            "$ref": "#/components/responses/Http403"
+          },
+          "400": {
+            "$ref": "#/components/responses/Http400"
+          },
+          "415": {
+            "$ref": "#/components/responses/Http415"
+          },
+          "503": {
+            "$ref": "#/components/responses/Http503"
+          },
+          "default": {
+            "$ref": "#/components/responses/UnexpectedError"
+          },
+          "422": {
+            "$ref": "#/components/responses/Http422"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PublishStagedCandidate"
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/TaskId"
+          },
+          {
+            "$ref": "#/components/parameters/Origin"
+          }
+        ]
+      }
+    },
     "/api/staged/{taskId}/publish": {
       "post": {
         "operationId": "publishGenerationTask",
@@ -1920,7 +2002,7 @@
           "生成任务"
         ],
         "summary": "保存通过预览检查的候选",
-        "description": "工作台在隔离预览通过后提交绑定及存储快照。修订须同时提交 runId 和候选对应的 revision，且保留现有存储；最新数据发生变动时返回 revision_conflict，重新取候选并复验。其他任务已更新基准版本时返回 version_conflict。同一已发布候选重放返回同一工具，个人成功额度只扣一次。回执丢失时先调用同一任务的 resolve-publish。",
+        "description": "必须先用完全相同的候选与快照通过 verify-preview。缺少匹配的服务端运行证据返回 409 staged_runtime_required。工作台在隔离预览通过后提交绑定及存储快照。修订须同时提交 runId 和候选对应的 revision，且保留现有存储；最新数据发生变动时返回 revision_conflict，重新取候选并复验。其他任务已更新基准版本时返回 version_conflict。同一已发布候选重放返回同一工具，个人成功额度只扣一次。回执丢失时先调用同一任务的 resolve-publish。",
         "responses": {
           "200": {
             "description": "保存通过预览检查的候选",

@@ -457,7 +457,9 @@ def provide(stage, requirement, previous, key, admit, record=None, *, revision_c
                            "颜色编号为 gray（灰白）、yellow（黄色）、blue（蓝色）、green（绿色）、"
                            "pink（粉色）、purple（紫色），均为浅色背景。不要返回字段或完整规格。"
                            '''不支持的颜色、指定局部样式、或同时要求改配色和功能时返回 {"unsupported":true}。'''
-                           "其他功能修改返回原有规格形状，配色沿用旧版。无法实现需求时必须返回不支持。")
+                           '''只改标题返回 {"title":"用户写明的新标题"}。只移除 CSV 导出返回 {"removeCsv":true}。'''
+                           '''按指定已有字段增加筛选返回 {"addFilter":true}。'''
+                           "每次只处理一个明确改动，宿主保留其他字段、功能及配色。无法实现需求时必须返回不支持。")
         body = {
             "model": MODEL,
             "messages": [

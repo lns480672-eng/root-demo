@@ -29,6 +29,74 @@ def encode(value):
 
 
 class RevisionContextTests(unittest.TestCase):
+    def test_title_and_csv_patches_reuse_unmodified_checkpoint_artifacts(self):
+        original = artifacts()
+        base = revision.prepare(original)
+        cases = (
+            ("只把标题改成「设备，巡检」", {"title": "设备，巡检"}, "设备，巡检", ["filters", "summary", "export"]),
+            ("请移除 CSV 导出，其他功能保留", {"removeCsv": True}, "设备故障", ["filters", "summary"]),
+        )
+        for request, output, expected_title, expected_modules in cases:
+            with self.subTest(request=request), patch.object(assistant_model, "_exchange", return_value=envelope(json.dumps(output))) as exchange:
+                planned = revision.provide("spec", request, {}, "fixture-key", Mock(), None, base=base)
+                spec = json.loads(planned)
+                self.assertEqual((spec["title"], spec["modules"]), (expected_title, expected_modules))
+                prior = {"spec.json": planned}
+                for stage in blueprint.stage_plan(planned)[1:-1]:
+                    payload = revision.provide(stage, request, prior, "fixture-key", Mock(), None, base=base)
+                    self.assertEqual(json.loads(payload), json.loads(original[stage + ".json"]))
+                    prior[stage + ".json"] = payload
+                revision.check("assemble", blueprint.assemble(prior), base, request, previous=prior)
+                exchange.assert_called_once()
+
+    def test_title_only_refuses_lost_or_changed_modules(self):
+        original = artifacts()
+        base = revision.prepare(original)
+        request = "只把标题改成新版设备台账，保留筛选、统计和 CSV 导出"
+        title = {**base["source"]["spec"], "kind": "ledger", "title": "新版设备台账"}
+        with self.assertRaises(ApiError) as omitted:
+            revision.check("spec", encode({**title, "modules": []}), base, request)
+        self.assertEqual(omitted.exception.code, "staged_unsupported")
+        revised = {**original, "spec.json": encode({**title, "modules": ["filters", "summary", "export"]})}
+        revision.check("assemble", blueprint.assemble(revised), base, request, previous=revised)
+        changed = {**revised, "summary.json": encode({
+            **base["source"]["summary"], "count": "越界改名",
+        })}
+        with self.assertRaises(ApiError):
+            revision.check("assemble", blueprint.assemble(changed), base, request, previous=changed)
+
+    def test_csv_removal_requires_explicit_request_and_keeps_other_capabilities(self):
+        original = artifacts()
+        base = revision.prepare(original)
+        changed = {**original, "spec.json": encode({
+            **base["source"]["spec"], "kind": "ledger", "modules": ["filters", "summary"],
+        })}
+        del changed["export.json"]
+        rendered = blueprint.assemble(changed)
+        revision.check("assemble", rendered, base, "请移除 CSV 导出，其他功能保留", previous=changed)
+        for request in ("不要移除 CSV 导出", "修改标题为「删除 CSV 导出」",
+                        "改标题为示例，删除 CSV 导出，保留筛选", "移除 CSV 导出，但不要移除 CSV 导出"):
+            with self.subTest(request=request), self.assertRaises(ApiError):
+                revision.check("assemble", rendered, base, request, previous=changed)
+        damaged = {**changed, "filters.json": encode({"search": [], "exact": ["status"], "date": "date"})}
+        with self.assertRaises(ApiError):
+            revision.check("assemble", blueprint.assemble(damaged), base,
+                           "删除 CSV 导出", previous=damaged)
+
+    def test_add_filter_keeps_previous_filters_and_requires_named_field(self):
+        original = artifacts()
+        base = revision.prepare(original)
+        changed = {**original, "filters.json": encode({
+            **base["source"]["filters"], "exact": ["status", "device"],
+        })}
+        rendered = blueprint.assemble(changed)
+        revision.check("assemble", rendered, base, "增加设备精确筛选", previous=changed)
+        with self.assertRaises(ApiError):
+            revision.check("assemble", rendered, base, "增加停机分钟精确筛选", previous=changed)
+        changed["filters.json"] = encode({"search": [], "exact": ["status", "device"], "date": "date"})
+        with self.assertRaises(ApiError):
+            revision.check("assemble", blueprint.assemble(changed), base, "增加设备精确筛选", previous=changed)
+
     def test_website_revision_preserves_the_template_layout(self):
         spec = {"kind": "website", "layout": "brand", "title": "山野咖啡", "goal": "品牌和菜单"}
         content = {
@@ -77,7 +145,7 @@ class RevisionContextTests(unittest.TestCase):
         rendered = blueprint.assemble(prior)
         self.assertIn(b"#record-board>section{flex:1 0 12rem;background:#fff1b8}", rendered)
         self.assertNotIn(b"background:#fff1b8", blueprint.assemble(original))
-        revision.check("assemble", rendered, base, previous=prior)
+        revision.check("assemble", rendered, base, "把颜色改成黄色", previous=prior)
 
     def test_ledger_semantically_unchanged_candidate_cannot_publish(self):
         original = artifacts()

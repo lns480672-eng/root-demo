@@ -10,9 +10,10 @@ import tempfile
 import time
 import uuid
 
-from accounts import ApiError, TABLE_STORAGE_BYTES, pack_entries
+from accounts import ApiError, TABLE_STORAGE_BYTES, TOOL_STORAGE_BYTES, pack_entries
 
 MAX_ATTEMPTS = 8
+RUNTIME_PROOF_VERSION = 1
 LEASE_SECONDS = 90
 RETAIN_SECONDS = 48 * 60 * 60
 ZERO = "0" * 40
@@ -34,13 +35,14 @@ def filename(stage):
 class StagedJobs:
     def __init__(self, store, budget, runs, blueprint, *, clock=time.time, record=None,
                  max_attempts=MAX_ATTEMPTS, lease_seconds=LEASE_SECONDS, retain_seconds=RETAIN_SECONDS,
-                 revision=None):
+                 revision=None, runtime_verifier=None):
         self.store = store
         self.budget = budget
         self.runs = Path(runs)
         self.root = self.runs / "staged-repositories"
         self.blueprint = blueprint
         self.revision = revision
+        self.runtime_verifier = runtime_verifier
         self.clock = clock
         self.record = record
         self.max_attempts = max_attempts
@@ -82,6 +84,9 @@ class StagedJobs:
                 db.execute("ALTER TABLE staged_jobs ADD COLUMN repo_id TEXT")
             if "category" not in columns:
                 db.execute("ALTER TABLE staged_jobs ADD COLUMN category TEXT NOT NULL DEFAULT 'auto'")
+            candidate_columns = {row["name"] for row in db.execute("PRAGMA table_info(staged_candidates)")}
+            if "runtime_proof" not in candidate_columns:
+                db.execute("ALTER TABLE staged_candidates ADD COLUMN runtime_proof TEXT")
 
     @staticmethod
     def unavailable():
@@ -501,7 +506,7 @@ class StagedJobs:
             candidate = self.candidate_record(db, identifier)
             if candidate is None:
                 tool_id = Path(tempfile.mkdtemp(prefix="run-", dir=self.runs)).name
-                db.execute("INSERT INTO staged_candidates VALUES (?,?,?,?,?)",
+                db.execute("INSERT INTO staged_candidates(task,tool_id,commit_id,digest,nonce) VALUES (?,?,?,?,?)",
                            (identifier, tool_id, identity["commit"], identity["sha256"], uuid.uuid4().hex))
                 candidate = self.candidate_record(db, identifier)
             if candidate["commit_id"] != identity["commit"] or candidate["digest"] != identity["sha256"]:
@@ -519,8 +524,8 @@ class StagedJobs:
 
     def check_revision_candidate(self, row, revision, html):
         context = json.loads(revision["context"])
-        if context["kind"] == "ledger":
-            self.revision.check("assemble", html, context, previous=self.files(row))
+        if context["kind"] in ("ledger", "website"):
+            self.revision.check("assemble", html, context, row["requirement"], previous=self.files(row))
 
     def check_table_schema(self, revision, tool):
         if tool["table_tool"]:
@@ -555,36 +560,70 @@ class StagedJobs:
             # The same write lock as publish makes this decision final for the old preview.
             if state["state"] == "complete":
                 db.execute("""
-                    UPDATE staged_candidates SET nonce=? WHERE task=? AND (? IS NULL OR nonce=?)
+                    UPDATE staged_candidates SET nonce=?,runtime_proof=NULL WHERE task=? AND (? IS NULL OR nonce=?)
                 """, (uuid.uuid4().hex, identifier, nonce, nonce))
             return None
+
+    def publication_binding(self, db, token, marker, identifier, identity, data):
+        row = self.owned(db, token, marker, identifier)
+        candidate = self.candidate_record(db, identifier)
+        revision = self.revision_record(db, identifier)
+        result_id = revision["tool_id"] if revision else candidate["tool_id"] if candidate else None
+        if (candidate is None or candidate["commit_id"] != row["head"] or candidate["commit_id"] != identity["commit"]
+                or result_id != data.get("toolId") or (revision and candidate["tool_id"] != data.get("runId"))
+                or candidate["nonce"] != data.get("nonce")
+                or candidate["digest"] != identity["sha256"] or identity["sha256"] != data.get("sha256")
+                or identity["commit"] != data.get("commit")):
+            raise ApiError(409, "staged_candidate_changed", "候选和预览快照不匹配，请重新准备预览。")
+        if self.view(row)["state"] not in ("complete", "published"):
+            raise ApiError(409, "staged_not_ready", "此任务尚未生成可发布的候选。")
+        return row, candidate, revision, result_id
+
+    def publication_snapshot(self, db, row, revision, result_id, data, identity):
+        current = None
+        if revision:
+            current = self.store.owned_tool(db, {"id":row["owner"]}, result_id)
+            self.store.require_version(revision["base_version"], current["version"])
+            self.check_table_schema(revision, current)
+            if type(data.get("revision")) is not int or data["revision"] != current["revision"]:
+                raise ApiError(409, "revision_conflict", "已有更新的数据，请用最新记录重新准备预览。")
+        limit = TABLE_STORAGE_BYTES if current and current["table_tool"] else TOOL_STORAGE_BYTES
+        packed = pack_entries(data.get("entries"), limit=limit)
+        proof = digest(encoded({**identity, "policy":RUNTIME_PROOF_VERSION, "owner":row["owner"], "nonce":data["nonce"],
+                               "revision":current["revision"] if current else None, "entries":packed}))
+        return current, limit, proof
+
+    def verify_preview(self, token, marker, identifier, data):
+        identity, html = self.artifact(token, marker, identifier)
+        with self.store.connection() as db:
+            row, candidate, revision, result_id = self.publication_binding(db, token, marker, identifier, identity, data)
+            if row["state"] == "published":
+                return
+            _, limit, proof = self.publication_snapshot(db, row, revision, result_id, data, identity)
+            if candidate["runtime_proof"] == proof:
+                return
+        if self.runtime_verifier is None:
+            raise ApiError(503, "staged_verifier_unavailable", "运行检查暂不可用，请稍后重新检查预览。")
+        self.runtime_verifier(html, data["entries"], backup=self.permits_backup(row), storage_limit=limit)
+        with self.store.connection(write=True) as db:
+            row, _, revision, result_id = self.publication_binding(db, token, marker, identifier, identity, data)
+            if row["state"] == "published":
+                return
+            _, _, proof = self.publication_snapshot(db, row, revision, result_id, data, identity)
+            db.execute("UPDATE staged_candidates SET runtime_proof=? WHERE task=?", (proof, identifier))
 
     def publish(self, token, marker, identifier, data):
         identity, html = self.artifact(token, marker, identifier)
         with self.store.connection(write=True) as db:
-            row = self.owned(db, token, marker, identifier)
-            candidate = self.candidate_record(db, identifier)
-            revision = self.revision_record(db, identifier)
-            result_id = revision["tool_id"] if revision else candidate["tool_id"] if candidate else None
-            if (candidate is None or candidate["commit_id"] != row["head"]
-                    or result_id != data.get("toolId") or (revision and candidate["tool_id"] != data.get("runId"))
-                    or candidate["nonce"] != data.get("nonce")
-                    or candidate["digest"] != identity["sha256"] or identity["sha256"] != data.get("sha256")
-                    or identity["commit"] != data.get("commit")):
-                raise ApiError(409, "staged_candidate_changed", "候选和预览快照不匹配，请重新准备预览。")
-            state = self.view(row)["state"]
-            if state not in ("complete", "published"):
-                raise ApiError(409, "staged_not_ready", "此任务尚未生成可发布的候选。")
+            row, candidate, revision, result_id = self.publication_binding(db, token, marker, identifier, identity, data)
             owner = {"id":row["owner"]}
             tool_id = candidate["tool_id"]
-            if state == "complete":
+            if row["state"] == "complete":
+                current, _, proof = self.publication_snapshot(db, row, revision, result_id, data, identity)
                 if revision:
                     self.check_revision_candidate(row, revision, html)
-                    current = self.store.owned_tool(db, owner, result_id)
-                    self.store.require_version(revision["base_version"], current["version"])
-                    self.check_table_schema(revision, current)
-                    if type(data.get("revision")) is not int or data["revision"] != current["revision"]:
-                        raise ApiError(409, "revision_conflict", "已有更新的数据，请用最新记录重新准备预览。")
+                if candidate["runtime_proof"] != proof:
+                    raise ApiError(409, "staged_runtime_required", "此候选尚未通过运行检查，请重新检查预览。")
                 run = self.runs / tool_id
                 path = run / "app.pending"
                 try:
@@ -595,9 +634,10 @@ class StagedJobs:
                 if revision:
                     self.store.insert_revision_draft(db, current, tool_id, row["requirement"], model=True)
                     self.store.publish_revision(db, current, data, self.budget.record_generation_success)
-                    if current["table_tool"]:
+                    if json.loads(revision["context"])["kind"] in ("ledger", "table", "website"):
                         spec = json.loads(self.read(row, row["head"], "spec.json"))
-                        db.execute("UPDATE tools SET title=? WHERE id=?", (spec["title"], result_id))
+                        title = " ".join(spec["title"].split())[:48]
+                        db.execute("UPDATE tools SET title=? WHERE id=?", (title, result_id))
                 else:
                     spec = json.loads(self.read(row, row["head"], "spec.json"))
                     title = " ".join(spec["title"].split())[:48]

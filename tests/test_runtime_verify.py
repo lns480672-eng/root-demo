@@ -1,0 +1,101 @@
+import json
+import os
+import socket
+import threading
+import unittest
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.request import urlopen
+from unittest.mock import patch
+
+from accounts import ApiError
+from runtime_verify import _command, verify
+
+
+def artifact(script):
+    return ('<!doctype html><title>工具</title><p>初始页面</p><script>' + script + '</script>').encode()
+
+
+class RuntimeVerifierTests(unittest.TestCase):
+    def setUp(self):
+        try:
+            _command()
+        except ApiError:
+            self.skipTest("Node and sandboxed Chromium are required for the real verifier tests")
+
+    def test_runs_candidate_with_the_given_snapshot_in_an_opaque_frame(self):
+        source = artifact("""
+            if (self.origin !== 'null' || localStorage.getItem('record') !== '草稿') throw new Error('context');
+            try { void parent.document; throw new Error('parent access'); }
+            catch (error) { if (error.name !== 'SecurityError') throw error; }
+            document.querySelector('p').textContent = '实际启动';
+        """)
+        verify(source, [["record", "草稿"]])
+        with self.assertRaises(ApiError) as result:
+            verify(source, [["record", "错误快照"]])
+        self.assertEqual((result.exception.status, result.exception.code), (422, "staged_runtime_failed"))
+
+    def test_startup_exception_and_forged_ready_cannot_pass(self):
+        for script in (
+            "throw new Error('startup');",
+            """
+            const token = document.scripts[0].textContent.match(/"([0-9a-f-]{36})"/)?.[1];
+            parent.postMessage({ token, type: 'ready' }, '*');
+            setTimeout(() => Promise.reject(new Error('startup rejection')), 20);
+            """,
+        ):
+            with self.subTest(script=script), self.assertRaises(ApiError) as result:
+                verify(artifact(script), [])
+            self.assertEqual((result.exception.status, result.exception.code), (422, "staged_runtime_failed"))
+
+    def test_candidate_cannot_reach_http_or_webrtc_loopback_probe(self):
+        arrivals = []
+
+        class Probe(BaseHTTPRequestHandler):
+            def do_GET(self):
+                arrivals.append(self.path)
+                self.send_response(200)
+                self.end_headers()
+
+            def log_message(self, *_):
+                pass
+
+        with ThreadingHTTPServer(("127.0.0.1", 0), Probe) as http, \
+                socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as udp:
+            udp.bind(("127.0.0.1", 0))
+            udp.settimeout(0.2)
+            server = threading.Thread(target=http.serve_forever, daemon=True)
+            server.start()
+            try:
+                base = f"http://127.0.0.1:{http.server_port}"
+                with urlopen(base + "/control", timeout=2) as response:
+                    self.assertEqual(response.status, 200)
+                udp.sendto(b"positive-control", udp.getsockname())
+                self.assertEqual(udp.recv(256), b"positive-control")
+                target = json.dumps(base + "/candidate")
+                stun = json.dumps(f"stun:127.0.0.1:{udp.getsockname()[1]}")
+                verify(artifact(f"""
+                    fetch({target}).then(() => {{ throw new Error('unexpected HTTP'); }}, () => {{}});
+                    navigator.sendBeacon({target}, 'unexpected');
+                    const ws = new WebSocket({target}.replace('http:', 'ws:'));
+                    ws.onopen = () => {{ throw new Error('unexpected WebSocket'); }};
+                    const pc = new RTCPeerConnection({{iceServers:[{{urls:{stun}}}]}});
+                    if (pc.getConfiguration().iceServers.length) throw new Error('unexpected ICE configuration');
+                    pc.createDataChannel('probe');
+                    pc.createOffer().then(offer => pc.setLocalDescription(offer));
+                """), [])
+                self.assertEqual(arrivals, ["/control"])
+                with self.assertRaises(socket.timeout):
+                    udp.recv(256)
+            finally:
+                http.shutdown()
+                server.join(timeout=2)
+
+    def test_missing_browser_cannot_authorize_a_candidate(self):
+        with patch.dict(os.environ, {"ROOT_VERIFY_CHROME": "/path/to/nonexistent/chromium"}), \
+                self.assertRaises(ApiError) as result:
+            verify(artifact("document.body.dataset.ready = 'true';"), [])
+        self.assertEqual((result.exception.status, result.exception.code), (503, "staged_verifier_unavailable"))
+
+
+if __name__ == "__main__":
+    unittest.main()

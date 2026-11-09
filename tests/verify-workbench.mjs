@@ -225,7 +225,7 @@ try {
         // A replacement iframe can detach between DOM.describeNode and the target request.
         if (!/Session with given id not found|No frame for given id/.test(error.message)) throw error;
       }
-    }, live ? 135000 : 5000);
+    }, live ? 135000 : stagedFlow ? 20000 : 5000);
   }
 
   async function type(selector, value, context) {

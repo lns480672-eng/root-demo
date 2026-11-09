@@ -20,6 +20,7 @@ import assistant_model
 import table_import
 import staged_blueprint
 import staged_revision
+import runtime_verify
 from staged_jobs import StagedJobs
 from accounts import ApiError, InviteError, SESSION_SECONDS, Store, TABLE_STORAGE_BYTES
 from trial_budget import TrialBudget
@@ -54,7 +55,7 @@ TRIAL_ADMIN = "/api/trial/admin"
 STAGED = "/api/staged"
 STAGED_HISTORY = STAGED + "/history"
 STAGED_TASK = re.compile(STAGED + r"/([a-f0-9]{32})")
-STAGED_ACTION = re.compile(STAGED + r"/([a-f0-9]{32})/(resume|candidate|publish|resolve-publish)")
+STAGED_ACTION = re.compile(STAGED + r"/([a-f0-9]{32})/(resume|candidate|verify-preview|publish|resolve-publish)")
 ADMIN_INVITES = "/api/admin/invites"
 ADMIN_SETUP = "/api/admin/setup"
 ADMIN_PASSWORD = "/api/admin/password"
@@ -111,7 +112,7 @@ def build_id(assets):
     digest = hashlib.sha256()
     for name in ("generate.py", "workbench.py", "accounts.py", "assistant_fixture.py", "assistant_model.py",
                  "table_import.py", "trial_budget.py", "staged_blueprint.py", "staged_jobs.py", "staged_program.py", "staged_revision.py",
-                 "staged_website.py",
+                 "staged_website.py", "runtime_verify.py", "runtime-verify.mjs",
                  "workbench/staged-runtime.js"):
         digest.update(name.encode() + b"\0" + (ROOT / name).read_bytes() + b"\0")
     for path, body in assets.items():
@@ -139,7 +140,7 @@ def session_cookie(token, max_age=SESSION_SECONDS):
 def serve(key, port, runs=generate.RUNS, *, generation_limits=(5, 30), analysis_limits=(6, 60),
           admin_usernames=(), analysis_provider=assistant_model.analyze, table_limits=None,
           staged_enabled=False, staged_provider=staged_blueprint.provide,
-          staged_revision_provider=staged_revision.provide):
+          staged_revision_provider=staged_revision.provide, staged_runtime_verifier=runtime_verify.verify):
     model_lock = threading.Lock()
     store = Store(runs / "workspace.sqlite3")
     budget = TrialBudget(store, runs, generation_limits=generation_limits, analysis_limits=analysis_limits,
@@ -158,7 +159,8 @@ def serve(key, port, runs=generate.RUNS, *, generation_limits=(5, 30), analysis_
         except OSError:
             pass
 
-    history = StagedJobs(store, budget, runs, staged_blueprint, record=stage_receipt, revision=staged_revision)
+    history = StagedJobs(store, budget, runs, staged_blueprint, record=stage_receipt, revision=staged_revision,
+                         runtime_verifier=staged_runtime_verifier)
     staged = history if staged_enabled else None
 
     def stage_provider(stage, requirement, prior, admit, record, base=None, category="auto"):
@@ -359,7 +361,7 @@ def serve(key, port, runs=generate.RUNS, *, generation_limits=(5, 30), analysis_
                 if self.path == TABLE_INSPECT:
                     cap = 6 * table_limits.bytes + 65536
                 elif (self.path == TABLE_GENERATE or TOOL_ACTION.fullmatch(self.path)
-                      or (STAGED_ACTION.fullmatch(self.path) and self.path.endswith("/publish"))):
+                      or (STAGED_ACTION.fullmatch(self.path) and self.path.endswith(("/publish", "/verify-preview")))):
                     cap = 2 * TABLE_STORAGE_BYTES
                 else:
                     cap = 16000
@@ -431,6 +433,9 @@ def serve(key, port, runs=generate.RUNS, *, generation_limits=(5, 30), analysis_
                     self.send_json(202, {"task":start_staged(token, marker, match[1], resume=True)})
                 elif match[2] == "candidate":
                     self.send_json(200, staged.candidate(token, marker, match[1]))
+                elif match[2] == "verify-preview":
+                    staged.verify_preview(token, marker, match[1], data)
+                    self.send_json(200, {"verified":True})
                 elif match[2] == "resolve-publish":
                     row = staged.resolve_publication(token, marker, match[1], data.get("nonce"))
                     if row is None:

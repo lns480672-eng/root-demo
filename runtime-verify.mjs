@@ -1,0 +1,262 @@
+import { spawn } from 'node:child_process';
+import { readFile } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
+import { createServer } from 'node:http';
+import { once } from 'node:events';
+import { setTimeout as delay } from 'node:timers/promises';
+
+const chromePath = process.argv[2];
+const profile = process.argv[3];
+const input = [];
+for await (const part of process.stdin) input.push(part);
+const { html, entries, backup, limit } = JSON.parse(Buffer.concat(input).toString());
+const workbench = await readFile(new URL('./workbench/workbench.js', import.meta.url), 'utf8');
+const start = workbench.indexOf('function initializeFrame(');
+const end = workbench.indexOf('\nfunction enqueueSave(', start);
+if (start < 0 || end < start) process.exit(1);
+const initializeFrame = workbench.slice(start, end).trim();
+const token = randomUUID();
+const wrapperPath = '/verification/' + token;
+const canaryPath = '/canary/' + token;
+const server = createServer((request, response) => {
+  if (request.method !== 'GET') return response.writeHead(404).end();
+  if (request.url === wrapperPath) {
+    return response.writeHead(200, {
+      'Content-Type': 'text/html; charset=utf-8',
+      'Connection-Allowlist': '(); webrtc=block',
+      'Referrer-Policy': 'no-referrer',
+      'Content-Security-Policy': "default-src 'none'; connect-src 'self'; frame-src about:; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:",
+    }).end('<!doctype html><title>ROOT runtime verifier</title><main></main>');
+  }
+  if (request.url === canaryPath) return response.writeHead(200).end('reachable');
+  response.writeHead(404).end();
+});
+server.listen(0, '127.0.0.1');
+await once(server, 'listening');
+const origin = 'http://127.0.0.1:' + server.address().port;
+const wrapper = origin + wrapperPath;
+const canary = origin + canaryPath;
+const previewPolicy = "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; "
+  + "img-src data:; connect-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'";
+const blocksWebRTC = `(() => {
+  try {
+    const pc = new RTCPeerConnection({iceServers:[{urls:'stun:127.0.0.1:9'}]});
+    try { return pc.getConfiguration().iceServers.length === 0; }
+    finally { pc.close(); }
+  } catch (error) { return error.name === 'NotAllowedError' || error.name === 'SecurityError'; }
+})()`;
+const args = JSON.stringify([entries, token, origin, limit, backup]).replaceAll('<', '\\u003c');
+const srcdoc = '<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">'
+  + '<meta http-equiv="Content-Security-Policy" content="' + previewPolicy + '">'
+  + '<script>(' + initializeFrame + ')(...' + args + ')</script>' + html.slice('<!doctype html>'.length);
+const chrome = spawn(chromePath, [
+  '--headless=new', '--no-first-run', '--no-default-browser-check', '--disable-background-networking',
+  '--disable-extensions', '--disable-component-update', '--disable-sync', '--disable-domain-reliability',
+  '--disable-breakpad', '--disable-crash-reporter', '--disable-default-apps', '--disable-features=MediaRouter',
+  '--use-mock-keychain', '--password-store=basic', '--disable-quic',
+  '--proxy-server=http://127.0.0.1:9', '--proxy-bypass-list=127.0.0.1',
+  '--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1', '--force-webrtc-ip-handling-policy=disable_non_proxied_udp',
+  '--remote-debugging-pipe', '--user-data-dir=' + profile, 'about:blank',
+], { stdio: ['ignore', 'ignore', 'ignore', 'pipe', 'pipe'] });
+
+let closed = false;
+let failed = false;
+let candidateStarted = false;
+let served = false;
+let canaryEnabled = true;
+let serial = 0;
+let targetSession;
+const pending = new Map();
+const targets = new Map();
+const wire = chrome.stdio[3];
+const reply = chrome.stdio[4];
+let candidateFrameId;
+const deadline = Date.now() + 8500;
+
+function close() {
+  if (closed) return;
+  closed = true;
+  for (const { reject } of pending.values()) reject(new Error('Chromium closed'));
+  pending.clear();
+}
+chrome.once('error', close);
+chrome.once('exit', close);
+wire.on('error', close);
+reply.on('error', close);
+
+function cdp(method, params = {}, sessionId) {
+  return new Promise((resolve, reject) => {
+    if (closed) return reject(new Error('Chromium closed'));
+    const id = ++serial;
+    pending.set(id, { resolve, reject });
+    wire.write(JSON.stringify({ id, method, params, sessionId }) + '\0');
+  });
+}
+
+const autoAttach = { autoAttach: true, waitForDebuggerOnStart: true, flatten: true };
+async function attached(params) {
+  const id = params.sessionId;
+  if (params.targetInfo.type !== 'iframe') {
+    // The candidate never needs workers, popups, or another browsing target.
+    failed = true;
+    return;
+  }
+  const ready = (async () => {
+    await cdp('Runtime.enable', {}, id);
+    await cdp('Page.enable', {}, id);
+    await cdp('Fetch.enable', {}, id);
+    await cdp('Target.setAutoAttach', autoAttach, id);
+    await cdp('Runtime.runIfWaitingForDebugger', {}, id);
+  })();
+  targets.set(params.targetInfo.targetId, { id, ready });
+  await ready;
+}
+
+async function requestPaused(params, id) {
+  const { requestId, request } = params;
+  if (id === targetSession && !served && request.method === 'GET' && request.url === wrapper) {
+    served = true;
+    return cdp('Fetch.continueRequest', { requestId }, id);
+  }
+  // A reachable positive control if the network-layer policy was ignored.
+  if (id === targetSession && canaryEnabled && request.method === 'GET' && request.url === canary) {
+    return cdp('Fetch.continueRequest', { requestId }, id);
+  }
+  if (candidateStarted && params.resourceType === 'Document') failed = true;
+  return cdp('Fetch.failRequest', { requestId, errorReason: 'BlockedByClient' }, id);
+}
+
+function receive(message) {
+  if (message.id) {
+    const request = pending.get(message.id);
+    pending.delete(message.id);
+    if (message.error) request?.reject(new Error('CDP command failed'));
+    else request?.resolve(message.result);
+    return;
+  }
+  const { method, params, sessionId } = message;
+  if (method === 'Runtime.exceptionThrown' && candidateStarted) failed = true;
+  if (method === 'Page.frameNavigated' && candidateStarted) failed = true;
+  if (method === 'Page.frameAttached' && sessionId === targetSession) {
+    if (candidateFrameId) failed = true;
+    else candidateFrameId = params.frameId;
+  }
+  if (method === 'Page.frameDetached' && candidateStarted && params.reason !== 'swap') failed = true;
+  if (method === 'Target.attachedToTarget' && params.targetInfo.type !== 'page') {
+    void attached(params).catch(() => { failed = true; });
+  }
+  if (method === 'Fetch.requestPaused') void requestPaused(params, sessionId).catch(() => { failed = true; });
+}
+
+let buffer = '';
+reply.setEncoding('utf8');
+reply.on('data', chunk => {
+  if (buffer.length + chunk.length > 2 * 1024 * 1024) {
+    failed = true;
+    close();
+    reply.destroy();
+    chrome.kill();
+    return;
+  }
+  buffer += chunk;
+  let boundary;
+  while ((boundary = buffer.indexOf('\0')) !== -1) {
+    const message = buffer.slice(0, boundary);
+    buffer = buffer.slice(boundary + 1);
+    try { receive(JSON.parse(message)); } catch { close(); }
+  }
+});
+
+async function evaluate(expression, contextId, sessionId = targetSession) {
+  const result = await cdp('Runtime.evaluate', {
+    expression, contextId, returnByValue: true, awaitPromise: true,
+  }, sessionId);
+  if (result.exceptionDetails) throw new Error('Trusted observation failed');
+  return result.result.value;
+}
+
+async function candidateFrame() {
+  const target = targets.get(candidateFrameId);
+  if (target) await target.ready;
+  const sessionId = target?.id ?? targetSession;
+  const { frameTree } = await cdp('Page.getFrameTree', {}, sessionId);
+  const tree = target ? frameTree : frameTree.childFrames?.find(node => node.frame.id === candidateFrameId);
+  if (tree?.frame.url !== 'about:srcdoc' || tree.frame.id !== candidateFrameId) return;
+  return { sessionId, frame:tree.frame };
+}
+
+async function run() {
+  await cdp('Browser.getVersion');
+  const { targetInfos } = await cdp('Target.getTargets');
+  const { targetId } = targetInfos.find(target => target.type === 'page');
+  ({ sessionId: targetSession } = await cdp('Target.attachToTarget', { targetId, flatten: true }));
+  await cdp('Page.enable', {}, targetSession);
+  await cdp('Runtime.enable', {}, targetSession);
+  await cdp('Fetch.enable', {}, targetSession);
+  await cdp('Target.setAutoAttach', autoAttach, targetSession);
+  await cdp('Browser.setDownloadBehavior', { behavior: 'deny' });
+  const top = await cdp('Page.navigate', { url: wrapper }, targetSession);
+  if (top.errorText) throw new Error('Could not load verification wrapper');
+  const { executionContextId } = await cdp('Page.createIsolatedWorld', {
+    frameId: top.frameId, worldName: 'root-host-observer',
+  }, targetSession);
+  const policy = await evaluate(`(async () => {
+    if (location.href !== ${JSON.stringify(wrapper)}) return false;
+    let httpBlocked = false;
+    try { await fetch(${JSON.stringify(canary)}); } catch (error) { httpBlocked = error instanceof TypeError; }
+    return httpBlocked && ${blocksWebRTC};
+  })()`);
+  if (!policy || failed) throw new Error('Chromium does not enforce the verification network policy');
+  canaryEnabled = false;
+  server.close();
+
+  // Attach Runtime to the opaque frame before any untrusted script can run.
+  await evaluate(`(() => {
+    const frame = document.createElement('iframe');
+    frame.setAttribute('sandbox', ${JSON.stringify('allow-scripts allow-forms' + (backup ? ' allow-downloads' : ''))});
+    frame.referrerPolicy = 'no-referrer';
+    frame.srcdoc = '<!doctype html><title>Empty verification frame</title>';
+    document.body.append(frame);
+    return true;
+  })()`, executionContextId);
+  let candidate;
+  while (!candidate && !failed && Date.now() < deadline) {
+    if (candidateFrameId) candidate = await candidateFrame();
+    if (!candidate) await delay(25);
+  }
+  if (!candidate || failed) throw new Error('Could not attach to the isolated verification frame');
+  const { sessionId, frame } = candidate;
+  const observer = await cdp('Page.createIsolatedWorld', {
+    frameId: frame.id, worldName: 'root-candidate-observer',
+  }, sessionId);
+  if (!await evaluate("self.origin === 'null'", observer.executionContextId, sessionId)) {
+    throw new Error('Verification frame is not opaque');
+  }
+  candidateStarted = true;
+  await cdp('Page.setDocumentContent', { frameId: frame.id, html: srcdoc }, sessionId);
+  await delay(250);
+  const current = await candidateFrame();
+  if (failed || !current || current.frame.loaderId !== frame.loaderId) return 'failed';
+  const result = await evaluate(
+    `document.readyState === 'complete' && Boolean(document.body?.childElementCount) && ${blocksWebRTC}`,
+    observer.executionContextId, sessionId);
+  return result && !failed ? 'ok' : 'failed';
+}
+
+let timer;
+try {
+  const verdict = await Promise.race([
+    run(),
+    new Promise(resolve => { timer = setTimeout(() => resolve(candidateStarted ? 'failed' : 'unavailable'), 9000); }),
+  ]);
+  process.stdout.write(verdict + '\n');
+} catch {
+  process.stdout.write(failed && candidateStarted ? 'failed\n' : 'unavailable\n');
+} finally {
+  clearTimeout(timer);
+  server.closeAllConnections();
+  server.close();
+  chrome.kill();
+  wire.destroy();
+  reply.destroy();
+}
