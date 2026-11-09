@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { createServer } from 'node:http';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -12,6 +12,8 @@ const live = process.argv.includes('--live');
 const liveRevision = live && process.argv.includes('--revision');
 const collectCoverage = process.argv.includes('--coverage');
 const mainOnly = process.argv.includes('--main');
+const entryFlow = process.argv.includes('--entry-flow');
+if (entryFlow && live) throw new Error('--entry-flow 使用模型替身，请移除 --live');
 const artifactsArg = process.argv.find(arg => arg.startsWith('--artifacts='));
 let artifacts = artifactsArg?.slice('--artifacts='.length);
 const app = process.env.WORKBENCH_URL || 'http://127.0.0.1:8765';
@@ -193,14 +195,19 @@ try {
       if (!nodeId) return;
       const { node } = await cdp('DOM.describeNode', { nodeId });
       const session = iframeSessions.get(node.frameId);
-      const { frameTree } = await cdp('Page.getFrameTree', {}, session);
-      const frame = session ? frameTree.frame
-        : frameTree.childFrames?.find(child => child.frame.id === node.frameId)?.frame;
-      if (frame?.url !== 'about:srcdoc') return;
-      const { executionContextId } = await cdp('Page.createIsolatedWorld', {
-        frameId: frame.id, worldName: 'workbench-test',
-      }, session);
-      return { id, context: { id: executionContextId, session }, loader: frame.loaderId };
+      try {
+        const { frameTree } = await cdp('Page.getFrameTree', {}, session);
+        const frame = session ? frameTree.frame
+          : frameTree.childFrames?.find(child => child.frame.id === node.frameId)?.frame;
+        if (frame?.url !== 'about:srcdoc') return;
+        const { executionContextId } = await cdp('Page.createIsolatedWorld', {
+          frameId: frame.id, worldName: 'workbench-test',
+        }, session);
+        return { id, context: { id: executionContextId, session }, loader: frame.loaderId };
+      } catch (error) {
+        // A replacement iframe can detach between DOM.describeNode and the target request.
+        if (!/Session with given id not found|No frame for given id/.test(error.message)) throw error;
+      }
     }, live ? 135000 : 5000);
   }
 
@@ -211,6 +218,22 @@ try {
 
   async function click(selector, context) {
     await evaluate(`document.querySelector(${JSON.stringify(selector)}).click()`, context);
+  }
+
+  async function pointerClick(selector, context) {
+    const button = await evaluate(`(() => {
+      const target = document.querySelector(${JSON.stringify(selector)});
+      target.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+      const rect = target.getBoundingClientRect();
+      return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 };
+    })()`, context);
+    const frame = context ? await evaluate(`(() => {
+      const rect = document.querySelector('#preview iframe[data-tool]').getBoundingClientRect();
+      return { x: rect.x, y: rect.y };
+    })()`) : { x: 0, y: 0 };
+    const point = { x: frame.x + button.x, y: frame.y + button.y, button: 'left', clickCount: 1 };
+    await cdp('Input.dispatchMouseEvent', { ...point, type: 'mousePressed', buttons: 1 });
+    await cdp('Input.dispatchMouseEvent', { ...point, type: 'mouseReleased', buttons: 0 });
   }
 
   async function screenshot(name) {
@@ -309,6 +332,26 @@ try {
         document.querySelector('#preview-title').textContent === item.textContent;
     })()`));
     return selected;
+  }
+
+  const visible = selector => evaluate(`Boolean(document.querySelector(${JSON.stringify(selector)})?.checkVisibility())`);
+  const guideCopy = () => evaluate('document.querySelector("#guide-copy")?.textContent.trim() || ""');
+  const waitGuide = message => until(async () => (await visible('#workspace-guide')) && message.test(await guideCopy()));
+
+  async function monitorGeneration() {
+    await evaluate(`(() => {
+      const fetchFromWorkbench = window.fetch;
+      window.testGenerationPosts = [];
+      window.testPublishPosts = [];
+      window.fetch = (url, options) => {
+        const path = String(url);
+        if (options?.method === 'POST') {
+          if (path.endsWith('/api/generate')) window.testGenerationPosts.push(JSON.parse(options.body).requirement);
+          if (path.includes('publish')) window.testPublishPosts.push(path);
+        }
+        return fetchFromWorkbench(url, options);
+      };
+    })()`);
   }
 
   await cdp('Target.setAutoAttach', { autoAttach: true, waitForDebuggerOnStart: false, flatten: true });
@@ -411,32 +454,122 @@ try {
       cases: ['blank', 'over-length', 'opaque-origin', 'provider timeout', 'provider 429', 'provider 402'] });
   }
   if (!live) await screenshot('initial');
-  assert.equal(await evaluate('document.querySelector("#generate").disabled'), true);
-  await type('#requirement', '   ');
-  assert.equal(await evaluate('document.querySelector("#generate").disabled'), true);
-  await click('#example');
-  assert.match(await evaluate('document.querySelector("#requirement").value'), /读书清单/);
-  assert.equal(await evaluate('document.querySelector("#preview iframe") === null'), true);
-  await evaluate('document.querySelector("#requirement").value = ""');
-  await type('#requirement', requirements[0]);
-  assert.equal(await evaluate('document.querySelector("#generate").disabled'), false,
-    '输入新需求后应允许点击生成');
+  if (entryFlow) {
+    stage = 'entry choices and first-use guide';
+    for (const selector of ['#quick-entry', '#direct-entry', '#idea-entry']) {
+      assert.equal(await visible(selector), true, `首页入口应可见 ${selector}`);
+    }
+    await waitGuide(/快速体验/);
+    await click('#guide-skip');
+    assert.equal(await visible('#workspace-guide'), false);
+    await cdp('Page.reload', { ignoreCache: true });
+    await until(() => evaluate('document.documentElement.dataset.ready === "true"'));
+    assert.equal(await visible('#workspace-guide'), false, '跳过引导后重新进入不应自动打开');
+    await click('#guide-start');
+    await waitGuide(/快速体验/);
 
-  stage = 'generate reading tool';
-  await click('#generate');
+    stage = 'three local samples are usable without upstream calls or saved tools';
+    const generatedDirectories = async () => (await readdir(join(root, 'runs'))).filter(name => name.startsWith('run-')).sort();
+    const before = await generatedDirectories();
+    assert.deepEqual((await library()).items, []);
+    await monitorGeneration();
+    await click('#quick-entry');
+    assert.equal(await visible('#quick-panel'), true);
+    await waitGuide(/用此模板生成/);
+    for (const [key, title] of [['board', '交付跟进板'], ['list', '读书清单'], ['budget', 'AA 分账']]) {
+      await click(`[data-entry-template="${key}"]`);
+      await click('#template-sample');
+      assert.equal(await visible('#sample-preview'), true);
+      assert.match(await evaluate('document.querySelector("#sample-title").textContent'), new RegExp(title));
+      const previous = await evaluate('document.querySelector("#sample-result").textContent');
+      if (key === 'budget') {
+        await evaluate('document.querySelector("#sample-amount").value = ""; document.querySelector("#sample-people").value = "";');
+        await type('#sample-amount', '96');
+        await type('#sample-people', '4');
+        await click('#sample-calculate');
+        assert.match(await evaluate('document.querySelector("#sample-result").textContent'), /24(?:\.00)?/);
+      } else {
+        const checkbox = '#sample-preview [data-sample-toggle]';
+        const checked = await evaluate(`document.querySelector(${JSON.stringify(checkbox)}).checked`);
+        await click(checkbox);
+        assert.equal(await evaluate(`document.querySelector(${JSON.stringify(checkbox)}).checked`), !checked);
+        assert.notEqual(await evaluate('document.querySelector("#sample-result").textContent'), previous);
+      }
+      await waitGuide(/用此模板生成/);
+      await click('#sample-close');
+      assert.equal(await visible('#sample-preview'), false);
+    }
+    assert.deepEqual(await generatedDirectories(), before);
+    assert.deepEqual((await library()).items, []);
+    assert.deepEqual(await evaluate('window.testGenerationPosts'), []);
+
+    stage = 'customize template prefills an editable direct requirement without generating';
+    await click('[data-entry-template="list"]');
+    await click('#template-customize');
+    assert.equal(await visible('#requirement'), true);
+    assert.match(await evaluate('document.querySelector("#requirement").value'), /读书清单/);
+    assert.equal(await evaluate('document.querySelector("#requirement").readOnly'), false);
+    assert.deepEqual(await evaluate('window.testGenerationPosts'), []);
+    await click('#quick-entry');
+    await click('[data-entry-template="list"]');
+    await waitGuide(/用此模板生成/);
+    stage = 'explicit template generation creates one real fixture tool';
+    await click('#template-generate');
+  } else {
+    assert.equal(await evaluate('document.querySelector("#generate").disabled'), true);
+    await type('#requirement', '   ');
+    assert.equal(await evaluate('document.querySelector("#generate").disabled'), true);
+    await click('#example');
+    assert.match(await evaluate('document.querySelector("#requirement").value'), /读书清单/);
+    assert.equal(await evaluate('document.querySelector("#preview iframe") === null'), true);
+    await evaluate('document.querySelector("#requirement").value = ""');
+    await type('#requirement', requirements[0]);
+    assert.equal(await evaluate('document.querySelector("#generate").disabled'), false,
+      '输入新需求后应允许点击生成');
+    stage = 'generate reading tool';
+    await click('#generate');
+  }
   const first = await activeTool();
   await recordRun(first);
   assert.match(await evaluate('document.querySelector("h1").innerText', first.context), /读书清单/);
+  if (entryFlow) {
+    assert.match(await evaluate('window.testGenerationPosts.join(" ")'), /读书清单/);
+    assert.equal(await evaluate('window.testGenerationPosts.length'), 1);
+    assert.deepEqual((await library()).items.map(item => item.id), [first.id]);
+    stage = 'guide waits for a real preview operation and publish remains locked';
+    await waitGuide(/预览/);
+    assert.equal(await visible('#publish-tool'), true);
+    assert.equal(await evaluate('document.querySelector("#publish-tool").disabled'), true);
+    assert.match(await evaluate('document.querySelector("#publish-explanation").textContent'), /应用发布暂未开放/);
+    await pointerClick('#publish-tool');
+    assert.equal(await evaluate(`(() => {
+      const target = document.querySelector('#publish-tool');
+      target.focus();
+      return document.activeElement === target;
+    })()`), false);
+    assert.deepEqual(await evaluate('window.testPublishPosts'), []);
+    evidence.tests.push({ id: 'TEST-015', result: 'passed', disabled: true, skippedByKeyboardFocus: true, publishRequests: 0 });
+  }
   const sample = '星际旅行手记';
   stage = 'add reading record';
   await type('#book', sample, first.context);
-  await click('form button', first.context);
+  if (entryFlow) await pointerClick('form button', first.context);
+  else await click('form button', first.context);
   await until(() => evaluate(`document.querySelector("#list").innerText.includes("${sample}")`, first.context));
   await until(async () => JSON.stringify((await stored(first.id)).entries).includes(sample));
+  let operatedTool = first;
+  if (entryFlow) {
+    stage = 'guide advances after actual preview operation and finding the generated tool';
+    await waitGuide(/我的工具/);
+    operatedTool = await selectHistory(first.id);
+    assert.match(await evaluate('document.querySelector("#list").innerText', operatedTool.context), /星际旅行手记/);
+    await until(async () => !(await visible('#workspace-guide')) || /完成/.test(await guideCopy()));
+    await screenshot('entry-guide-completed');
+  }
   await screenshot('record-added');
   if (!live) {
-    assert.equal(await evaluate('document.body.dataset.parentAccess', first.context), 'blocked');
-    assert.equal(await evaluate('document.body.dataset.network', first.context), 'blocked');
+    assert.equal(await evaluate('document.body.dataset.parentAccess', operatedTool.context), 'blocked');
+    assert.equal(await evaluate('document.body.dataset.network', operatedTool.context), 'blocked');
     assert.deepEqual(probeRequests, probeControls);
   }
   stage = 'reload workbench';
@@ -445,8 +578,13 @@ try {
   await until(() => evaluate('performance.getEntriesByType("navigation")[0]?.type === "reload"'));
   let restored = await activeTool();
   assert.equal(restored.id, first.id);
-  assert.notEqual(restored.loader, first.loader);
+  assert.notEqual(restored.loader, operatedTool.loader);
   assert.match(await evaluate('document.querySelector("#list").innerText', restored.context), /星际旅行手记/);
+  if (entryFlow) {
+    assert.equal(await visible('#workspace-guide'), false, '完成引导后重新进入不应自动打开');
+    evidence.tests.push({ id: 'TEST-016', result: 'passed', skippedAndReopened: true, sampleDidNotAdvance: true,
+      trustedPreviewOperation: true, foundSameTool: true, dismissedAfterReload: true });
+  }
   evidence.tests.push({ id: 'TEST-002', result: 'passed', tool: first.id, record: sample,
     reloadedDocument: true, isolationFixtureChecked: !live });
   await screenshot('record-restored');
@@ -540,17 +678,7 @@ try {
 
   async function addOldRecord(name) {
     await type('#book', name, restored.context);
-    const button = await evaluate(`(() => {
-      const rect = document.querySelector('form button').getBoundingClientRect();
-      return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 };
-    })()`, restored.context);
-    const frame = await evaluate(`(() => {
-      const rect = document.querySelector('#preview iframe[data-tool]').getBoundingClientRect();
-      return { x: rect.x, y: rect.y };
-    })()`);
-    const point = { x: frame.x + button.x, y: frame.y + button.y, button: 'left', clickCount: 1 };
-    await cdp('Input.dispatchMouseEvent', { ...point, type: 'mousePressed', buttons: 1 });
-    await cdp('Input.dispatchMouseEvent', { ...point, type: 'mouseReleased', buttons: 0 });
+    await pointerClick('form button', restored.context);
     assert.ok(await evaluate('document.querySelector("#list").innerText.includes(' + JSON.stringify(name) + ')', restored.context));
     await until(async () => JSON.stringify((await stored(restored.id)).entries).includes(name));
   }
@@ -962,6 +1090,27 @@ try {
         directReadStatus: 404, directWriteStatus: 404, staleSessionStatus: 409 });
 
     }
+  }
+  if (entryFlow) {
+    stage = 'explicit direct development submits one edited requirement';
+    const before = (await library()).items;
+    const previous = await evaluate('document.querySelector("#preview iframe[data-tool]")?.dataset.tool || ""');
+    await monitorGeneration();
+    await click('#direct-entry');
+    assert.equal(await visible('#requirement'), true);
+    await evaluate('document.querySelector("#requirement").value = ""');
+    const custom = '做一个夜读笔记的读书清单，支持新增书名并保存。';
+    await type('#requirement', custom);
+    assert.equal(await evaluate('document.querySelector("#generate").textContent'), '直接生成');
+    assert.deepEqual(await evaluate('window.testGenerationPosts'), []);
+    await click('#generate');
+    const directTool = await activeTool(previous);
+    await recordRun(directTool);
+    assert.deepEqual(await evaluate('window.testGenerationPosts'), [custom]);
+    assert.equal((await library()).items.length, before.length + 1);
+    evidence.tests.push({ id: 'TEST-011', result: 'passed', sampleTemplates: ['board', 'list', 'budget'],
+      zeroSampleGenerations: true, noSavedSampleTools: true, customizeWithoutRequest: true,
+      templateGenerationRequests: 1, directGenerationRequests: 1 });
   }
   evidence.status = 'passed';
 } catch (error) {

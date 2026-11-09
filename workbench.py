@@ -20,6 +20,7 @@ STATIC = {
     "/": ("index.html", "text/html; charset=utf-8"),
     "/updates": ("index.html", "text/html; charset=utf-8"),
     "/workbench.css": ("workbench.css", "text/css; charset=utf-8"),
+    "/entry.js": ("entry.js", "text/javascript; charset=utf-8"),
     "/workbench.js": ("workbench.js", "text/javascript; charset=utf-8"),
 }
 TOOL_PATH = re.compile(r"/api/tools/(run-[a-z0-9_]{8})")

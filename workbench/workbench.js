@@ -29,13 +29,21 @@ let failure = '';
 let restored = false;
 let editing = false;
 let pendingPublication = null;
+let entryMode = 'direct';
+let templateKey = 'board';
+let sampleTemplate = null;
+let guideStep = -1;
+let guideTool = null;
+let guideTarget = null;
 
 function render() {
   const pending = ['model', 'preview', 'restore', 'sync'].includes(phase);
   const syncing = Boolean(pendingPublication);
   const blocked = pending || syncing;
+  const showingSample = Boolean(sampleTemplate);
+  const showingTool = Boolean(active) && !showingSample;
   product.dataset.state = pending ? 'loading' : failure ? 'failure' : active ? 'success' : 'initial';
-  generate.textContent = pending ? '生成中…' : failure ? '重试' : editing ? '生成新版' : '生成工具';
+  generate.textContent = pending ? '生成中…' : failure ? '重试' : editing ? '生成新版' : '直接生成';
   generate.disabled = !session || !configured || !networkIsolated || phase === 'startup' || blocked || !requirement.value.trim();
   requirement.readOnly = blocked;
   byId('new-tool').disabled = blocked;
@@ -46,9 +54,9 @@ function render() {
     button.setAttribute('aria-current', String(selected));
     if (selected) currentTitle = button.textContent;
   }
-  byId('preview-title').textContent = currentTitle;
+  byId('preview-title').textContent = showingSample ? quickTemplates[sampleTemplate].title : currentTitle;
   byId('composer-title').textContent = editing ? '要怎样修改这个工具？' : '你想做什么工具？';
-  byId('revise-tool').hidden = byId('tool-history').hidden = syncing || !active;
+  byId('revise-tool').hidden = byId('tool-history').hidden = byId('publish-lock').hidden = syncing || !showingTool;
   byId('revise-tool').disabled = pending || !configured;
   byId('tool-history').textContent = active ? '工具 v' + active.version + ' · 版本历史' : '版本历史';
   const sync = byId('sync-tool');
@@ -73,13 +81,25 @@ function render() {
     else item.removeAttribute('aria-current');
   }
   const status = byId('preview-status');
-  status.toggleAttribute('data-usable', Boolean(active) && !syncing);
-  status.textContent = syncing ? '待同步 · 暂停编辑' : active
+  status.toggleAttribute('data-usable', showingTool && !syncing);
+  status.textContent = syncing ? '待同步 · 暂停编辑' : showingSample ? '样例试用 · 不保存' : active
     ? pending || failure ? '上次工具仍可用' : restored ? '已恢复' : '已就绪'
     : pending ? '等待预览' : '待生成';
-  byId('empty').hidden = Boolean(active) || syncing;
+  byId('empty').hidden = showingTool || showingSample || syncing;
   byId('empty-title').textContent = pending ? '等待预览' : '还没有生成工具';
   byId('empty-copy').textContent = pending ? '工具准备好后，会在这里显示。' : '输入需求后，工具会在这里出现。';
+  const fast = entryMode === 'fast';
+  byId('quick-panel').hidden = !fast;
+  form.hidden = fast && !failure;
+  byId('quick-entry').setAttribute('aria-pressed', String(fast));
+  byId('direct-entry').setAttribute('aria-pressed', String(!fast && !editing));
+  for (const button of [byId('quick-entry'), byId('direct-entry'), byId('template-sample'),
+    byId('template-customize'), ...document.querySelectorAll('[data-entry-template]')]) {
+    button.disabled = blocked;
+  }
+  byId('template-generate').disabled = blocked || !configured || !networkIsolated;
+  byId('guide-start').disabled = blocked;
+  renderGuide();
 }
 
 async function api(path, options) {
@@ -149,6 +169,118 @@ function compose(enabled) {
     workspace.append(composer);
   }
 }
+
+const guideSteps = [
+  ['quick-entry', '第 1 步 · 点「快速体验」，先挑一个示例。'],
+  ['template-generate', '第 2 步 · 选一个模板，点「用此模板生成」。也可以先试用样例。'],
+  ['preview', '第 3 步 · 在预览中实际操作一次，例如添加一条记录或计算结果。'],
+  ['tool-list', '第 4 步 · 到「我的工具」重新打开刚才生成的工具。'],
+];
+
+function renderGuide() {
+  const panel = byId('workspace-guide');
+  const step = guideSteps[guideStep];
+  const visible = Boolean(step) && !pendingPublication &&
+    (guideStep !== 1 || entryMode === 'fast') && (guideStep !== 2 || !sampleTemplate);
+  panel.hidden = !visible;
+  const nextTarget = visible ? byId(step[0]) : null;
+  if (nextTarget !== guideTarget) {
+    guideTarget?.removeAttribute('data-guide-target');
+    nextTarget?.setAttribute('data-guide-target', '');
+    guideTarget = nextTarget;
+  }
+  if (!nextTarget) return;
+  const anchor = [byId('quick-entry').parentElement, byId('quick-panel'), preview, byId('tool-list')][guideStep];
+  if (anchor.previousElementSibling !== panel) anchor.before(panel);
+  const copy = byId('guide-copy');
+  if (copy.textContent !== step[1]) copy.textContent = step[1];
+}
+
+function guidePreference() {
+  return 'root:workbench-guide:' + session.user;
+}
+
+function startGuide() {
+  guideTool = null;
+  guideStep = 0;
+}
+
+function dismissGuide() {
+  guideTool = null;
+  guideStep = -1;
+  try {
+    localStorage.setItem(guidePreference(), 'seen');
+  } catch {
+    // A restricted browser can still dismiss the guide in this document.
+  }
+}
+
+function restoreGuide() {
+  try {
+    if (localStorage.getItem(guidePreference()) === 'seen') return;
+  } catch {
+    // Offer the guide when a preference cannot be read.
+  }
+  startGuide();
+}
+
+function hideSample() {
+  if (!sampleTemplate) return;
+  sampleTemplate = null;
+  closeSample();
+  preview.hidden = false;
+}
+
+function enterQuickExperience() {
+  editing = false;
+  entryMode = 'fast';
+  failure = '';
+  compose(true);
+  if (guideStep === 0) guideStep = 1;
+  render();
+  byId('quick-panel').querySelector('[aria-pressed="true"]')?.focus();
+}
+
+byId('quick-entry').addEventListener('click', enterQuickExperience);
+byId('direct-entry').addEventListener('click', () => beginComposition(false, editing ? '' : requirement.value));
+byId('guide-start').addEventListener('click', () => {
+  if (phase !== 'idle' || pendingPublication) return;
+  startGuide();
+  beginComposition(false);
+  byId('quick-entry').focus();
+});
+byId('guide-skip').addEventListener('click', () => {
+  dismissGuide();
+  render();
+  byId('guide-start').focus();
+});
+for (const button of document.querySelectorAll('[data-entry-template]')) {
+  button.addEventListener('click', () => {
+    templateKey = button.dataset.entryTemplate;
+    renderEntryTemplate(templateKey);
+  });
+}
+byId('template-sample').addEventListener('click', () => {
+  sampleTemplate = templateKey;
+  showToolHistory(false);
+  preview.hidden = true;
+  openSample(templateKey);
+  render();
+  byId('sample-close').focus();
+});
+byId('sample-close').addEventListener('click', () => {
+  hideSample();
+  render();
+  byId('template-sample').focus();
+});
+byId('template-customize').addEventListener('click', () => {
+  beginComposition(false, quickTemplates[templateKey].requirement);
+});
+byId('template-generate').addEventListener('click', () => {
+  requirement.value = quickTemplates[templateKey].requirement;
+  render();
+  form.requestSubmit();
+});
 
 function versionRecord({ version, note, current, date, label, build }) {
   const row = document.createElement('li');
@@ -278,6 +410,15 @@ function initializeFrame(entries, token, parentOrigin, limit) {
   const reads = new Set();
   let paused = false;
   const report = (type, extra = {}) => send({ token, type, ...extra }, parentOrigin);
+  const reportOperation = event => {
+    if (paused || !event.isTrusted) return;
+    if (event.type === 'click') {
+      const control = event.target.closest?.('button, [role="button"]');
+      if (!control || control.disabled || (control.type === 'submit' && control.form)) return;
+    }
+    report('operation');
+  };
+  for (const type of ['click', 'change', 'submit']) window.addEventListener(type, reportOperation, true);
   window.addEventListener('message', event => {
     if (event.source !== parent || event.origin !== parentOrigin || event.data?.token !== token) return;
     if (event.data.type === 'pause-storage') {
@@ -371,6 +512,9 @@ window.addEventListener('message', event => {
     frame.reject(new Error('新工具预览初始化失败，需求已保留。'));
   } else if (type === 'storage-paused') {
     frame.acknowledgePause?.(event.data.reads);
+  } else if (type === 'operation' && guideStep === 2 && frame === active && frame.id === guideTool && !pendingPublication) {
+    guideStep = 3;
+    renderGuide();
   }
 });
 
@@ -547,6 +691,7 @@ example.addEventListener('click', () => {
 });
 function finishComposition() {
   editing = false;
+  entryMode = 'direct';
   requirement.value = '';
   compose(false);
 }
@@ -554,6 +699,8 @@ function finishComposition() {
 form.addEventListener('submit', async event => {
   event.preventDefault();
   if (generate.disabled) return;
+  const guidedGeneration = guideStep === 1 && entryMode === 'fast' && !editing;
+  hideSample();
   compose(true);
   failure = '';
   phase = 'model';
@@ -567,6 +714,10 @@ form.addEventListener('submit', async event => {
     render();
     if (editing) await openRevision(tool);
     else await openTool(tool);
+    if (guidedGeneration && guideStep === 1) {
+      guideTool = tool.id;
+      guideStep = 2;
+    }
     finishComposition();
     await loadLibrary().catch(error => warnStorage(error.message));
   } catch (error) {
@@ -589,6 +740,7 @@ byId('sync-tool').addEventListener('click', async () => {
 
 async function selectTool(id) {
   if (!networkIsolated || pendingPublication || phase !== 'idle' || !validToolId(id)) return;
+  hideSample();
   phase = 'restore';
   failure = '';
   render();
@@ -597,7 +749,9 @@ async function selectTool(id) {
     await openTool(await workspaceApi('/api/tools/' + id), true);
     if (editing) requirement.value = '';
     editing = false;
+    entryMode = 'direct';
     compose(false);
+    if (guideStep === 3 && guideTool === id) dismissGuide();
   } catch (error) {
     warnStorage(error.message);
   } finally {
@@ -606,10 +760,12 @@ async function selectTool(id) {
   }
 }
 
-function beginComposition(revise) {
+function beginComposition(revise, value = '') {
+  hideSample();
   editing = revise;
+  entryMode = 'direct';
   compose(true);
-  requirement.value = '';
+  requirement.value = value;
   failure = '';
   requirement.focus();
   render();
@@ -725,6 +881,7 @@ window.addEventListener('focus', async () => {
 async function start() {
   try {
     compose(true);
+    renderEntryTemplate(templateKey);
     loadReleases();
     renderRoute();
     const identity = await api('/api/session');
@@ -733,6 +890,7 @@ async function start() {
     renderRoute();
     if (!session) return;
     byId('account-name').textContent = session.user;
+    restoreGuide();
     ({ configured } = await api('/api/config'));
     networkIsolated = await confirmsNetworkPolicy();
     if (!networkIsolated) {

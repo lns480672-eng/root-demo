@@ -151,3 +151,15 @@ stage3_publish_recovery:
   build: v4-4551c7a53315
   evidence: runs/stage3-publish-fix/开发复验.md
   handoff: runs/stage3-publish-fix/handoff.json
+
+entry_checkpoint:
+  scope: [AC-011, AC-015, AC-016]
+  baseline_commit: 74f4b5b
+  build: v4-6bf99d98e553
+  entry: "http://127.0.0.1:8779/"
+  strategy_boxes_used: 1
+  red: runs/workbench-entry/red-entry-flow/workbench-check.json
+  oracle: "样例可操作且零模型请求，明确提交才生成；发布禁用；引导随真实操作推进并可跳过及重开"
+  evidence: runs/workbench-entry/final/开发自测.md
+  handoff: runs/workbench-entry/final/handoff.json
+  separate_g1_review: runs/workbench-entry/g1-需求助手与草稿.md

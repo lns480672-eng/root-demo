@@ -17,11 +17,13 @@
 !/design/root-workbench.html
 !/design/root-account.html
 !/design/root-version-history.html
+!/design/root-workbench-entry.html
 !/workbench/
 /workbench/*
 !/workbench/index.html
 !/workbench/workbench.css
 !/workbench/workbench.js
+!/workbench/entry.js
 !/tests/
 /tests/*
 !/tests/fixtures.py
