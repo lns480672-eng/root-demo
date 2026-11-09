@@ -15,10 +15,16 @@
 !/table_import.py
 !/verify-preview.mjs
 !/workbench.py
+!/public_site.py
+!/deploy-local/
+/deploy-local/*
+!/deploy-local/Caddyfile
+!/deploy-local/README.md
 !/README.md
 !/design/
 /design/*
 !/design/root-workbench.html
+!/design/root-public-site.html
 !/design/root-account.html
 !/design/root-version-history.html
 !/design/root-workbench-entry.html
@@ -36,6 +42,7 @@
 /tests/*
 !/tests/fixtures.py
 !/tests/verify-workbench.mjs
+!/tests/verify-site.mjs
 !/tests/test_generation.py
 !/tests/test_table_import.py
 !/tests/test_assistant_model.py
