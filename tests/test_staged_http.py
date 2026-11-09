@@ -1,15 +1,19 @@
 """TEST-018-B1 using the actual HTTP entry and controlled model dispatch."""
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import closing
 import hashlib
+from http.client import HTTPConnection
 import json
 from pathlib import Path
 import re
 import subprocess
 import sys
 import tempfile
+from threading import Barrier
 import time
 import unittest
 from urllib.error import HTTPError
+from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
 from uuid import uuid4
 
@@ -96,7 +100,8 @@ def stages(stage, requirement, prior, key, admit, record):
 generate.request_completion = ordinary
 runs = Path(sys.argv[1])
 store = Store(runs / "workspace.sqlite3")
-store.register({"username":"staged-operator","password":"test-only-password","invite":store.create_invite()})
+if len(sys.argv) == 2 or sys.argv[2] == "bootstrap":
+    store.register({"username":"staged-operator","password":"test-only-password","invite":store.create_invite()})
 def revise(stage, requirement, prior, key, admit, record, *, base):
     assert "persisted-marker" not in json.dumps(base, ensure_ascii=False)
     if base["kind"] == "table":
@@ -128,18 +133,29 @@ workbench.serve("fixture-key", 0, runs, staged_enabled=True, staged_provider=sta
 """
 
 
-class StagedHTTP(unittest.TestCase):
+class StagedHTTPFixture(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         directory = tempfile.TemporaryDirectory()
         cls.addClassCleanup(directory.cleanup)
         cls.runs = Path(directory.name)
-        cls.server = subprocess.Popen([sys.executable, "-B", "-c", PROGRAM, str(cls.runs)],
+        cls.start_server(bootstrap=True)
+        cls.store = Store(cls.runs / "workspace.sqlite3")
+
+    @classmethod
+    def start_server(cls, *, bootstrap=False):
+        mode = "bootstrap" if bootstrap else "restart"
+        cls.server = subprocess.Popen([sys.executable, "-B", "-c", PROGRAM, str(cls.runs), mode],
                                       stdout=subprocess.PIPE, text=True)
         cls.addClassCleanup(cls.server.stdout.close)
-        cls.addClassCleanup(lambda: (cls.server.terminate(), cls.server.wait(timeout=5)))
+        cls.addClassCleanup(cls.stop_server, cls.server)
         cls.base = re.search(r"http://127\.0\.0\.1:\d+", cls.server.stdout.readline()).group()
-        cls.store = Store(cls.runs / "workspace.sqlite3")
+
+    @staticmethod
+    def stop_server(server):
+        if server.poll() is None:
+            server.terminate()
+            server.wait(timeout=5)
 
     def request(self, path, data=None, auth=None):
         headers = {"Origin":self.base, "Content-Type":"application/json"}
@@ -183,6 +199,67 @@ class StagedHTTP(unittest.TestCase):
             time.sleep(0.05)
         self.fail(f"{state} not reached: {body['task']}")
 
+
+class StagedReconnectHTTP(StagedHTTPFixture):
+    def test_reconnect_replays_one_generation_and_publication_after_server_restart(self):
+        """TEST-020-04: retry only the original operation against the same SQLite and Git."""
+        owner = self.account("reconnect-owner")
+        other = self.account("reconnect-other")
+        requirement = "计算两个数字之和，验证重启后请求重放"
+        request_id = uuid4().hex
+        before = self.request("/api/trial", auth=owner)[1]["generation"]
+        start = Barrier(2, timeout=5)
+
+        def submit(_):
+            start.wait()
+            return self.gen(owner, requirement, request_id)
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            first, second = pool.map(submit, range(2))
+        self.assertEqual((first[0], second[0]), (202, 202))
+        task = first[1]["task"]["id"]
+        self.assertEqual(second[1]["task"]["id"], task)
+        self.assertEqual(self.wait_task(owner, task, "complete")["completed"], ["spec", "implementation", "assemble"])
+        self.assertEqual([item["id"] for item in self.request("/api/staged", auth=owner)[1]["tasks"]], [task])
+        path = "/api/staged/" + task
+        self.assertEqual(self.request(path, auth=other)[0], 404)
+        status, candidate, _ = self.request(path + "/candidate", {}, owner)
+        self.assertEqual(status, 200)
+        payload = {**candidate["staged"], "toolId":candidate["id"], "entries":[["calculation", "5"]]}
+        tool_path = "/api/tools/" + candidate["id"]
+
+        # Keep the response unread while another client observes the committed result.
+        with closing(HTTPConnection(urlsplit(self.base).netloc, timeout=5)) as connection:
+            connection.request("POST", path + "/publish", json.dumps(payload), {
+                "Origin":self.base, "Content-Type":"application/json", "Cookie":owner[0], "X-Root-Session":owner[1],
+            })
+            published = self.wait_task(owner, task, "published")
+        self.assertEqual(published["toolId"], candidate["id"])
+        status, snapshot, _ = self.request(tool_path, auth=owner)
+        self.assertEqual(status, 200)
+        self.assertEqual((snapshot["id"], snapshot["version"], snapshot["html"], snapshot["entries"]),
+                         (candidate["id"], 1, candidate["html"], payload["entries"]))
+        status, history, _ = self.request(tool_path + "/versions", auth=owner)
+        self.assertEqual(status, 200)
+        self.assertEqual([(item["version"], item["commit"]) for item in history["items"]],
+                         [(1, candidate["staged"]["commit"])])
+
+        self.stop_server(self.server)
+        self.start_server()
+        self.assertEqual(self.gen(owner, requirement, request_id)[:2], (202, {"task":published}))
+        self.assertEqual(self.request(path, auth=owner)[:2], (200, {"task":published}))
+        self.assertEqual(self.request(tool_path, auth=owner)[:2], (200, snapshot))
+        self.assertEqual(self.request(path, auth=other)[0], 404)
+        self.assertEqual(self.request(tool_path, auth=other)[0], 404)
+        self.assertEqual(self.request(path + "/publish", payload, owner)[:2], (200, {**snapshot, "applied":True}))
+        self.assertEqual(self.request(tool_path + "/versions", auth=owner)[:2], (200, history))
+        tools = self.request("/api/tools", auth=owner)[1]["items"]
+        self.assertEqual([(tool["id"], tool["version"]) for tool in tools], [(candidate["id"], 1)])
+        after = self.request("/api/trial", auth=owner)[1]["generation"]
+        self.assertEqual((after["used"] - before["used"], after["totalUsed"] - before["totalUsed"]), (1, 2))
+
+
+class StagedHTTP(StagedHTTPFixture):
     def test_one_endpoint_uses_the_plan_for_a_simple_tool(self):
         user = self.account("staged-routing")
         before = self.request("/api/trial", auth=user)[1]["generation"]["totalUsed"]

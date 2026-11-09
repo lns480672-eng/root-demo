@@ -212,21 +212,31 @@ export async function verifyStagedRegistration(ctx) {
     await evaluate(`(() => {
       const original = window.fetch;
       window.fetch = (path, options) => {
+        if (String(path).endsWith('/resolve-publish')) window.fixtureResolveCalls++;
         if (!String(path).endsWith('/publish')) return original(path, options);
-        window.fetch = original;
+        if (window.releaseLateStagedPublish) {
+          return original(path, options).then(() => { throw new TypeError('fixture: saved response missing'); });
+        }
         window.releaseLateStagedPublish = () => original(path, {...options, signal: undefined})
           .then(async response => ({status:response.status, code:(await response.json()).code}));
-        return Promise.reject(new TypeError('fixture: publish response missing'));
+        return Promise.resolve(new Response('{"error":"unavailable"}',
+          {status:502, headers:{'Content-Type':'application/json'}}));
       };
+      window.fixtureResolveCalls = 0;
     })()`);
   }
   await evaluate('window.releaseFixturePreview()');
   if (process.env.ROOT_STAGED_LIVE !== '1') {
+    await until(() => visible('#staged-sync'));
+    assert.equal(await evaluate('window.fixtureResolveCalls'), 0, '自动核对只能读取保存结果');
+    assert.equal(await evaluate('document.querySelector("#requirement").value'), input);
+    await click('#staged-sync');
     await until(async () => (await evaluate('document.querySelector("#staged-reason").textContent'))
       .includes('未查到已保存的工具'));
     assert.deepEqual(await evaluate('window.releaseLateStagedPublish()'),
       {status:409, code:'staged_candidate_changed'});
     assert.equal((await appRequest('/api/tools')).body.items.length, 0);
+    assert.equal(await evaluate('window.fixtureResolveCalls'), 1);
     await click('#staged-preview');
   }
   const tool = await activeTool();
@@ -267,6 +277,76 @@ export async function verifyStagedRegistration(ctx) {
   }
   evidence.tests.push({ id:'ROOT-GEN-IA-04', steps:task.steps, toolId:tool.id, restored:true, personal, dispatched });
   await screenshot('staged-registration-restored');
+}
+
+export async function verifyStagedReconnect(ctx) {
+  const { cdp, evaluate, until, base, click, visible, appRequest, login, generate,
+    activeTool, accountA, evidence, screenshot } = ctx;
+  const input = '做一份简单读书清单，新增书名并保存。';
+  const nextInput = input + ' 保留我输入的书名。';
+  await cdp('Emulation.setDeviceMetricsOverride', {width:390,height:844,deviceScaleFactor:1,mobile:true});
+  await cdp('Page.navigate', {url:base});
+  await login(accountA, true);
+  if (await visible('#workspace-guide')) await click('#guide-skip');
+  await generate(input);
+  const old = await activeTool();
+  const before = (await appRequest('/api/trial')).body.generation.used;
+  await click('#new-tool');
+  await evaluate(`(() => {
+    const original = window.fetch;
+    window.fixtureSubmissions = [];
+    window.fixtureReads = 0;
+    window.fetch = async (path, options) => {
+      if (path === '/api/staged' && window.fixtureSubmissions.length === 3 && !window.fixtureRestoreReads) {
+        window.fixtureReads++;
+        throw new TypeError('fixture: workbench unavailable');
+      }
+      if (path !== '/api/generate') return original(path, options);
+      window.fixtureSubmissions.push(JSON.parse(options.body));
+      if (window.fixtureSubmissions.length === 2) {
+        return new Response('{"error":"unavailable"}', {status:503, headers:{'Content-Type':'application/json'}});
+      }
+      const response = await original(path, options);
+      if (window.fixtureSubmissions.length !== 1) return response;
+      window.fixtureAcceptedTask = (await response.json()).task.id;
+      window.fixtureSubmissionBounded = !!options.signal;
+      return new Promise((resolve, reject) => {
+        if (options.signal?.aborted) reject(options.signal.reason);
+        else options.signal?.addEventListener('abort', () => reject(options.signal.reason), {once:true});
+      });
+    };
+  })()`);
+  await generate(nextInput);
+  const taskId = await until(() => evaluate('window.fixtureAcceptedTask'));
+  assert.equal(await evaluate('window.fixtureSubmissionBounded'), true, '提交已受理但无响应时，页面必须结束等待');
+  await until(() => visible('#error'));
+  assert.match(await evaluate('document.querySelector("#error").textContent'), /连接.*保留.*重试/);
+  assert.equal((await activeTool()).id, old.id);
+  assert.equal(await evaluate('document.querySelector("#preview iframe[data-tool]").inert'), false);
+  assert.equal(await evaluate('document.querySelector("#requirement").value'), nextInput);
+  await screenshot('submit-timeout-narrow');
+  await click('#generate');
+  await until(async () => await evaluate('window.fixtureSubmissions.length === 2') && await visible('#error'));
+  await click('#generate');
+  await until(() => visible('#staged-refresh'));
+  await until(() => evaluate('window.fixtureReads >= 1'));
+  await new Promise(resolve => setTimeout(resolve, 3200));
+  assert.equal(await evaluate('window.fixtureReads'), 1, '连接失败后停止本轮自动读取');
+  const requests = await evaluate('window.fixtureSubmissions');
+  assert.equal(requests.length, 3);
+  assert.match(requests[0].requestId, /^[a-f0-9]{32}$/);
+  assert.deepEqual(requests[0], requests[1]);
+  assert.deepEqual(requests[0], requests[2]);
+  await screenshot('task-read-retry-narrow');
+  await evaluate('window.fixtureRestoreReads = true');
+  await click('#staged-refresh');
+  const saved = await activeTool(old.id);
+  const task = (await appRequest(taskPath + taskId)).body.task;
+  assert.equal(task.state, 'published');
+  assert.equal(task.toolId, saved.id);
+  assert.equal((await appRequest('/api/tools')).body.items.length, 2);
+  assert.equal((await appRequest('/api/trial')).body.generation.used - before, 1);
+  evidence.tests.push({id:'TEST-020-01/03', taskId, toolId:saved.id, submissions:requests.length, personal:1});
 }
 
 export async function verifyStagedCalculator(ctx) {

@@ -66,6 +66,7 @@ function render() {
   const pending = ['model', 'preview', 'restore', 'sync', 'table'].includes(phase);
   const syncing = Boolean(pendingPublication);
   const pausingEdits = syncing && Boolean(pendingPublication.runId);
+  const stagedEditsPaused = Boolean(stagedPendingId && active?.iframe.inert);
   const blocked = pending || syncing || Boolean(stagedPendingId);
   const stagedTask = selectedStagedTask();
   const returning = !editing && stagedTask?.requirement === requirement.value.trim() &&
@@ -144,8 +145,9 @@ function render() {
     else item.removeAttribute('aria-current');
   }
   const status = byId('preview-status');
-  status.toggleAttribute('data-usable', showingTool && !pausingEdits);
-  status.textContent = pausingEdits ? '待同步 · 暂停编辑' : showingSample ? '样例试用 · 不保存' : active
+  status.toggleAttribute('data-usable', showingTool && !pausingEdits && !stagedEditsPaused);
+  status.textContent = stagedEditsPaused ? '待核对保存 · 暂停编辑'
+    : pausingEdits ? '待同步 · 暂停编辑' : showingSample ? '样例试用 · 不保存' : active
     ? pending || failure || syncing ? '上次工具仍可用' : tableMode ? '上次工具 · 可用' : restored ? '已恢复' : '已就绪'
     : syncing ? '新工具待同步' : pending ? '等待预览' : '待生成';
   byId('empty').hidden = showingTool || showingSample || syncing;
@@ -175,6 +177,9 @@ async function api(path, options) {
   try {
     response = await fetch(path, options);
     data = await response.json();
+    if (stagedEnabled && options?.signal && response.status >= 500 && !data?.code) {
+      throw new Error('Invalid workbench error response');
+    }
   } catch {
     const error = new Error('无法连接本机服务，请检查工作台是否正在运行。');
     error.code = 'transport';
@@ -276,7 +281,8 @@ function renderStagedTasks(blocked) {
   if (panel.hidden) return;
   const canAct = phase === 'idle' && networkIsolated && !pendingPublication;
   const list = byId('staged-task-list');
-  list.hidden = byId('staged-list-status').hidden = editing;
+  list.hidden = editing;
+  byId('staged-list-status').hidden = editing && !stagedLoadError;
   const signature = JSON.stringify(stagedTasks.map(({id, requirement, state}) => [id, requirement, state]));
   if (list.dataset.signature !== signature) {
     list.dataset.signature = signature;
@@ -302,6 +308,7 @@ function renderStagedTasks(blocked) {
     (stagedTasks.length || stagedPendingId ? '' : '暂无未完成任务。');
   const quotaBlocked = Boolean(trial && (trial.paused || !trial.generation.remaining || !trial.generation.totalRemaining));
   byId('staged-refresh').hidden = !stagedLoadError && !(task?.resumable && quotaBlocked);
+  byId('staged-refresh').disabled = phase !== 'idle';
   byId('staged-detail').hidden = !task && !stagedPendingId && !stagedActivity && !stagedMessage;
   const status = byId('staged-status');
   const statusText = stagedActivity || (stagedPendingId ? '保存结果待核对' : task ? stagedStates[task.state] || '' : '');
@@ -366,8 +373,13 @@ async function refreshStagedTasks() {
     }
     stagedTasks = tasks;
     stagedLoadError = '';
-  } catch {
+  } catch (error) {
     if (request !== stagedRead) return;
+    if (error.code === 'transport') {
+      stagedLoadError = '暂时无法连接工作台，请重新读取任务。';
+      render();
+      return;
+    }
     stagedLoadError = '暂时无法读取生成任务，请重试。';
   }
   const task = selectedStagedTask();
@@ -458,8 +470,8 @@ function labelTool(button, version) {
   button.setAttribute('aria-label', button.dataset.title + ' · 版本 ' + version);
 }
 
-async function loadLibrary() {
-  const { items, latest } = await workspaceApi('/api/tools');
+async function loadLibrary(timeout) {
+  const { items, latest } = await workspaceApi('/api/tools', undefined, timeout);
   const buttons = items.map(tool => {
     const li = document.createElement('li');
     const button = document.createElement('button');
@@ -891,12 +903,15 @@ function enqueueSave(frame, snapshot) {
     try {
       const saved = await workspaceApi('/api/tools/' + frame.id + '/data', {
         revision: frame.revision, version: frame.version, entries: JSON.parse(snapshot),
-      });
+      }, publicationTimeout);
       frame.revision = saved.revision;
       if (frame === active) warnStorage('');
     } catch (error) {
       frame.saveFailed = true;
-      if (frame === active) warnStorage(error.message + ' 本次修改未保存。');
+      if (frame === active) {
+        warnStorage(error.code === 'transport' ? '无法确认记录是否已保存，请从「我的工具」重新打开核对。'
+          : error.message + ' 本次修改未保存。');
+      }
     }
   });
 }
@@ -1137,34 +1152,34 @@ async function commitStaged(frame, tool) {
   }
   let saved;
   try {
-    saved = await resolveStagedPublication(taskId);
+    saved = await readStagedPublication(taskId);
   } catch {
-    throw new Error('暂时无法确认保存结果，请核对同一任务。');
+    // The original request may still publish.
   }
+  if (!saved) throw new Error('暂时无法确认保存结果，请点击「核对保存」。');
   rememberStagedPublication(null);
-  if (saved) return saved;
-  throw new Error('未查到已保存的工具，可重新检查原候选。');
+  return saved;
 }
 
 async function finishStagedComposition(id) {
   stagedTasks = stagedTasks.filter(task => task.id !== id);
   clearStagedSelection();
   finishComposition(true);
-  await loadLibrary().catch(error => warnStorage(error.message));
+  await loadLibrary(publicationTimeout).catch(error => warnStorage(error.message));
 }
 
-async function synchronizeStagedPublication() {
+async function synchronizeStagedPublication({ readOnly = false } = {}) {
   const id = stagedPendingId;
   if (!id) return;
   try {
-    const saved = await resolveStagedPublication(id);
+    const saved = await (readOnly ? readStagedPublication(id) : resolveStagedPublication(id));
     if (saved) {
       if (active?.id !== saved.id || active.revision !== saved.revision || active.version !== saved.version) {
         await openTool(saved, true);
       }
       rememberStagedPublication(null);
       await finishStagedComposition(id);
-    } else {
+    } else if (!readOnly) {
       rememberStagedPublication(null);
       if (active?.iframe.inert) resumeStorage(active);
       const snapshot = await workspaceApi('/api/staged/' + id, undefined, publicationTimeout).catch(() => null);
@@ -1281,7 +1296,7 @@ async function openTool(tool, restore = false) {
       frame.revision = saved.revision;
     } else {
       await workspaceApi('/api/tools/' + frame.id + '/open', { version: frame.version },
-        pendingPublication ? publicationTimeout : undefined);
+        pendingPublication || stagedPendingId ? publicationTimeout : undefined);
     }
     old?.iframe.remove();
     active = frame;
@@ -1375,10 +1390,10 @@ async function generateTable(table) {
   phase = 'table';
   render();
   try {
-    const tool = await workspaceApi('/api/table/generate', { table });
+    const tool = await workspaceApi('/api/table/generate', { table }, publicationTimeout);
     await openTool(tool);
     finishComposition(true);
-    await loadLibrary().catch(error => warnStorage(error.message));
+    await loadLibrary(publicationTimeout).catch(error => warnStorage(error.message));
   } catch (error) {
     if (pendingPublication) {
       if (await synchronizePublication()) return;
@@ -1411,7 +1426,7 @@ form.addEventListener('submit', async event => {
     const tool = await workspaceApi(path, {
       requirement: text, version,
       requestId: stagedEnabled ? stagedSubmission.id : undefined,
-    });
+    }, stagedEnabled ? publicationTimeout : undefined);
     stagedSubmission = null;
     if (stagedEnabled && tool.task) {
       rememberStagedTask(tool.task);
@@ -1419,7 +1434,7 @@ form.addEventListener('submit', async event => {
       stagedMessage = '';
       if (tool.task.state === 'published') {
         rememberStagedPublication(tool.task.id);
-        await synchronizeStagedPublication();
+        await synchronizeStagedPublication({ readOnly: true });
       }
       return;
     }
@@ -1435,7 +1450,9 @@ form.addEventListener('submit', async event => {
     }
     else {
       if (error.code !== 'transport') stagedSubmission = null;
-      failure = error.message + (error.issue ? ' 问题编号 ' + error.issue + '。' : '');
+      failure = stagedEnabled && error.code === 'transport'
+        ? '暂时无法连接工作台，需求已保留。服务恢复后可重试。'
+        : error.message + (error.issue ? ' 问题编号 ' + error.issue + '。' : '');
     }
   } finally {
     phase = 'idle';
@@ -1670,7 +1687,7 @@ async function start(registration = null) {
           phase = 'sync';
           stagedActivity = '正在核对保存';
           render();
-          await synchronizeStagedPublication();
+          await synchronizeStagedPublication({ readOnly: true });
           stagedActivity = '';
         }
       }
