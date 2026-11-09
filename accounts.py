@@ -249,12 +249,16 @@ class Store:
                                limit=TABLE_STORAGE_BYTES if table else TOOL_STORAGE_BYTES)
         with self.connection(write=True) as db:
             user = self.session(db, token, marker)
-            db.execute("INSERT INTO tools(id, owner, title, entries) VALUES (?,?,?,?)",
-                       (tool_id, user["id"], title, initial))
-            if table:
-                db.execute("INSERT INTO table_tools VALUES (?)", (tool_id,))
-            if model:
-                db.execute("INSERT INTO model_candidates VALUES (?,?)", (tool_id, tool_id))
+            self.insert_draft(db, user["id"], tool_id, title, initial, table=table, model=model)
+
+    @staticmethod
+    def insert_draft(db, owner, tool_id, title, entries, *, table=False, model=False):
+        db.execute("INSERT INTO tools(id, owner, title, entries) VALUES (?,?,?,?)",
+                   (tool_id, owner, title, entries))
+        if table:
+            db.execute("INSERT INTO table_tools VALUES (?)", (tool_id,))
+        if model:
+            db.execute("INSERT INTO model_candidates VALUES (?,?)", (tool_id, tool_id))
 
     @staticmethod
     def require_version(value, version):
@@ -347,31 +351,41 @@ class Store:
         db.execute("UPDATE accounts SET latest_tool=? WHERE id=?", (row["id"], row["owner"]))
         return {"revision": revision + 1, "version": version}
 
+    def commit_initial(self, db, row, entries, record):
+        limit = TABLE_STORAGE_BYTES if row["table_tool"] else TOOL_STORAGE_BYTES
+        packed = pack_entries(entries, limit=limit)
+        if not dict(json.loads(row["entries"])).items() <= dict(entries).items():
+            raise ApiError(409, "incompatible_data", "预览未能原样保留预填记录，请重试。")
+        revision = row["revision"] + 1
+        db.execute("UPDATE tools SET entries=?,revision=?,published=1 WHERE id=? AND owner=?",
+                   (packed, revision, row["id"], row["owner"]))
+        self.record_candidate_success(db, row, row["id"], record)
+        db.execute("INSERT INTO tool_versions VALUES (?,1,?,'首次生成',?)",
+                   (row["id"], row["id"], int(time.time())))
+        db.execute("UPDATE accounts SET latest_tool=? WHERE id=?", (row["id"], row["owner"]))
+        return {"revision": revision}
+
     def change_tool(self, token, marker, tool_id, action, data, *, record_model_success=None):
         with self.connection(write=True) as db:
             user = self.session(db, token, marker)
             row = self.owned_tool(db, user, tool_id, published=action != "commit")
             if action == "publish":
                 return self.publish_revision(db, row, data, record_model_success)
+            if action == "commit":
+                return self.commit_initial(db, row, data.get("entries"), record_model_success)
             revision = row["revision"]
             if action == "data":
                 self.require_version(data.get("version", 1), row["version"])
             if action == "open" and "version" in data:
                 self.require_version(data["version"], row["version"])
-            if action in ("commit", "data"):
+            if action == "data":
                 limit = TABLE_STORAGE_BYTES if row["table_tool"] else TOOL_STORAGE_BYTES
                 entries = pack_entries(data.get("entries"), limit=limit)
-                if action == "commit" and not dict(json.loads(row["entries"])).items() <= dict(data["entries"]).items():
-                    raise ApiError(409, "incompatible_data", "预览未能原样保留预填记录，请重试。")
-                if action == "data" and (type(data.get("revision")) is not int or data["revision"] != revision):
+                if type(data.get("revision")) is not int or data["revision"] != revision:
                     raise ApiError(409, "revision_conflict", "此工具已在别处更新，请重新打开后编辑。")
                 revision += 1
                 db.execute("UPDATE tools SET entries=?,revision=?,published=1 WHERE id=? AND owner=?",
                            (entries, revision, tool_id, user["id"]))
-            if action == "commit":
-                self.record_candidate_success(db, row, tool_id, record_model_success)
-                db.execute("INSERT INTO tool_versions VALUES (?,1,?,'首次生成',?)",
-                           (tool_id, tool_id, int(time.time())))
             if action != "data":
                 db.execute("UPDATE accounts SET latest_tool=? WHERE id=?", (tool_id, user["id"]))
             return {"revision": revision}

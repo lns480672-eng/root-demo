@@ -17,6 +17,9 @@ import generate
 import assistant_fixture
 import assistant_model
 import table_import
+import staged_blueprint
+from staged_jobs import StagedJobs
+from staged_route import choose_route
 from accounts import ApiError, SESSION_SECONDS, Store, TABLE_STORAGE_BYTES
 from trial_budget import TrialBudget
 
@@ -41,6 +44,9 @@ DRAFT_PATH = re.compile(DRAFTS + "/(" + UUID + ")")
 ANALYZE = "/api/assistant/analyze"
 TRIAL = "/api/trial"
 TRIAL_ADMIN = "/api/trial/admin"
+STAGED = "/api/staged"
+STAGED_TASK = re.compile(STAGED + r"/([a-f0-9]{32})")
+STAGED_ACTION = re.compile(STAGED + r"/([a-f0-9]{32})/(resume|candidate|publish)")
 TABLE_INSPECT = "/api/table/inspect"
 TABLE_GENERATE = "/api/table/generate"
 TABLE_CONFIG = "/api/table/config"
@@ -93,7 +99,8 @@ class ToolTitle(HTMLParser):
 def build_id(assets):
     digest = hashlib.sha256()
     for name in ("generate.py", "workbench.py", "accounts.py", "assistant_fixture.py", "assistant_model.py",
-                 "table_import.py", "trial_budget.py"):
+                 "table_import.py", "trial_budget.py", "staged_blueprint.py", "staged_jobs.py", "staged_route.py",
+                 "workbench/staged-runtime.js"):
         digest.update(name.encode() + b"\0" + (ROOT / name).read_bytes() + b"\0")
     for path, body in assets.items():
         digest.update(path.encode() + b"\0" + body + b"\0")
@@ -118,12 +125,36 @@ def session_cookie(token, max_age=SESSION_SECONDS):
 
 
 def serve(key, port, runs=generate.RUNS, *, generation_limits=(5, 30), analysis_limits=(6, 60),
-          admin_usernames=(), analysis_provider=assistant_model.analyze, table_limits=None):
+          admin_usernames=(), analysis_provider=assistant_model.analyze, table_limits=None,
+          staged_enabled=False, staged_provider=staged_blueprint.provide):
     model_lock = threading.Lock()
     store = Store(runs / "workspace.sqlite3")
     budget = TrialBudget(store, runs, generation_limits=generation_limits, analysis_limits=analysis_limits,
                          admin_usernames=admin_usernames)
     table_limits = table_limits or table_import.TableLimits()
+
+    def stage_receipt(task, dispatch, receipt):
+        try:
+            with (runs / "staged-usage.jsonl").open("a", encoding="utf-8") as log:
+                log.write(json.dumps({"task":task, "dispatch":dispatch, **receipt}, ensure_ascii=False) + "\n")
+        except OSError:
+            pass
+
+    staged = StagedJobs(store, budget, runs, staged_blueprint, record=stage_receipt) if staged_enabled else None
+
+    def stage_provider(stage, requirement, prior, admit, record):
+        if not model_lock.acquire(timeout=20):
+            raise ApiError(409, "staged_busy", "模型服务正在处理其他请求，请稍后继续。")
+        try:
+            return staged_provider(stage, requirement, prior, key, admit, record)
+        finally:
+            model_lock.release()
+
+    def start_staged(token, marker, task, *, resume):
+        fence = staged.claim(token, marker, task, resume=resume)
+        if fence is not None:
+            threading.Thread(target=staged.run, args=(task, fence, stage_provider), daemon=True).start()
+        return staged.status(token, marker, task)
     assets = {url: (ROOT / "workbench" / name).read_bytes()
               for url, (name, _) in STATIC.items()}
     build = build_id(assets)
@@ -146,6 +177,8 @@ def serve(key, port, runs=generate.RUNS, *, generation_limits=(5, 30), analysis_
                 paths = (*STATIC, "/api/config", "/api/releases", "/api/session", "/api/register", "/api/login", "/api/logout",
                          "/api/generate", "/api/tools", "/api/tools/*", DRAFTS, DRAFTS + "/*", ANALYZE,
                          TABLE_INSPECT, TABLE_GENERATE, TABLE_CONFIG, TRIAL, TRIAL_ADMIN)
+                if staged:
+                    paths += (STAGED, STAGED + "/*")
                 allowed = " ".join(f'"http://{host}{path}"' for path in paths)
                 self.send_header("Connection-Allowlist", f"({allowed}); webrtc=block")
             if cookie is not None:
@@ -197,7 +230,10 @@ def serve(key, port, runs=generate.RUNS, *, generation_limits=(5, 30), analysis_
                 self.send_bytes(200, assets[self.path], mime,
                                 SHELL_POLICY if self.path in ("/", "/updates") else None)
             elif self.path == "/api/config":
-                self.send_json(200, {"configured": bool(key), "build": build})
+                config = {"configured": bool(key), "build": build}
+                if staged:
+                    config["staged"] = True
+                self.send_json(200, config)
             elif self.path == "/api/releases":
                 items = [{"version": version, "date": date, "build": source or build, "note": note}
                          for version, date, source, note in RELEASES]
@@ -223,6 +259,10 @@ def serve(key, port, runs=generate.RUNS, *, generation_limits=(5, 30), analysis_
                 balance = budget.balance(self.cookie_token(), self.marker())
                 self.send_json(200, {**balance, "analysisMode": (
                     "fixture" if analysis_provider is assistant_fixture.provider else "deepseek")})
+            elif staged and self.path == STAGED:
+                self.send_json(200, {"tasks":staged.list(self.cookie_token(), self.marker())})
+            elif staged and (match := STAGED_TASK.fullmatch(self.path)):
+                self.send_json(200, {"task":staged.status(self.cookie_token(), self.marker(), match[1])})
             elif self.path == TRIAL_ADMIN:
                 self.send_json(200, budget.admin_state(self.cookie_token(), self.marker()))
             elif self.path == TABLE_CONFIG:
@@ -246,12 +286,15 @@ def serve(key, port, runs=generate.RUNS, *, generation_limits=(5, 30), analysis_
                 self.error(404, "not_found", "页面不存在。")
 
         def send_tool(self, row, draft=None, *, applied=None):
+            html = self.read_tool_html(draft or row["run_id"])
+            backup = staged and not draft and row["version"] == 1 and staged.published_backup(row["id"], html)
             self.send_json(200, {
-                "id": row["id"], "html": self.read_tool_html(draft or row["run_id"]),
+                "id": row["id"], "html": html,
                 "entries": json.loads(row["entries"]), "revision": row["revision"],
                 "version": row["version"] + bool(draft), **({"runId": draft} if draft else {}),
                 **({"storageLimit": TABLE_STORAGE_BYTES} if row["table_tool"] else {}),
                 **({"applied": applied} if applied is not None else {}),
+                **({"stagedBackup": True} if backup else {}),
             })
 
         def read_tool_html(self, tool_id):
@@ -273,7 +316,7 @@ def serve(key, port, runs=generate.RUNS, *, generation_limits=(5, 30), analysis_
                 size = int(self.headers.get("Content-Length", "0"))
                 if self.path == TABLE_INSPECT:
                     cap = 6 * table_limits.bytes + 65536
-                elif self.path == TABLE_GENERATE or TOOL_ACTION.fullmatch(self.path):
+                elif self.path == TABLE_GENERATE or TOOL_ACTION.fullmatch(self.path) or STAGED_ACTION.fullmatch(self.path):
                     cap = 2 * TABLE_STORAGE_BYTES
                 else:
                     cap = 16000
@@ -319,6 +362,15 @@ def serve(key, port, runs=generate.RUNS, *, generation_limits=(5, 30), analysis_
                 return
             if self.path == TRIAL_ADMIN:
                 self.send_json(200, budget.admin_action(token, self.marker(), data))
+                return
+            if staged and (match := STAGED_ACTION.fullmatch(self.path)):
+                marker = self.marker()
+                if match[2] == "resume":
+                    self.send_json(202, {"task":start_staged(token, marker, match[1], resume=True)})
+                elif match[2] == "candidate":
+                    self.send_json(200, staged.candidate(token, marker, match[1]))
+                else:
+                    self.send_tool(staged.publish(token, marker, match[1], data), applied=True)
                 return
             if self.path in (TABLE_INSPECT, TABLE_GENERATE):
                 with store.connection() as db:
@@ -397,6 +449,14 @@ def serve(key, port, runs=generate.RUNS, *, generation_limits=(5, 30), analysis_
             if not key:
                 self.error(503, "key_required", "请在本机服务配置 DeepSeek Key。")
                 return
+            if staged and tool_id is None:
+                route = choose_route(requirement)
+                if route == "unsupported":
+                    raise ApiError(422, "staged_unsupported", "此复杂需求包含外部协同或联网操作，当前分阶段工具无法支持。原需求仍可编辑。")
+                if route == "staged":
+                    task = staged.create(token, marker, requirement, data.get("requestId"))
+                    self.send_json(202, {"task":start_staged(token, marker, task["id"], resume=False)})
+                    return
             model_input = None
             if tool_id:
                 previous = self.read_tool_html(row["run_id"])
@@ -481,7 +541,8 @@ def main():
     except ValueError as error:
         parser.error(str(error))
     serve(key, args.port, args.runs_dir, generation_limits=generation_limits, analysis_limits=analysis_limits,
-          admin_usernames=admins, table_limits=table_limits)
+          admin_usernames=admins, table_limits=table_limits,
+          staged_enabled=os.environ.get("ROOT_STAGED_ENABLED") == "1")
     return 0
 
 

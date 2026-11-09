@@ -6,10 +6,11 @@ from pathlib import Path
 import re
 import sqlite3
 import subprocess
+import tempfile
 import time
 import uuid
 
-from accounts import ApiError
+from accounts import ApiError, pack_entries
 
 MAX_ATTEMPTS = 8
 LEASE_SECONDS = 90
@@ -35,7 +36,8 @@ class StagedJobs:
                  max_attempts=MAX_ATTEMPTS, lease_seconds=LEASE_SECONDS, retain_seconds=RETAIN_SECONDS):
         self.store = store
         self.budget = budget
-        self.root = Path(runs) / "staged-repositories"
+        self.runs = Path(runs)
+        self.root = self.runs / "staged-repositories"
         self.blueprint = blueprint
         self.clock = clock
         self.record = record
@@ -57,7 +59,17 @@ class StagedJobs:
                     id TEXT PRIMARY KEY, task TEXT NOT NULL REFERENCES staged_jobs(id),
                     stage INTEGER NOT NULL, fence INTEGER NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS staged_candidates (
+                    task TEXT PRIMARY KEY REFERENCES staged_jobs(id), tool_id TEXT NOT NULL UNIQUE,
+                    commit_id TEXT NOT NULL, digest TEXT NOT NULL, nonce TEXT NOT NULL
+                );
             """)
+        with store.connection(write=True) as db:
+            columns = {row["name"] for row in db.execute("PRAGMA table_info(staged_jobs)")}
+            if "updated_at" not in columns:
+                db.execute("ALTER TABLE staged_jobs ADD COLUMN updated_at REAL NOT NULL DEFAULT 0")
+            if "failure" not in columns:
+                db.execute("ALTER TABLE staged_jobs ADD COLUMN failure TEXT")
 
     @staticmethod
     def unavailable():
@@ -81,28 +93,41 @@ class StagedJobs:
     def latest(self, db, owner):
         return db.execute("""
             SELECT * FROM staged_jobs WHERE owner=? AND expires>?
-            AND state NOT IN ('published','exhausted')
-            ORDER BY expires DESC LIMIT 1
+            AND state NOT IN ('published','exhausted','unsupported')
+            ORDER BY updated_at DESC, expires DESC LIMIT 1
         """, (owner, self.clock())).fetchone()
 
-    def view(self, row):
+    def view(self, row, db=None):
         state = row["state"]
         if row["expires"] <= self.clock() and state != "published":
             state = "expired"
         elif state == "running" and row["lease_until"] <= self.clock():
             state = "interrupted"
         done = row["next_stage"]
-        return {"id":row["id"], "requirement":row["requirement"], "state":state,
-                "completed":list(self.stages[:done]), "stage":self.stages[done] if done < len(self.stages) else None,
-                "issue":row["issue"], "resumable":state in ("failed", "interrupted")}
+        result = {"id":row["id"], "requirement":row["requirement"], "state":state,
+                  "completed":list(self.stages[:done]), "stage":self.stages[done] if done < len(self.stages) else None,
+                  "issue":row["issue"], "reason":row["failure"],
+                  "resumable":state in ("queued", "failed", "interrupted")}
+        if state == "published" and db is not None:
+            result["toolId"] = self.candidate_record(db, row["id"])["tool_id"]
+        return result
 
     def status(self, token, marker, identifier=None):
         with self.store.connection() as db:
             if identifier is not None:
-                return self.view(self.owned(db, token, marker, identifier))
+                return self.view(self.owned(db, token, marker, identifier), db)
             owner = self.store.session(db, token, marker)["id"]
             row = self.latest(db, owner)
             return self.view(row) if row else None
+
+    def list(self, token, marker):
+        with self.store.connection() as db:
+            owner = self.store.session(db, token, marker)["id"]
+            rows = db.execute("""
+                SELECT * FROM staged_jobs WHERE owner=? AND state!='published'
+                ORDER BY updated_at DESC, expires DESC LIMIT 30
+            """, (owner,)).fetchall()
+            return [self.view(row) for row in rows]
 
     def create(self, token, marker, requirement, request_id):
         if (not isinstance(request_id, str) or not IDENTIFIER.fullmatch(request_id)
@@ -116,13 +141,11 @@ class StagedJobs:
             if existing is not None:
                 if existing["requirement"] != requirement:
                     raise ApiError(409, "staged_request_changed", "同一请求编号的需求不能变更。")
-                return self.view(existing)
-            if self.latest(db, owner) is not None:
-                raise ApiError(409, "staged_pending", "已有一项分阶段任务，请先继续该任务。")
+                return self.view(existing, db)
             identifier = uuid.uuid4().hex
             db.execute("""
-                INSERT INTO staged_jobs(id,owner,request_id,requirement,head,expires) VALUES (?,?,?,?,?,?)
-            """, (identifier, owner, request_id, requirement, ZERO, self.clock() + self.retain_seconds))
+                INSERT INTO staged_jobs(id,owner,request_id,requirement,head,expires,updated_at) VALUES (?,?,?,?,?,?,?)
+            """, (identifier, owner, request_id, requirement, ZERO, self.clock() + self.retain_seconds, self.clock()))
             return self.view(self.row(db, identifier))
 
     def repo(self, row):
@@ -158,9 +181,9 @@ class StagedJobs:
     def advance_row(self, db, row, oid):
         next_stage = row["next_stage"] + 1
         complete = next_stage == len(self.stages)
-        db.execute("UPDATE staged_jobs SET next_stage=?,head=?,state=?,lease_until=? WHERE id=?",
+        db.execute("UPDATE staged_jobs SET next_stage=?,head=?,state=?,lease_until=?,updated_at=? WHERE id=?",
                    (next_stage, oid, "complete" if complete else "running",
-                    0 if complete else self.clock() + self.lease_seconds, row["id"]))
+                    0 if complete else self.clock() + self.lease_seconds, self.clock(), row["id"]))
 
     def recover(self, db, row):
         tip = self.tip(row)
@@ -196,8 +219,8 @@ class StagedJobs:
                 self.repo(row).mkdir(parents=True, mode=0o700, exist_ok=True)
                 self.git(row, "init", "--bare", "--object-format=sha1", "--template=")
             fence = row["fence"] + 1
-            db.execute("UPDATE staged_jobs SET state='running',fence=?,lease_until=?,issue=NULL WHERE id=?",
-                       (fence, self.clock() + self.lease_seconds, identifier))
+            db.execute("UPDATE staged_jobs SET state='running',fence=?,lease_until=?,issue=NULL,failure=NULL,updated_at=? WHERE id=?",
+                       (fence, self.clock() + self.lease_seconds, self.clock(), identifier))
             return fence
 
     def worker(self, db, identifier, fence, expected):
@@ -260,11 +283,12 @@ class StagedJobs:
                 self.checkpoint(identifier, fence, index, stage, content, prior)
         except (ApiError, OSError, ValueError, subprocess.SubprocessError, sqlite3.Error) as error:
             issue = uuid.uuid4().hex[:12]
-            exhausted = isinstance(error, ApiError) and error.code == "staged_exhausted"
+            code = error.code if isinstance(error, ApiError) else ""
+            state = {"staged_exhausted":"exhausted", "staged_unsupported":"unsupported"}.get(code, "failed")
             with self.store.connection(write=True) as db:
-                db.execute("""UPDATE staged_jobs SET state=?,lease_until=0,issue=?
+                db.execute("""UPDATE staged_jobs SET state=?,lease_until=0,issue=?,failure=?,updated_at=?
                               WHERE id=? AND fence=? AND state='running' AND lease_until>?""",
-                           ("exhausted" if exhausted else "failed", issue, identifier, fence, self.clock()))
+                           (state, issue, code or "staged_storage", self.clock(), identifier, fence, self.clock()))
 
     def artifact(self, token, marker, identifier):
         with self.store.connection() as db:
@@ -279,3 +303,72 @@ class StagedJobs:
                 or manifest.get("stage") != "assemble" or manifest.get("sha256") != identity["sha256"]):
             raise ApiError(503, "staged_artifact_invalid", "生成候选无法校验。")
         return identity, content
+
+    @staticmethod
+    def candidate_record(db, identifier):
+        return db.execute("SELECT * FROM staged_candidates WHERE task=?", (identifier,)).fetchone()
+
+    def candidate(self, token, marker, identifier):
+        identity, html = self.artifact(token, marker, identifier)
+        with self.store.connection(write=True) as db:
+            row = self.owned(db, token, marker, identifier)
+            if self.view(row)["state"] != "complete" or identity["commit"] != row["head"]:
+                raise ApiError(409, "staged_not_ready", "此任务尚未生成可预览的候选，或已发布。")
+            candidate = self.candidate_record(db, identifier)
+            if candidate is None:
+                tool_id = Path(tempfile.mkdtemp(prefix="run-", dir=self.runs)).name
+                db.execute("INSERT INTO staged_candidates VALUES (?,?,?,?,?)",
+                           (identifier, tool_id, identity["commit"], identity["sha256"], uuid.uuid4().hex))
+                candidate = self.candidate_record(db, identifier)
+            if candidate["commit_id"] != identity["commit"] or candidate["digest"] != identity["sha256"]:
+                raise ApiError(409, "staged_candidate_changed", "候选已变化，请重新准备预览。")
+            result = {"id":candidate["tool_id"], "html":html.decode(), "entries":[], "revision":0, "version":1,
+                      "staged":{**identity, "nonce":candidate["nonce"]}}
+            if self.permits_backup(row):
+                result["stagedBackup"] = True
+            return result
+
+    def permits_backup(self, row):
+        previous = {name:self.read(row, row["head"], name) for name in ("spec.json","entry.json")}
+        return self.blueprint.permits_backup(previous)
+
+    def published_backup(self, tool_id, html):
+        with self.store.connection() as db:
+            row = db.execute("""
+                SELECT job.* FROM staged_jobs job JOIN staged_candidates c ON c.task=job.id
+                WHERE c.tool_id=? AND c.commit_id=job.head AND c.digest=? AND job.state='published'
+            """, (tool_id, digest(html.encode()))).fetchone()
+        if row is None:
+            return False
+        try:
+            return self.permits_backup(row)
+        except (ValueError, OSError, subprocess.SubprocessError):
+            return False
+
+    def publish(self, token, marker, identifier, data):
+        identity, html = self.artifact(token, marker, identifier)
+        with self.store.connection(write=True) as db:
+            row = self.owned(db, token, marker, identifier)
+            candidate = self.candidate_record(db, identifier)
+            if (candidate is None or candidate["commit_id"] != row["head"]
+                    or candidate["tool_id"] != data.get("toolId") or candidate["nonce"] != data.get("nonce")
+                    or candidate["digest"] != identity["sha256"] or identity["sha256"] != data.get("sha256")
+                    or identity["commit"] != data.get("commit")):
+                raise ApiError(409, "staged_candidate_changed", "候选和预览快照不匹配，请重新准备预览。")
+            state = self.view(row)["state"]
+            if state not in ("complete", "published"):
+                raise ApiError(409, "staged_not_ready", "此任务尚未生成可发布的候选。")
+            owner = {"id":row["owner"]}
+            tool_id = candidate["tool_id"]
+            if state == "complete":
+                spec = json.loads(self.read(row, row["head"], "spec.json"))
+                title = " ".join(spec["title"].split())[:48]
+                run = self.runs / tool_id
+                path = run / "app.pending"
+                path.write_bytes(html)
+                path.replace(run / "app.html")
+                self.store.insert_draft(db, row["owner"], tool_id, title, pack_entries([]), model=True)
+                tool = self.store.owned_tool(db, owner, tool_id, published=False)
+                self.store.commit_initial(db, tool, data.get("entries"), self.budget.record_generation_success)
+                db.execute("UPDATE staged_jobs SET state='published' WHERE id=?", (identifier,))
+            return self.store.owned_tool(db, owner, tool_id)
