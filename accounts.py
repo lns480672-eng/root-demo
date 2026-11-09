@@ -21,6 +21,18 @@ class ApiError(Exception):
         self.code = code
 
 
+class InviteError(ApiError):
+    def __init__(self, reason):
+        messages = {
+            "missing": "请输入邀请码。",
+            "invalid": "邀请码无效，请核对后再试。",
+            "expired": "邀请码已过期，请向邀请人索取新码。",
+            "used": "邀请码已使用，请向邀请人索取新码。",
+        }
+        super().__init__(400, "invalid_invite", messages[reason])
+        self.reason = reason
+
+
 def digest(token):
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
@@ -108,10 +120,16 @@ class Store:
     def register(self, data, previous_token=""):
         name, password = credentials(data, registering=True)
         invite = data.get("invite")
-        error = ApiError(400, "invalid_invite", "邀请码无效、已过期或已用完，请确认后再试。")
-        if not isinstance(invite, str) or not 1 <= len(invite.strip()) <= 128:
-            raise error
-        code = digest(invite.strip())
+        if invite is None:
+            raise InviteError("missing")
+        if not isinstance(invite, str):
+            raise InviteError("invalid")
+        invite = invite.strip()
+        if not invite:
+            raise InviteError("missing")
+        if len(invite) > 128:
+            raise InviteError("invalid")
+        code = digest(invite)
         salt = secrets.token_bytes(16)
         hashed = password_hash(password, salt)
         with self.connection(write=True) as db:
@@ -120,7 +138,12 @@ class Store:
                 (code, int(time.time())),
             )
             if not used.rowcount:
-                raise error
+                invite_row = db.execute("SELECT remaining FROM invites WHERE digest=?", (code,)).fetchone()
+                if invite_row is None:
+                    raise InviteError("invalid")
+                if invite_row["remaining"] <= 0:
+                    raise InviteError("used")
+                raise InviteError("expired")
             try:
                 account = db.execute("INSERT INTO accounts(username,salt,password_hash) VALUES (?,?,?)",
                                      (name, salt, hashed))

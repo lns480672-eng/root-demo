@@ -19,7 +19,7 @@ import assistant_model
 import table_import
 import staged_blueprint
 from staged_jobs import StagedJobs
-from accounts import ApiError, SESSION_SECONDS, Store, TABLE_STORAGE_BYTES, TOOL_STORAGE_BYTES
+from accounts import ApiError, InviteError, SESSION_SECONDS, Store, TABLE_STORAGE_BYTES, TOOL_STORAGE_BYTES
 from trial_budget import TrialBudget
 
 ROOT = Path(__file__).resolve().parent
@@ -218,7 +218,9 @@ def serve(key, port, runs=generate.RUNS, *, generation_limits=(5, 30), analysis_
                 self.handle_error(error)
 
         def handle_error(self, error):
-            if isinstance(error, ApiError):
+            if isinstance(error, InviteError):
+                self.send_json(error.status, {"code": error.code, "message": str(error), "inviteReason": error.reason})
+            elif isinstance(error, ApiError):
                 self.error(error.status, error.code, str(error))
             else:
                 self.error(503, "storage_unavailable", "本机数据暂时无法读取或保存，请重试。")

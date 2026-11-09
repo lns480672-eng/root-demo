@@ -48,7 +48,8 @@
         <form id="auth-form" aria-labelledby="auth-title">
           <div class="auth-field" id="invite-field" hidden>
             <label for="invite">邀请码</label>
-            <input id="invite" maxlength="128" autocomplete="off" placeholder="输入评审邀请码" aria-describedby="invite-error">
+            <input id="invite" maxlength="128" autocomplete="off" placeholder="输入评审邀请码" aria-describedby="invite-hint invite-error">
+            <p id="invite-hint" class="auth-hint">请向邀请你体验 ROOT 的项目方获取邀请码。</p>
             <p id="invite-error" class="elys-error" role="alert" hidden></p>
           </div>
           <div class="auth-field">

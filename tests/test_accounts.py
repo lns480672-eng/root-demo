@@ -246,15 +246,29 @@ class AccountHTTP(unittest.TestCase):
         return cookie, state["marker"]
 
     def test_invitation_and_revocation(self):
-        expired = self.store.create_invite(hours=-1)
-        for invite in (None, "wrong-invite", expired):
-            self.assertEqual(self.register("invite-check", invite)[1]["code"], "invalid_invite")
+        expired = self.store.create_invite(hours=0)
+        used_and_expired = self.store.create_invite(uses=0, hours=-1)
+        for invite, reason, text in (
+            (None, "missing", "请输入邀请码"),
+            ("", "missing", "请输入邀请码"),
+            ("  ", "missing", "请输入邀请码"),
+            (False, "invalid", "邀请码无效"),
+            ("x" * 129, "invalid", "邀请码无效"),
+            ("wrong-invite", "invalid", "邀请码无效"),
+            (expired, "expired", "邀请码已过期"),
+            (used_and_expired, "used", "邀请码已使用"),
+        ):
+            with self.subTest(reason=reason, text=text):
+                status, body = self.register("invite-check", invite)
+                self.assertEqual((status, body.get("code"), body.get("inviteReason")), (400, "invalid_invite", reason))
+                self.assertIn(text, body["message"])
         self.assertEqual(self.request("/api/login", {
             "username": "invite-check", "password": "fixture-test-password!",
         })[0], 401)
         invite = self.store.create_invite()
         self.assertEqual(self.register("invite-check", invite)[0], 201)
-        self.assertEqual(self.register("second-invite", invite)[1]["code"], "invalid_invite")
+        status, body = self.register("second-invite", invite)
+        self.assertEqual((status, body.get("code"), body.get("inviteReason")), (400, "invalid_invite", "used"))
         self.assertEqual(self.request("/api/login", {
             "username": "invite-check", "password": "incorrect",
         })[0], 401)
@@ -267,8 +281,21 @@ class AccountHTTP(unittest.TestCase):
     def test_invite_consumption_is_atomic(self):
         invite = self.store.create_invite()
         with ThreadPoolExecutor(2) as pool:
-            statuses = list(pool.map(lambda name: self.register(name, invite)[0], ["invite-race-a", "invite-race-b"]))
-        self.assertEqual(sorted(statuses), [201, 400])
+            results = list(pool.map(lambda name: self.register(name, invite), ["invite-race-a", "invite-race-b"]))
+        self.assertEqual(sorted(status for status, _ in results), [201, 400])
+        failure = next(body for status, body in results if status == 400)
+        self.assertEqual((failure["code"], failure.get("inviteReason")), ("invalid_invite", "used"))
+
+    def test_unsuccessful_registration_keeps_a_valid_invite_usable(self):
+        self.assertEqual(self.register("invite-conflict", self.store.create_invite())[0], 201)
+        invite = self.store.create_invite()
+        status, body, _ = self.request("/api/register", {"username":"invite-new", "password":"short", "invite":invite})
+        self.assertEqual((status, body.get("code")), (400, "invalid_password"))
+        status, body = self.register("invite-conflict", invite)
+        self.assertEqual((status, body.get("code")), (409, "username_taken"))
+        self.assertEqual(self.register("invite-new", " " + invite + " ")[0], 201)
+        status, body = self.register("invite-extra", invite)
+        self.assertEqual((status, body.get("code"), body.get("inviteReason")), (400, "invalid_invite", "used"))
 
     def test_registration_immediately_authenticates_new_account(self):
         status, registration, cookie = self.request("/api/register", {

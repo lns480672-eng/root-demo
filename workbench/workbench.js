@@ -1408,6 +1408,11 @@ for (const field of authFields) {
   byId(field).addEventListener('input', () => setAuthError(field));
 }
 
+byId('invite').addEventListener('invalid', event => {
+  event.preventDefault();
+  setAuthError('invite', '请输入邀请码。');
+  event.currentTarget.focus();
+});
 byId('auth-mode').addEventListener('click', () => authMode(!registering));
 byId('auth-form').addEventListener('submit', async event => {
   event.preventDefault();

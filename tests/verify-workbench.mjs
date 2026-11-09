@@ -408,7 +408,7 @@ try {
     assert.deepEqual(await evaluate(
       'Array.from(document.querySelectorAll("#auth-form input"), input => input.id)'
     ), ['invite', 'username', 'password']);
-    assert.equal(await evaluate(`['username', 'password'].every(id => {
+    assert.equal(await evaluate(`['invite', 'username', 'password'].every(id => {
       const field = document.getElementById(id);
       const hint = document.getElementById(id + '-hint');
       return hint?.checkVisibility() && field.getAttribute('aria-describedby').includes(hint.id);
@@ -430,7 +430,26 @@ try {
     assert.equal(await evaluate('document.querySelector("#invite").value'), 'invalid-fixture-invite');
     assert.equal(await evaluate('document.querySelector("#username").value'), 'visual-probe');
     assert.equal(await evaluate('document.querySelector("#password").value'), password);
+    assert.match(await evaluate('document.querySelector("#invite-error").textContent'), /邀请码无效/);
+    assert.equal(await evaluate('document.activeElement.id'), 'invite');
     await screenshot('account-invalid-invite');
+    for (const [code, expected] of [
+      ['', '请输入邀请码'], ['   ', '请输入邀请码'],
+      ['fixture-expired-invite', '邀请码已过期'], ['fixture-used-invite', '邀请码已使用'],
+    ]) {
+      await evaluate(`(() => {
+        const input = document.querySelector('#invite');
+        input.value = ${JSON.stringify(code)};
+        input.dispatchEvent(new Event('input', {bubbles: true}));
+      })()`);
+      await click('#auth-submit');
+      await until(() => evaluate('!document.querySelector("#invite-error").hidden'));
+      assert.match(await evaluate('document.querySelector("#invite-error").textContent'), new RegExp(expected));
+      assert.equal(await evaluate('document.querySelector("#invite").value'), code);
+      assert.equal(await evaluate('document.querySelector("#username").value'), 'visual-probe');
+      assert.equal(await evaluate('document.querySelector("#password").value'), password);
+      assert.equal(await evaluate('document.activeElement.id'), 'invite');
+    }
     await cdp('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
     await cdp('Emulation.setTouchEmulationEnabled', { enabled: true });
     assert.deepEqual(await evaluate(`({
@@ -448,7 +467,8 @@ try {
     await evaluate('document.querySelector("#invite").value = ""');
     await click('#auth-mode');
     evidence.tests.push({ id: 'account-visual-feedback', result: 'passed',
-      fieldErrors: ['username', 'password', 'invite'], narrowWidth: 390 });
+      fieldErrors: ['username', 'password', 'invite'],
+      inviteReasons: ['missing', 'invalid', 'expired', 'used'], narrowWidth: 390 });
   }
   stage = 'register and log in via workbench';
   await login(accountA, true);
