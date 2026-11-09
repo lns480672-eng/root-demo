@@ -76,7 +76,7 @@ try {
     assert.equal((await fetch(probeUrl + '/control')).status, 200);
     const fixture = stagedFlow ? 'tests/staged_fixtures.py' : 'tests/fixtures.py';
     const server = launch('python3', [fixture, 'fixture-key', '0', join(root, 'runs'), probeUrl,
-      ...(adminFlow ? ['--admin-flow'] : [])]);
+      ...(adminFlow ? ['--admin-flow'] : []), ...(entryFlow ? ['--entry-flow'] : [])]);
     const [line] = await Promise.race([once(server.stdout, 'data'), once(server, 'exit').then(() => [''])]);
     base = String(line).match(/http:\/\/127\.0\.0\.1:\d+/)?.[0];
     assert.ok(base, '工作台应启动并提供本机地址');
@@ -325,6 +325,7 @@ try {
 
   async function logout() {
     await sampleCoverage();
+    if (!await visible('#logout')) await click('#account-name');
     await click('#logout');
     await until(() => evaluate('document.documentElement.dataset.ready === "true" && !document.querySelector("#auth").hidden'));
     assert.equal(await evaluate('document.querySelectorAll("#preview iframe").length'), 0);
@@ -347,8 +348,14 @@ try {
   }
 
   const visible = selector => evaluate(`Boolean(document.querySelector(${JSON.stringify(selector)})?.checkVisibility())`);
-  const guideCopy = () => evaluate('document.querySelector("#guide-copy")?.textContent.trim() || ""');
-  const waitGuide = message => until(async () => (await visible('#workspace-guide')) && message.test(await guideCopy()));
+  const guideAt = selector => until(async () => await visible('#guide-hint') &&
+    await evaluate(`document.querySelector(${JSON.stringify(selector)})?.hasAttribute("data-guide-target")`));
+  async function openGuide() {
+    await click('#account-name');
+    assert.equal(await visible('#guide-start'), true);
+    await click('#guide-start');
+    await guideAt('#welcome-fast');
+  }
 
   async function monitorGeneration() {
     await evaluate(`(() => {
@@ -519,49 +526,60 @@ try {
   }
   if (!live) await screenshot('initial');
   if (entryFlow) {
-    stage = 'entry choices and first-use guide';
-    for (const selector of ['#quick-entry', '#direct-entry', '#idea-entry']) {
-      assert.equal(await visible(selector), true, `首页入口应可见 ${selector}`);
-    }
-    const welcome = '欢迎使用 ROOT。先选一个模板，试着生成你的第一个工具。';
-    await waitGuide(/快速体验|欢迎使用 ROOT/);
-    const firstWelcome = await guideCopy();
+    stage = 'TEST-016-03 first visit shows the approved entry choices';
+    for (const id of ['welcome-fast', 'welcome-direct', 'welcome-idea', 'guide-skip']) assert.equal(await visible('#' + id), true);
+    assert.equal(await visible('#requirement'), false);
+    await guideAt('#welcome-fast');
+    await screenshot('first-visit');
+    await click('#welcome-direct');
+    await guideAt('#requirement');
+    await type('#requirement', '引导关闭后保留输入');
+    await guideAt('#generate');
+    await cdp('Emulation.setDeviceMetricsOverride', {width:390,height:844,deviceScaleFactor:1,mobile:true});
+    await cdp('Emulation.setEmulatedMedia', {features:[{name:'prefers-reduced-motion',value:'reduce'}]});
+    assert.equal(await evaluate('getComputedStyle(document.querySelector("[data-guide-target]")).animationName'), 'none');
+    assert.equal(await evaluate('document.documentElement.scrollWidth <= innerWidth'), true);
+    await screenshot('guide-narrow-reduced-motion');
+    await click('#guide-dismiss');
+    assert.equal(await visible('#guide-hint'), false);
+    assert.equal(await evaluate('document.querySelector("#requirement").value'), '引导关闭后保留输入');
+    await cdp('Emulation.setEmulatedMedia', {features:[]});
+    await cdp('Emulation.setDeviceMetricsOverride', {width:1360,height:980,deviceScaleFactor:1,mobile:false});
 
-    stage = 'guide auto-opens only after registration and stays closed on later login';
+    stage = 'guide opens only after registration or manually';
     await sampleCoverage();
+    const navigation = await evaluate('performance.timeOrigin');
     await cdp('Page.reload', { ignoreCache: true });
-    await until(() => evaluate('document.documentElement.dataset.ready === "true"'));
-    assert.equal(await visible('#workspace-guide'), false, '首次未完成时重新进入也不应自动打开');
+    await until(() => evaluate(`performance.timeOrigin !== ${navigation} && document.documentElement.dataset.ready === "true"`));
+    assert.equal(await visible('#workspace-guide'), false);
+    assert.equal(await visible('#requirement'), true, '无工具的回访进入普通新建页');
     const primary = socket;
     socket = await connectBrowser(join(root, 'chrome-guide-independent'));
     await startCoverage();
     await cdp('Page.enable');
     await cdp('Page.navigate', { url: base });
     await login(accountA);
-    assert.equal(await visible('#workspace-guide'), false, '同账号换浏览器登录时，未完成引导也不应自动打开');
-    await click('#guide-start');
-    await waitGuide(/^欢迎使用 ROOT/);
-    assert.equal(await guideCopy(), welcome);
+    assert.equal(await visible('#workspace-guide'), false);
+    await openGuide();
     await logout();
     await login(accountB, true);
-    await waitGuide(/^欢迎使用 ROOT/);
-    assert.equal(await guideCopy(), welcome, '另一个新账号应在注册成功后收到同样的首次引导');
+    assert.equal(await visible('#welcome-direct'), true);
     await click('#guide-skip');
     assert.equal(await visible('#workspace-guide'), false);
+    assert.equal(await visible('#guide-hint'), false);
     await sampleCoverage();
     socket = primary;
-    assert.equal(firstWelcome, welcome);
-    await click('#guide-start');
-    await waitGuide(/^欢迎使用 ROOT/);
+    await openGuide();
 
     stage = 'three local samples are usable without upstream calls or saved tools';
     const generatedDirectories = async () => (await readdir(join(root, 'runs'))).filter(name => name.startsWith('run-')).sort();
     const before = await generatedDirectories();
     assert.deepEqual((await library()).items, []);
     await monitorGeneration();
-    await click('#quick-entry');
+    await click('#welcome-fast');
+    assert.equal(await visible('#workspace-guide'), false);
     assert.equal(await visible('#quick-panel'), true);
-    await waitGuide(/用此模板生成/);
+    await guideAt('#template-sample');
     for (const [key, title] of [['board', '交付跟进板'], ['list', '读书清单'], ['budget', 'AA 分账']]) {
       await click(`[data-entry-template="${key}"]`);
       await click('#template-sample');
@@ -581,7 +599,7 @@ try {
         assert.equal(await evaluate(`document.querySelector(${JSON.stringify(checkbox)}).checked`), !checked);
         assert.notEqual(await evaluate('document.querySelector("#sample-result").textContent'), previous);
       }
-      await waitGuide(/用此模板生成/);
+      await guideAt('#template-generate');
       await click('#sample-close');
       assert.equal(await visible('#sample-preview'), false);
     }
@@ -598,10 +616,11 @@ try {
     assert.deepEqual(await evaluate('window.testGenerationPosts'), []);
     await click('#quick-entry');
     await click('[data-entry-template="list"]');
-    await waitGuide(/用此模板生成/);
+    await guideAt('#template-sample');
     stage = 'explicit template generation creates one real fixture tool';
     await click('#template-generate');
   } else {
+    if (await visible('#workspace-guide')) await click('#guide-skip');
     assert.equal(await evaluate('document.querySelector("#generate").disabled'), true);
     await type('#requirement', '   ');
     assert.equal(await evaluate('document.querySelector("#generate").disabled'), true);
@@ -622,8 +641,9 @@ try {
     assert.match(await evaluate('window.testGenerationPosts.join(" ")'), /读书清单/);
     assert.equal(await evaluate('window.testGenerationPosts.length'), 1);
     assert.deepEqual((await library()).items.map(item => item.id), [first.id]);
-    stage = 'guide waits for a real preview operation and publish remains locked';
-    await waitGuide(/预览/);
+    stage = 'first tool saved ends guide and publish remains locked';
+    assert.equal(await visible('#guide-hint'), false);
+    assert.equal(await visible('#first-tool-saved'), true);
     assert.equal(await visible('#publish-tool'), true);
     assert.equal(await evaluate('document.querySelector("#publish-tool").disabled'), true);
     assert.match(await evaluate('document.querySelector("#publish-explanation").textContent'), /应用发布暂未开放/);
@@ -645,11 +665,10 @@ try {
   await until(async () => JSON.stringify((await stored(first.id)).entries).includes(sample));
   let operatedTool = first;
   if (entryFlow) {
-    stage = 'guide advances after actual preview operation and finding the generated tool';
-    await waitGuide(/我的工具/);
+    stage = 'first saved tool is available from the library';
     operatedTool = await selectHistory(first.id);
     assert.match(await evaluate('document.querySelector("#list").innerText', operatedTool.context), /星际旅行手记/);
-    await until(async () => !(await visible('#workspace-guide')) || /完成/.test(await guideCopy()));
+    assert.equal(await visible('#workspace-guide'), false);
     await screenshot('entry-guide-completed');
   }
   await screenshot('record-added');
@@ -669,9 +688,9 @@ try {
   assert.match(await evaluate('document.querySelector("#list").innerText', restored.context), /星际旅行手记/);
   if (entryFlow) {
     assert.equal(await visible('#workspace-guide'), false, '完成引导后重新进入不应自动打开');
-    evidence.tests.push({ id: 'TEST-016', result: 'passed', autoShownOncePerAccountAcrossBrowsers: true,
-      secondFreshAccountShown: true, skippedAndReopened: true, sampleDidNotAdvance: true,
-      trustedPreviewOperation: true, foundSameTool: true, dismissedAfterReload: true });
+    evidence.tests.push({ id: 'TEST-016-03/04', result: 'passed', autoShownOncePerAccountAcrossBrowsers: true,
+      secondFreshAccountShown: true, skippedAndReopened: true, sampleUncounted: true, firstSavedEndsGuide: true,
+      reducedMotionAndNarrowScreen: true, skipRetainsInput: true, foundSameTool: true, dismissedAfterReload: true });
   }
   evidence.tests.push({ id: 'TEST-002', result: 'passed', tool: first.id, record: sample,
     reloadedDocument: true, isolationFixtureChecked: !live });
@@ -733,6 +752,7 @@ try {
     stage = 'release history navigation retains the current preview';
     const beforeUpdates = restored.loader;
     await evaluate('document.querySelector("#requirement").value = "返回后保留的草稿"');
+    await click('#account-name');
     await click('#updates-link');
     await until(() => evaluate('location.pathname === "/updates" && !document.querySelector("#updates").hidden'));
     await until(() => evaluate('document.querySelectorAll("#release-list li").length >= 2'));
@@ -1033,7 +1053,9 @@ try {
         assert.equal(await evaluate('document.activeElement.id'), 'new-tool', '隐藏表单不能获取焦点');
         await cdp('Input.dispatchKeyEvent', { type: 'rawKeyDown', key: 'Tab', code: 'Tab', windowsVirtualKeyCode: 9 });
         await cdp('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Tab', code: 'Tab', windowsVirtualKeyCode: 9 });
-        assert.equal(await evaluate('document.activeElement.closest("#tool-list")?.id'), 'tool-list');
+        assert.equal(await evaluate('document.activeElement.id'), 'idea-entry');
+        assert.equal(await evaluate('document.querySelector("#library-entry").getAttribute("aria-current")'), 'page');
+        assert.match(await evaluate('document.querySelector("#tool-list button[aria-current=true]").dataset.version'), /^v\d+$/);
         assert.equal(await evaluate('document.documentElement.scrollWidth > document.documentElement.clientWidth'), false);
         if (width === 390) {
           assert.equal(await evaluate(`document.querySelector('.elys-preview').getBoundingClientRect().top >
@@ -1054,7 +1076,7 @@ try {
         assert.equal(await visible('#requirement'), true);
         assert.equal(await evaluate('document.activeElement.id'), 'requirement');
         assert.match(await evaluate('document.querySelector("#composer-title").textContent'), /修改/);
-        for (const id of ['quick-entry', 'direct-entry', 'idea-entry', 'table-entry', 'guide-start', 'staged-task-list']) {
+        for (const id of ['quick-entry', 'direct-entry', 'table-entry', 'guide-start', 'staged-task-list']) {
           assert.equal(await visible('#' + id), false, '修改时隐藏 ' + id);
         }
         await screenshot('revision-' + width);
@@ -1062,6 +1084,8 @@ try {
         assert.equal(await visible('.elys-composer'), false);
         assert.equal(await evaluate('document.activeElement.id'), 'revise-tool');
         await click('#new-tool');
+        assert.equal(await visible('#saved-tools'), false);
+        await click('#library-entry');
         await evaluate(`document.querySelector('#tool-list button[data-id="${first.id}"]').focus()`);
         await selectHistory(first.id);
         assert.equal(await visible('.elys-composer'), false);
@@ -1111,8 +1135,19 @@ try {
 
       socket = primary;
       await cdp('Emulation.setDeviceMetricsOverride', { width: 1360, height: 980, deviceScaleFactor: 1, mobile: false });
+      stage = 'TEST-006-03 cross-browser account restores the last opened tool and records';
+      const beforeReturn = await evaluate('performance.timeOrigin');
+      await cdp('Page.reload', {ignoreCache: true});
+      await until(() => evaluate(`performance.timeOrigin !== ${beforeReturn} &&
+        document.documentElement.dataset.ready === "true"`));
+      restored = await activeTool();
+      assert.equal(restored.id, first.id);
+      assert.equal(await visible('#workspace-guide'), false);
+      assert.equal(await evaluate('document.querySelector("#library-entry").getAttribute("aria-current")'), 'page');
+      assert.match(await evaluate('document.querySelector("#list").innerText', restored.context), /独立浏览器保存的书/);
+      evidence.tests.push({id: 'TEST-006-03', result: 'passed', lastToolSharedByAccount: true, savedRecordRecovered: true});
+
       stage = 'tool revision incompatibility preserves version and allows writing';
-      restored = await selectHistory(first.id);
       const versionPath = '/api/tools/' + first.id + '/versions';
       await click('#tool-history');
       await until(() => evaluate('document.querySelectorAll("#tool-version-list li").length === 1'));
@@ -1158,12 +1193,11 @@ try {
       assert.equal(history.items[0].note, '增加已读筛选');
       if (await evaluate('document.querySelector("#tool-version-panel").hidden')) await click('#tool-history');
       await until(() => evaluate('document.querySelectorAll("#tool-version-list li").length === 2'));
-      assert.equal(await evaluate(`document.querySelector('#tool-version-panel').getBoundingClientRect().left >
-        document.querySelector('.elys-preview').getBoundingClientRect().right`), true);
+      assert.equal(await evaluate(`document.querySelector('.elys-preview').contains(document.querySelector('#tool-version-panel'))`), true);
       await screenshot('tool-version-history');
       await cdp('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
       assert.equal(await evaluate(`document.querySelector('#tool-version-panel').getBoundingClientRect().top >
-        document.querySelector('.elys-preview').getBoundingClientRect().bottom &&
+        document.querySelector('#preview').getBoundingClientRect().bottom &&
         document.documentElement.scrollWidth === document.documentElement.clientWidth`), true);
       await cdp('Emulation.setDeviceMetricsOverride', { width: 1360, height: 980, deviceScaleFactor: 1, mobile: false });
       await click('#revise-tool');
@@ -1240,6 +1274,49 @@ try {
     evidence.tests.push({ id: 'TEST-011', result: 'passed', sampleTemplates: ['board', 'list', 'budget'],
       zeroSampleGenerations: true, noSavedSampleTools: true, customizeWithoutRequest: true,
       templateGenerationRequests: 1, directGenerationRequests: 1 });
+
+    for (const path of ['direct', 'table', 'assistant']) {
+      stage = 'TEST-016-03/04 first saved tool ends guide from ' + path;
+      await logout();
+      await login('qa-guide-' + path + '-' + Date.now().toString(36), true);
+      const narrow = path !== 'direct';
+      await cdp('Emulation.setDeviceMetricsOverride', {width:narrow ? 390 : 1360,height:844,deviceScaleFactor:1,mobile:narrow});
+      await guideAt('#welcome-fast');
+      if (path === 'assistant') {
+        await click('#welcome-idea');
+        await guideAt('#assistant-idea-text');
+        await type('#assistant-idea-text', '做一个读书清单，可以新增书名并保存。');
+        await click('#assistant-analyze button');
+        await guideAt('#assistant-build');
+        await click('#assistant-build');
+        await guideAt('#generate');
+        await click('#generate');
+      } else {
+        await click('#welcome-direct');
+        await guideAt('#requirement');
+        if (path === 'table') {
+          await click('#table-entry');
+          await guideAt('#table-file');
+          await click('#table-example');
+          await guideAt('#table-confirm');
+          await click('#table-confirm');
+        } else {
+          await generate('回归：强制新建失败');
+          await until(async () => (await evaluate('document.querySelector("#error").textContent')).length > 0);
+          assert.equal((await library()).items.length, 0);
+          await guideAt('#generate');
+          await generate(requirements[0]);
+        }
+      }
+      await activeTool();
+      assert.equal(await visible('#guide-hint'), false);
+      assert.equal(await visible('#first-tool-saved'), true);
+      assert.equal(await evaluate('document.documentElement.scrollWidth <= innerWidth'), true);
+      await screenshot('first-saved-' + path);
+    }
+    evidence.tests.push({id: 'TEST-016-03/04-paths', result:'passed',
+      freshAccounts: ['direct','table','assistant'], directFailureUncounted: true});
+
   }
   if (live && process.argv.includes('--analysis-live')) {
     const balance = async () => (await appRequest('/api/trial')).body;

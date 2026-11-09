@@ -9,7 +9,8 @@ const example = byId('example');
 const preview = byId('preview');
 const workspace = byId('workspace');
 const composer = form.closest('section');
-const library = byId('tool-list').closest('section');
+const library = byId('saved-tools');
+const welcome = byId('workspace-guide');
 const toolHistory = byId('tool-version-panel');
 const maxStorageBytes = 256 * 1024;
 const tableStorageBytes = 8 * 1024 * 1024;
@@ -33,8 +34,7 @@ let pendingPublication = null;
 let entryMode = 'direct';
 let templateKey = 'board';
 let sampleTemplate = null;
-let guideStep = -1;
-let guideTool = null;
+let guideActive = false;
 let guideTarget = null;
 let trial = null;
 let trialRequest = 0;
@@ -60,7 +60,6 @@ let stagedLoadError = '';
 let stagedPendingId = null;
 let stagedPendingNonce = null;
 let stagedSubmission = null;
-let stagedGuide = null;
 
 function render() {
   const pending = ['model', 'preview', 'restore', 'sync', 'table'].includes(phase);
@@ -78,7 +77,15 @@ function render() {
   generate.disabled = !session || !configured || !networkIsolated || phase === 'startup' || blocked ||
     tableMode || returning || !requirement.value.trim();
   requirement.readOnly = blocked;
-  byId('new-tool').disabled = blocked;
+  byId('new-tool').disabled = byId('idea-entry').disabled = byId('library-entry').disabled = blocked;
+  const assistantOpen = !byId('assistant-panel').hidden;
+  const browsing = workspace.dataset.mode === 'browse' && !assistantOpen && welcome.hidden;
+  library.hidden = !browsing;
+  byId('library-entry').setAttribute('aria-expanded', String(browsing));
+  if (browsing) byId('library-entry').setAttribute('aria-current', 'page');
+  else byId('library-entry').removeAttribute('aria-current');
+  if (assistantOpen) byId('idea-entry').setAttribute('aria-current', 'page');
+  else byId('idea-entry').removeAttribute('aria-current');
   byId('new-tool-options').hidden = editing;
   const returnToLibrary = byId('return-to-library');
   returnToLibrary.hidden = !active;
@@ -88,10 +95,16 @@ function render() {
     button.disabled = blocked || !networkIsolated;
     const selected = button.dataset.id === active?.id;
     button.setAttribute('aria-current', String(selected));
-    if (selected) currentTitle = button.textContent;
+    if (selected) {
+      currentTitle = button.dataset.title;
+      labelTool(button, active.version);
+    }
   }
   byId('preview-title').textContent = showingSample ? quickTemplates[sampleTemplate].title : currentTitle;
   byId('composer-title').textContent = editing ? '要怎样修改这个工具？' : '你想做什么工具？';
+  byId('requirement-label').textContent = editing ? '修改「' + currentTitle + '」' : '工具需求';
+  requirement.placeholder = editing ? '例如：增加一个按负责人筛选。'
+    : '例如：做一个读书清单，添加书名后，刷新页面还能看见。';
   byId('revise-tool').hidden = byId('tool-history').hidden = byId('publish-lock').hidden = syncing || !showingTool;
   byId('revise-tool').disabled = blocked || !configured;
   byId('tool-history').textContent = active ? '工具 v' + active.version + ' · 版本历史' : '版本历史';
@@ -132,7 +145,7 @@ function render() {
   const status = byId('preview-status');
   status.toggleAttribute('data-usable', showingTool && !pausingEdits);
   status.textContent = pausingEdits ? '待同步 · 暂停编辑' : showingSample ? '样例试用 · 不保存' : active
-    ? pending || failure || syncing ? '上次工具仍可用' : restored ? '已恢复' : '已就绪'
+    ? pending || failure || syncing ? '上次工具仍可用' : tableMode ? '上次工具 · 可用' : restored ? '已恢复' : '已就绪'
     : syncing ? '新工具待同步' : pending ? '等待预览' : '待生成';
   byId('empty').hidden = showingTool || showingSample || syncing;
   byId('empty-title').textContent = pending ? '等待预览' : '还没有生成工具';
@@ -439,6 +452,11 @@ async function refreshTrial() {
   }
 }
 
+function labelTool(button, version) {
+  button.dataset.version = 'v' + version;
+  button.setAttribute('aria-label', button.dataset.title + ' · 版本 ' + version);
+}
+
 async function loadLibrary() {
   const { items, latest } = await workspaceApi('/api/tools');
   const buttons = items.map(tool => {
@@ -446,7 +464,10 @@ async function loadLibrary() {
     const button = document.createElement('button');
     button.type = 'button';
     button.dataset.id = tool.id;
-    button.textContent = tool.title;
+    const title = document.createElement('span');
+    title.textContent = button.dataset.title = tool.title;
+    button.append(title);
+    labelTool(button, tool.version);
     button.addEventListener('click', () => selectTool(tool.id, button));
     li.append(button);
     return li;
@@ -458,54 +479,74 @@ async function loadLibrary() {
 }
 
 function compose(enabled) {
-  const mode = enabled ? 'compose' : 'browse';
-  if (workspace.dataset.mode === mode) return;
-  workspace.dataset.mode = mode;
+  workspace.dataset.mode = enabled ? 'compose' : 'browse';
   composer.hidden = !enabled;
-  if (enabled) {
-    workspace.prepend(composer);
-    workspace.append(library);
-  } else {
-    workspace.prepend(library);
-    workspace.append(composer);
-  }
 }
 
-const guideSteps = [
-  ['quick-entry', '欢迎使用 ROOT。先选一个模板，试着生成你的第一个工具。'],
-  ['template-generate', '第 2 步 · 选一个模板，点「用此模板生成」。也可以先试用样例。'],
-  ['preview', '第 3 步 · 在预览中实际操作一次，例如添加一条记录或计算结果。'],
-  ['tool-list', '第 4 步 · 到「我的工具」重新打开刚才生成的工具。'],
-];
+function chooseWelcomePath() {
+  welcome.hidden = true;
+}
+
+function showWelcome() {
+  guideActive = true;
+  requirementAssistant.close();
+  welcome.hidden = false;
+  render();
+  byId('guide-title').focus();
+}
+
+function guideStep() {
+  const visible = id => byId(id)?.checkVisibility();
+  if (!welcome.hidden) return ['welcome-fast', '可以快速试一个模板，也可以直接开发或先梳理需求。'];
+  if (!byId('assistant-panel').hidden) {
+    if (visible('assistant-idea-text')) {
+      return ['assistant-idea-text', '写下你想解决的问题，再点「分析我的想法」。'];
+    }
+    if (visible('assistant-directions')) {
+      return ['#assistant-directions [data-direction]', '选择与你的问题最贴近的方向。'];
+    }
+    if (visible('assistant-questions')) {
+      const first = [...byId('assistant-questions').querySelectorAll('select')].find(input => !input.value);
+      return first ? [first.id, '选择适合你的答案。'] : ['assistant-organize', '把选好的答案整理成需求草稿。'];
+    }
+    if (visible('assistant-draft-editor')) return ['assistant-build', '检查草稿，可以保存，也可以带到直接开发。'];
+    return ['assistant-drafts-back', '从列表打开已保存的需求，或回到上一步。'];
+  }
+  if (composer.hidden) return ['new-tool', '点「新建工具」，选择一种方式开始。'];
+  if (entryMode === 'table') {
+    return visible('table-review') ? ['table-confirm', '核对文件、字段和记录后再生成。']
+      : ['table-file', '选一份带表头的 CSV 或 XLSX。'];
+  }
+  if (entryMode === 'fast') {
+    return sampleTemplate ? ['template-generate', '样例可以直接试用。要保存自己的工具，请用这个模板生成。']
+      : ['template-sample', '先试样例，或用当前模板生成自己的工具。'];
+  }
+  if (requirement.value.trim()) return ['generate', '需求填好后，点这里开始生成。'];
+  return ['requirement', '写清工具要做什么、要记录哪些内容。也可以从表格开始。'];
+}
 
 function renderGuide() {
-  const panel = byId('workspace-guide');
-  const step = guideSteps[guideStep];
-  const visible = Boolean(step) && !pendingPublication && !editing &&
-    (guideStep >= 2 || !composer.hidden) &&
-    (guideStep !== 1 || entryMode === 'fast') && (guideStep !== 2 || !sampleTemplate);
-  panel.hidden = !visible;
-  const nextTarget = visible ? byId(step[0]) : null;
-  if (nextTarget !== guideTarget) {
-    guideTarget?.removeAttribute('data-guide-target');
-    nextTarget?.setAttribute('data-guide-target', '');
-    guideTarget = nextTarget;
+  const hint = byId('guide-hint');
+  const [selector, copy] = guideActive ? guideStep() : [];
+  const target = selector && (selector.startsWith('#') ? document.querySelector(selector) : byId(selector));
+  if (guideTarget !== target) {
+    if (guideTarget) {
+      guideTarget.removeAttribute('data-guide-target');
+      const descriptions = (guideTarget.getAttribute('aria-describedby') || '').split(' ')
+        .filter(id => id && id !== 'guide-hint-text');
+      if (descriptions.length) guideTarget.setAttribute('aria-describedby', descriptions.join(' '));
+      else guideTarget.removeAttribute('aria-describedby');
+    }
+    guideTarget = target;
+    if (target) {
+      target.setAttribute('data-guide-target', '');
+      const description = target.getAttribute('aria-describedby');
+      target.setAttribute('aria-describedby', [description, 'guide-hint-text'].filter(Boolean).join(' '));
+      target.after(hint);
+    }
   }
-  if (!nextTarget) return;
-  const anchor = [byId('quick-entry').parentElement, byId('quick-panel'), preview, byId('tool-list')][guideStep];
-  if (anchor.previousElementSibling !== panel) anchor.before(panel);
-  const copy = byId('guide-copy');
-  if (copy.textContent !== step[1]) copy.textContent = step[1];
-}
-
-function startGuide() {
-  guideTool = null;
-  guideStep = 0;
-}
-
-function dismissGuide() {
-  guideTool = null;
-  guideStep = -1;
+  hint.hidden = !target;
+  if (target && byId('guide-hint-text').textContent !== copy) byId('guide-hint-text').textContent = copy;
 }
 
 function hideSample() {
@@ -522,7 +563,6 @@ function enterQuickExperience() {
   entryMode = 'fast';
   failure = '';
   compose(true);
-  if (guideStep === 0) guideStep = 1;
   render();
   byId('quick-panel').querySelector('[aria-pressed="true"]')?.focus();
 }
@@ -530,17 +570,17 @@ function enterQuickExperience() {
 const tableImport = setupTableImport({
   request: workspaceApi,
   generate: generateTable,
+  onGuideUpdate: renderGuide,
   onExit: () => beginComposition(false, requirement.value),
 });
 const requirementAssistant = setupRequirementAssistant({
   request: workspaceApi,
   offerStorageKey: () => 'root:assistant-offer:' + session.marker,
-  onBuild: text => {
-    requirementAssistant.close();
-    beginComposition(false, text);
-  },
+  onGuideUpdate: renderGuide,
+  onBuild: text => beginComposition(false, text),
   onExit: () => {
     requirementAssistant.close();
+    render();
     byId('idea-entry').focus();
   },
 });
@@ -557,17 +597,38 @@ byId('table-entry').addEventListener('click', () => {
   render();
   tableImport.open();
 });
-byId('idea-entry').addEventListener('click', () => requirementAssistant.open());
-byId('guide-start').addEventListener('click', () => {
-  if (phase !== 'idle' || pendingPublication) return;
-  startGuide();
-  beginComposition(false);
-  byId('quick-entry').focus();
-});
-byId('guide-skip').addEventListener('click', () => {
-  dismissGuide();
+function openAssistant() {
+  chooseWelcomePath();
+  hideSample();
+  requirementAssistant.open();
   render();
-  byId('guide-start').focus();
+}
+
+byId('idea-entry').addEventListener('click', openAssistant);
+byId('guide-start').addEventListener('click', () => {
+  if (phase !== 'idle' || pendingPublication || stagedPendingId) return;
+  byId('account').open = false;
+  showWelcome();
+});
+byId('welcome-fast').addEventListener('click', () => {
+  chooseWelcomePath();
+  enterQuickExperience();
+});
+byId('welcome-direct').addEventListener('click', () => beginComposition(false));
+byId('welcome-idea').addEventListener('click', openAssistant);
+byId('guide-skip').addEventListener('click', () => {
+  guideActive = false;
+  chooseWelcomePath();
+  render();
+  byId('new-tool').focus();
+});
+byId('guide-dismiss').addEventListener('click', () => {
+  const target = guideTarget;
+  guideActive = false;
+  if (!welcome.hidden) chooseWelcomePath();
+  render();
+  if (target?.checkVisibility() && !target.disabled) target.focus();
+  else byId('new-tool').focus();
 });
 for (const button of document.querySelectorAll('[data-entry-template]')) {
   button.addEventListener('click', () => {
@@ -668,17 +729,17 @@ function loadReleases() {
 
 function renderRoute(focus = false) {
   const updates = location.pathname === '/updates';
-  if (updates && guideStep >= 0) {
-    dismissGuide();
-    renderGuide();
+  if (updates) {
+    guideActive = false;
+    chooseWelcomePath();
   }
   byId('updates').hidden = byId('updates-back').hidden = !updates;
-  byId('updates-link').hidden = updates;
+  byId('account').open = false;
   byId('auth').hidden = updates || !identityResolved || Boolean(session);
   byId('account').hidden = workspace.hidden = updates || !session;
   document.title = updates ? '工作台更新记录 · ROOT' : 'ROOT 工具工作台';
   if (updates) loadReleases();
-  if (focus) byId(updates ? 'updates-title' : 'updates-link').focus();
+  if (focus) byId(updates ? 'updates-title' : session ? 'account-name' : 'auth-title').focus();
 }
 
 for (const id of ['updates-link', 'updates-back']) {
@@ -731,15 +792,6 @@ function initializeFrame(entries, token, parentOrigin, limit, backup) {
   let restoringBackup = null;
   let backupSequence = 0;
   const report = (type, extra = {}) => send({ token, type, ...extra }, parentOrigin);
-  const reportOperation = event => {
-    if (paused || !event.isTrusted) return;
-    if (event.type === 'click') {
-      const control = event.target.closest?.('button, [role="button"]');
-      if (!control || control.disabled || (control.type === 'submit' && control.form)) return;
-    }
-    report('operation');
-  };
-  for (const type of ['click', 'change', 'submit']) window.addEventListener(type, reportOperation, true);
   window.addEventListener('message', event => {
     if (event.source !== parent || event.origin !== parentOrigin || event.data?.token !== token) return;
     if (event.data.type === 'pause-storage') {
@@ -912,9 +964,6 @@ window.addEventListener('message', event => {
     frame.reject(new Error('新工具预览初始化失败，需求已保留。'));
   } else if (type === 'storage-paused') {
     frame.acknowledgePause?.(event.data.reads);
-  } else if (type === 'operation' && guideStep === 2 && frame === active && frame.id === guideTool && !pendingPublication) {
-    guideStep = 3;
-    renderGuide();
   }
 });
 
@@ -1023,7 +1072,7 @@ async function synchronizePublication() {
     }
     clearPublication();
     if (current.applied) {
-      finishComposition();
+      finishComposition(true);
       if (!runId) await loadLibrary().catch(error => warnStorage(error.message));
     }
     else if (editing) failure = '本次修改未发布，已同步当前工具。你可以重试。';
@@ -1082,13 +1131,8 @@ async function commitStaged(frame, tool) {
 
 async function finishStagedComposition(id) {
   stagedTasks = stagedTasks.filter(task => task.id !== id);
-  if (stagedGuide === id && guideStep === 1) {
-    guideTool = active.id;
-    guideStep = 2;
-  }
-  if (stagedGuide === id) stagedGuide = null;
   clearStagedSelection();
-  finishComposition();
+  finishComposition(true);
   await loadLibrary().catch(error => warnStorage(error.message));
 }
 
@@ -1264,7 +1308,11 @@ example.addEventListener('click', () => {
   requirement.focus();
   render();
 });
-function finishComposition() {
+function finishComposition(saved = false) {
+  if (saved && guideActive) {
+    guideActive = false;
+    byId('first-tool-saved').hidden = false;
+  }
   editing = false;
   entryMode = 'direct';
   requirement.value = '';
@@ -1281,7 +1329,7 @@ async function generateTable(table) {
   try {
     const tool = await workspaceApi('/api/table/generate', { table });
     await openTool(tool);
-    finishComposition();
+    finishComposition(true);
     await loadLibrary().catch(error => warnStorage(error.message));
   } catch (error) {
     if (pendingPublication) {
@@ -1299,7 +1347,6 @@ async function generateTable(table) {
 form.addEventListener('submit', async event => {
   event.preventDefault();
   if (generate.disabled) return;
-  const guidedGeneration = guideStep === 1 && entryMode === 'fast' && !editing;
   hideSample();
   compose(true);
   failure = '';
@@ -1321,7 +1368,6 @@ form.addEventListener('submit', async event => {
     if (stagedEnabled && tool.task) {
       rememberStagedTask(tool.task);
       selectedStagedId = stagedAutoId = tool.task.id;
-      if (guidedGeneration) stagedGuide = tool.task.id;
       stagedMessage = '';
       if (tool.task.state === 'published') {
         rememberStagedPublication(tool.task.id);
@@ -1333,19 +1379,11 @@ form.addEventListener('submit', async event => {
     render();
     if (editing) await openRevision(tool);
     else await openTool(tool);
-    if (guidedGeneration && guideStep === 1) {
-      guideTool = tool.id;
-      guideStep = 2;
-    }
-    finishComposition();
+    finishComposition(true);
     await loadLibrary().catch(error => warnStorage(error.message));
   } catch (error) {
     if (pendingPublication) {
-      const applied = await synchronizePublication();
-      if (applied && guidedGeneration && guideStep === 1) {
-        guideTool = active.id;
-        guideStep = 2;
-      }
+      await synchronizePublication();
     }
     else {
       if (error.code !== 'transport') stagedSubmission = null;
@@ -1385,7 +1423,7 @@ async function selectTool(id, source) {
     editing = false;
     entryMode = 'direct';
     compose(false);
-    if (guideStep < 2 || (guideStep === 3 && guideTool === id)) dismissGuide();
+    byId('first-tool-saved').hidden = true;
   } catch (error) {
     warnStorage(error.message);
   } finally {
@@ -1396,6 +1434,9 @@ async function selectTool(id, source) {
 }
 
 function beginComposition(revise, value = '') {
+  chooseWelcomePath();
+  requirementAssistant.close();
+  byId('first-tool-saved').hidden = true;
   clearStagedSelection();
   hideSample();
   if (entryMode === 'table') tableImport.close();
@@ -1409,17 +1450,21 @@ function beginComposition(revise, value = '') {
 }
 byId('new-tool').addEventListener('click', () => beginComposition(false));
 byId('revise-tool').addEventListener('click', () => beginComposition(true));
-byId('return-to-library').addEventListener('click', () => {
-  const trigger = byId(editing ? 'revise-tool' : 'new-tool');
+function browseLibrary(focus) {
+  chooseWelcomePath();
+  requirementAssistant.close();
+  const trigger = byId(focus);
+  byId('first-tool-saved').hidden = true;
   clearStagedSelection();
   hideSample();
   if (entryMode === 'table') tableImport.close();
-  if (guideStep < 2) dismissGuide();
   failure = '';
   finishComposition();
   render();
   trigger.focus();
-});
+}
+byId('return-to-library').addEventListener('click', () => browseLibrary(editing ? 'revise-tool' : 'new-tool'));
+byId('library-entry').addEventListener('click', () => browseLibrary('library-entry'));
 
 function authMode(next) {
   registering = next;
@@ -1545,10 +1590,6 @@ async function start(registration = null) {
     renderRoute();
     if (!session) return;
     byId('account-name').textContent = session.user;
-    if (registration) {
-      startGuide();
-      render();
-    }
     const config = await api('/api/config');
     configured = config.configured;
     stagedEnabled = config.staged === true;
@@ -1587,6 +1628,9 @@ async function start(registration = null) {
       }
     }
     if (stagedEnabled) await refreshStagedTasks();
+    if (registration && location.pathname !== '/updates') {
+      showWelcome();
+    }
   } catch (error) {
     if (!session) {
       identityResolved = true;

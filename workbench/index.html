@@ -18,13 +18,16 @@
       <span class="elys-wordmark" role="img" aria-label="ROOT">R<span class="elys-counter" aria-hidden="true"></span><span class="elys-counter" aria-hidden="true"></span>T</span>
       <span class="elys-brand-accent" aria-hidden="true"></span>
       <span class="elys-brand-caption">工具工作台</span>
-      <a id="updates-link" class="masthead-link" href="/updates">工作台更新记录</a>
       <a id="updates-back" class="masthead-link" href="/" hidden>← 返回工作台</a>
-      <div id="account" class="account" hidden>
-        <a id="admin-entry" class="masthead-link" href="/admin" hidden>管理后台</a>
-        <span id="account-name"></span>
-        <button id="logout" type="button">退出登录</button>
-      </div>
+      <details id="account" class="account" hidden>
+        <summary id="account-name" aria-label="账号菜单"></summary>
+        <div class="account-menu-items">
+          <a id="updates-link" href="/updates">工作台更新记录</a>
+          <button id="guide-start" type="button">新手引导</button>
+          <a id="admin-entry" href="/admin" hidden>管理后台</a>
+          <button id="logout" type="button">退出登录</button>
+        </div>
+      </details>
     </header>
     <section id="updates" class="release-history" aria-labelledby="updates-title" hidden>
       <p class="auth-eyebrow">ROOT / RELEASE NOTES</p>
@@ -72,16 +75,104 @@
       </div>
     </section>
     <div id="workspace" class="elys-workspace" hidden>
-      <section id="assistant-panel" hidden></section>
-      <section class="tool-library" aria-labelledby="library-title">
-        <header>
-          <h1 id="library-title">我的工具</h1>
-          <button id="new-tool" type="button">新建工具</button>
-        </header>
-        <p class="auth-muted">选一个工具，接着上次的记录继续用。</p>
-        <p id="library-empty">成功生成的工具会显示在这里。</p>
-        <ul id="tool-list" aria-label="已保存的工具"></ul>
+      <aside class="workspace-sidebar" aria-label="工作台侧栏">
+        <div class="workspace-navigation">
+          <button id="new-tool" type="button"><span aria-hidden="true">＋</span>新建工具</button>
+          <nav aria-label="工作台栏目">
+            <button id="idea-entry" type="button">需求助手</button>
+            <button id="library-entry" type="button" aria-controls="saved-tools" aria-expanded="false">我的工具</button>
+          </nav>
+        </div>
+        <section class="tool-library" id="saved-tools" aria-labelledby="library-entry" hidden>
+          <p id="library-empty">成功生成的工具会显示在这里。</p>
+          <ul id="tool-list" aria-label="已保存的工具"></ul>
+        </section>
+        <section class="elys-composer" aria-labelledby="composer-title">
+          <h2 id="composer-title">你想做什么工具？</h2>
+          <div id="new-tool-options">
+            <p class="elys-intro">描述工具的用途、操作和要保存的数据。</p>
+            <nav class="entry-actions" aria-label="开始方式">
+              <button id="quick-entry" type="button" aria-pressed="false" aria-controls="quick-panel">快速体验</button>
+              <button id="direct-entry" type="button" aria-pressed="true">直接开发</button>
+              <button id="table-entry" type="button" aria-pressed="false" aria-controls="table-panel">从表格生成</button>
+            </nav>
+          </div>
+          <section id="quick-panel" class="quick-panel" aria-labelledby="quick-title" hidden>
+            <h3 id="quick-title">先试一个模板</h3>
+            <div class="entry-actions" aria-label="可选模板">
+              <button type="button" data-entry-template="board" aria-pressed="true">交付跟进板</button>
+              <button type="button" data-entry-template="list" aria-pressed="false">读书清单</button>
+              <button type="button" data-entry-template="budget" aria-pressed="false">AA 分账</button>
+            </div>
+            <div class="template-description">
+              <p class="auth-eyebrow">示例需求</p>
+              <p id="template-prompt"></p>
+            </div>
+            <div class="entry-actions">
+              <button id="template-sample" type="button">先试样例</button>
+              <button id="template-customize" type="button">修改示例需求</button>
+              <button id="template-generate" class="elys-primary" type="button">用此模板生成</button>
+            </div>
+          </section>
+          <section id="table-panel" hidden></section>
+          <p id="generation-balance" class="elys-config" role="status" hidden></p>
+          <form id="composer">
+            <div class="elys-requirement">
+              <label id="requirement-label" for="requirement">工具需求</label>
+              <textarea id="requirement" rows="5" maxlength="2000" placeholder="例如：做一个读书清单，添加书名后，刷新页面还能看见。"></textarea>
+            </div>
+            <div class="elys-actions">
+              <button id="example" class="elys-example" type="button">试试读书清单</button>
+              <p id="error" class="elys-error" role="alert" hidden></p>
+              <button id="generate" class="elys-primary" type="submit" disabled>生成工具</button>
+            </div>
+            <p id="generation-retry-note" class="auth-muted" hidden>生成失败不扣个人次数。</p>
+          </form>
+          <section id="staged-panel" class="staged-panel" aria-labelledby="staged-title" hidden>
+            <h3 id="staged-title">生成任务</h3>
+            <p id="staged-list-status" class="auth-muted" role="status"></p>
+            <ul id="staged-task-list" aria-label="尚可查看的生成任务"></ul>
+            <div id="staged-detail" class="staged-detail" hidden>
+              <p id="staged-status" role="status"></p>
+              <ol id="staged-steps" aria-label="生成进度"></ol>
+              <p id="staged-reason" class="elys-error" hidden></p>
+              <p id="staged-issue" class="auth-muted" hidden></p>
+            </div>
+            <div class="entry-actions">
+              <button id="staged-resume" type="button" hidden>继续生成</button>
+              <button id="staged-preview" type="button" hidden>检查预览</button>
+              <button id="staged-sync" type="button" hidden>核对保存</button>
+              <button id="staged-refresh" type="button" hidden>重新读取任务</button>
+            </div>
+          </section>
+          <div id="loading" class="elys-loading" role="status" hidden>
+            <p id="phase"></p>
+            <ol aria-label="生成阶段">
+              <li id="model-step">模型生成</li>
+              <li id="preview-step">准备预览</li>
+            </ol>
+          </div>
+          <p id="config" class="elys-config" role="status" hidden></p>
+          <div class="entry-actions">
+            <button id="return-to-library" type="button" hidden>返回我的工具</button>
+          </div>
+        </section>
+      </aside>
+      <section id="workspace-guide" class="workspace-guide" aria-labelledby="guide-title" hidden>
+        <p class="auth-eyebrow">欢迎使用 ROOT</p>
+        <h1 id="guide-title" tabindex="-1">选一个方式开始</h1>
+        <div class="welcome-routes">
+          <button id="welcome-fast" type="button">快速体验 <small>选一个模板，用示例需求生成并试用</small></button>
+          <button id="welcome-direct" type="button">直接开发 <small>输入自己的需求，或从一份表格开始</small></button>
+          <button id="welcome-idea" type="button">需求助手 <small>先梳理想法，再保存或带入开发</small></button>
+        </div>
+        <button id="guide-skip" type="button">跳过引导</button>
       </section>
+      <div id="guide-hint" class="guide-hint" hidden>
+        <p id="guide-hint-text" role="status"></p>
+        <button id="guide-dismiss" type="button">跳过引导</button>
+      </div>
+      <section id="assistant-panel" hidden></section>
       <section class="elys-preview" aria-labelledby="preview-title">
         <header class="elys-preview-header">
           <p class="auth-eyebrow" aria-hidden="true">工具预览</p>
@@ -97,6 +188,7 @@
             <p id="publish-explanation">应用发布暂未开放。你仍可在工作台使用和保存这个工具。</p>
           </div>
         </header>
+        <p id="first-tool-saved" class="elys-config" role="status" hidden>工具已保存，可从「我的工具」找回。</p>
         <p id="publication-message" class="elys-config" role="status" hidden></p>
         <div id="empty" class="elys-empty">
           <h3 id="empty-title">还没有生成工具</h3>
@@ -118,90 +210,12 @@
         <footer class="elys-preview-footer">
           隔离预览 <span id="storage-warning" class="elys-error" role="status" hidden></span>
         </footer>
-      </section>
-      <section id="tool-version-panel" class="tool-version-panel" aria-labelledby="tool-version-title" hidden>
-        <p class="auth-eyebrow" id="version-tool-name"></p>
-        <h2 id="tool-version-title">工具版本历史</h2>
-        <p id="tool-version-status" role="status"></p>
-        <ol id="tool-version-list" class="version-list"></ol>
-      </section>
-      <section class="elys-composer" aria-labelledby="composer-title">
-        <h2 id="composer-title">你想做什么工具？</h2>
-        <div id="new-tool-options">
-          <p class="elys-intro">描述工具的用途、操作和要保存的数据。</p>
-          <nav class="entry-actions" aria-label="开始方式">
-            <button id="quick-entry" type="button" aria-pressed="false" aria-controls="quick-panel">快速体验</button>
-            <button id="direct-entry" type="button" aria-pressed="true">直接开发</button>
-            <button id="idea-entry" type="button">需求助手</button>
-            <button id="table-entry" type="button" aria-pressed="false" aria-controls="table-panel">从表格生成</button>
-          </nav>
-          <div class="entry-actions">
-            <button id="guide-start" type="button">新手引导</button>
-          </div>
-        </div>
-        <aside id="workspace-guide" class="workspace-guide" aria-label="新手引导" hidden>
-          <p id="guide-copy" role="status"></p>
-          <button id="guide-skip" type="button">跳过引导</button>
-        </aside>
-        <section id="quick-panel" class="quick-panel" aria-labelledby="quick-title" hidden>
-          <h3 id="quick-title">先试一个模板</h3>
-          <div class="entry-actions" aria-label="可选模板">
-            <button type="button" data-entry-template="board" aria-pressed="true">交付跟进板</button>
-            <button type="button" data-entry-template="list" aria-pressed="false">读书清单</button>
-            <button type="button" data-entry-template="budget" aria-pressed="false">AA 分账</button>
-          </div>
-          <div class="template-description">
-            <p class="auth-eyebrow">示例需求</p>
-            <p id="template-prompt"></p>
-          </div>
-          <div class="entry-actions">
-            <button id="template-sample" type="button">先试样例</button>
-            <button id="template-customize" type="button">修改示例需求</button>
-            <button id="template-generate" class="elys-primary" type="button">用此模板生成</button>
-          </div>
+        <section id="tool-version-panel" class="tool-version-panel" aria-labelledby="tool-version-title" hidden>
+          <p class="auth-eyebrow" id="version-tool-name"></p>
+          <h2 id="tool-version-title">工具版本历史</h2>
+          <p id="tool-version-status" role="status"></p>
+          <ol id="tool-version-list" class="version-list"></ol>
         </section>
-        <section id="table-panel" hidden></section>
-        <p id="generation-balance" class="elys-config" role="status" hidden></p>
-        <form id="composer">
-          <div class="elys-requirement">
-            <label for="requirement">工具需求</label>
-            <textarea id="requirement" rows="5" maxlength="2000" placeholder="例如：做一个读书清单，添加书名后，刷新页面还能看见。"></textarea>
-          </div>
-          <div class="elys-actions">
-            <button id="example" class="elys-example" type="button">试试读书清单</button>
-            <p id="error" class="elys-error" role="alert" hidden></p>
-            <button id="generate" class="elys-primary" type="submit" disabled>生成工具</button>
-          </div>
-          <p id="generation-retry-note" class="auth-muted" hidden>生成失败不扣个人次数。</p>
-        </form>
-        <section id="staged-panel" class="staged-panel" aria-labelledby="staged-title" hidden>
-          <h3 id="staged-title">生成任务</h3>
-          <p id="staged-list-status" class="auth-muted" role="status"></p>
-          <ul id="staged-task-list" aria-label="尚可查看的生成任务"></ul>
-          <div id="staged-detail" class="staged-detail" hidden>
-            <p id="staged-status" role="status"></p>
-            <ol id="staged-steps" aria-label="生成进度"></ol>
-            <p id="staged-reason" class="elys-error" hidden></p>
-            <p id="staged-issue" class="auth-muted" hidden></p>
-          </div>
-          <div class="entry-actions">
-            <button id="staged-resume" type="button" hidden>继续生成</button>
-            <button id="staged-preview" type="button" hidden>检查预览</button>
-            <button id="staged-sync" type="button" hidden>核对保存</button>
-            <button id="staged-refresh" type="button" hidden>重新读取任务</button>
-          </div>
-        </section>
-        <div id="loading" class="elys-loading" role="status" hidden>
-          <p id="phase"></p>
-          <ol aria-label="生成阶段">
-            <li id="model-step">模型生成</li>
-            <li id="preview-step">准备预览</li>
-          </ol>
-        </div>
-        <p id="config" class="elys-config" role="status" hidden></p>
-        <div class="entry-actions">
-          <button id="return-to-library" type="button" hidden>返回我的工具</button>
-        </div>
       </section>
     </div>
   </main>

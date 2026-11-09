@@ -613,7 +613,8 @@ class AccountHTTP(unittest.TestCase):
         self.assertEqual(self.request(path + "/publish", {
             "revision": current["revision"], "runId": competing["runId"], "entries": updated,
         }, owner, marker)[1]["code"], "version_conflict")
-        self.assertEqual(len(self.request("/api/tools", cookie=owner, marker=marker)[1]["items"]), 1)
+        listed = self.request("/api/tools", cookie=owner, marker=marker)[1]["items"]
+        self.assertEqual([(item["id"], item["version"]) for item in listed], [(tool_id, 2)])
         history = self.request(versions, cookie=owner, marker=marker)[1]
         self.assertEqual(history["current"], 2)
         self.assertEqual([item["version"] for item in history["items"]], [2, 1])
@@ -653,7 +654,7 @@ class AccountHTTP(unittest.TestCase):
         history = self.request(path + "/versions", cookie=cookie, marker=marker)[1]["items"]
         self.assertEqual(history[1], original)
         self.assertEqual(self.request("/api/tools", cookie=cookie, marker=marker)[1]["items"],
-                         [{"id": tool_id, "title": "保留的标题"}])
+                         [{"id": tool_id, "title": "保留的标题", "version": 2}])
 
 
 if __name__ == "__main__":

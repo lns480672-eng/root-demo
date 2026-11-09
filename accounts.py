@@ -248,7 +248,9 @@ class Store:
         with self.connection() as db:
             user = self.session(db, token, marker)
             items = db.execute(
-                "SELECT id, title FROM tools WHERE owner=? AND published=1 ORDER BY rowid DESC",
+                """SELECT id, title,
+                    COALESCE((SELECT max(version) FROM tool_versions WHERE tool_id=tools.id), 1) AS version
+                    FROM tools WHERE owner=? AND published=1 ORDER BY rowid DESC""",
                 (user["id"],),
             ).fetchall()
             return {"items": [dict(item) for item in items], "latest": user["latest_tool"]}

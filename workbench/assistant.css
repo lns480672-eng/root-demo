@@ -1,9 +1,7 @@
-#workspace:has(> #assistant-panel:not([hidden])) {
-  grid-template-columns: minmax(0, 1fr);
-  grid-template-areas: none;
-}
-#workspace:has(> #assistant-panel:not([hidden])) > :not(#assistant-panel) { display: none; }
+#workspace:has(> #assistant-panel:not([hidden])) :is(.elys-composer, .elys-preview) { display: none; }
 #assistant-panel {
+  grid-area: content;
+  align-self: start;
   min-width: 0;
   width: min(100%, 760px);
   margin-inline: auto;

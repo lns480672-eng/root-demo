@@ -1,6 +1,6 @@
 'use strict';
 
-function setupRequirementAssistant({request, offerStorageKey, onBuild, onExit}) {
+function setupRequirementAssistant({request, offerStorageKey, onGuideUpdate, onBuild, onExit}) {
   const panel = document.getElementById('assistant-panel');
   const draftsPath = '/api/requirement-drafts';
   const maxIdea = 1200;
@@ -136,6 +136,7 @@ function setupRequirementAssistant({request, offerStorageKey, onBuild, onExit}) 
     build.disabled = !isText(editor.value, maxDraft);
     retryList.disabled = pending;
     dirty.hidden = !editor.value || editor.value === draft?.savedText;
+    onGuideUpdate();
   }
 
   function invalidate() {

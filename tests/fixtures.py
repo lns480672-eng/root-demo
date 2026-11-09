@@ -156,7 +156,7 @@ def analysis(data, key, admit, *, record=None):
 assistant_fixture.provider = analysis
 runs = Path(sys.argv[3])
 store = Store(runs / "workspace.sqlite3")
-store.create_invite("fixture-invite", uses=2)
+store.create_invite("fixture-invite", uses=6 if "--entry-flow" in sys.argv[5:] else 2)
 store.create_invite("fixture-expired-invite", hours=-1)
 store.create_invite("fixture-used-invite", uses=0, hours=-1)
 admin_names = ()
