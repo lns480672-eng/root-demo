@@ -1,0 +1,111 @@
+task:
+  id: root-workbench-v4-local
+  goal: "AC-001 和 AC-002：正式本地工作台生成两种工具，操作并刷新恢复；失败和重试期间旧工具可操作"
+  out_of_scope: [AC-003, 发布, 公开仓库, 提交笔试, 独立验收]
+  owner: 开发聊天
+  write_scope: [generate.py, workbench.py, workbench, tests, 实施计划.md, workbench-harness.yaml, runs]
+baseline:
+  observable_state: "第 4 版原型已确认；旧样例完成真实生成及隔离刷新；正式工作台入口尚缺"
+  reproduction_or_command: "node tests/verify-workbench.mjs"
+  evidence: runs/run-fvnuawoc
+  observation_boundary: 样例试跑与原型
+  evidence_state: Exercised
+acceptance:
+  business_oracle: "TEST-001 两条真实 DeepSeek 请求及操作；TEST-002 同 ID 新文档恢复可见记录"
+  unit_oracle: "完整 HTML、截断和凭据内容检查"
+  integration_oracle: "Chrome 通过正式本机 HTTP 路径提交、操作和刷新"
+  regression_oracle: "可达 HTTP 探针与父页访问阻断；失败保留输入和旧数据、两次新增、重试和切换"
+  forbidden_side_effects: [外发凭据, 对外部署, 自动调用重试]
+slice:
+  current: 本地开发自测完成
+  precondition: "本机服务须使用有效的 DEEPSEEK_API_KEY"
+  failing_oracle: "早先两个输入鉴权失败，模型列表预检通过后已恢复"
+  done_state: "两种需求均有真实请求 ID、用量和实际交互，首条工具刷新后恢复"
+  reset_or_recovery: "等待本机配置修正；每次真实尝试生成独立本地记录"
+timebox:
+  task_minutes: 60
+  research_checkpoint_minutes: 30
+  slice_minutes: 15
+  command_seconds: 60
+  max_same_strategy_boxes: 2
+  live_slow_command: "每条请求浏览器测试有 135 秒上限，两条依次执行"
+checkpoint:
+  path: workbench-harness.yaml
+  verified_facts: ["本地 Git 已初始化并核验忽略规则", "浏览器初始、生成、恢复、失败与重试已用替身验证", "可达探针只收到控制请求", "真实 DeepSeek 两条交互通过且保留请求 ID、用量及截图"]
+  first_unfinished_oracle: 固定候选独立验收另行执行
+  changed_files: [.gitignore, generate.py, workbench.py, workbench, tests, README.md, 实施计划.md, workbench-harness.yaml]
+  last_validation:
+    tested_version: v4-0dcfaae42ca6
+    environment: Python 3.9.6, Node 24.21.0, Chrome 156.0.8078.80
+    command: "WORKBENCH_URL=http://127.0.0.1:8767 node tests/verify-workbench.mjs --live"
+    exit_code: 0
+    evidence: runs/workbench-live-61tvqY/workbench-check.json
+    original_failure: runs/workbench-live-RB8q2h/workbench-check.json
+    second_auth_failure: runs/workbench-live-kmHV1K/workbench-check.json
+    fixture_exit_code: 0
+    fixture_evidence: runs/workbench-v4-fixture/workbench-check.json
+  failure_class: dependency 已恢复
+  current_hypothesis: "新输入先经模型列表预检，真实生成成功；此前 401 的具体原因未确认"
+  current_strategy: 终端拒绝完全重复粘贴，DeepSeek 模型列表鉴权通过后才运行同构建的生成自测
+  strategy_boxes_used: 2
+  rejected_approaches: ["原测试仅读顶页 frame tree，无法附着 Chrome 的独立预览目标", "原替身靠定时器呈现短暂准备阶段，测试可能错过"]
+  safe_resume_state: "同一构建的替身和真实自测均通过；两份真实鉴权失败证据保留"
+  latest_user_decision: "第 4 版开发基线、已授权本地 Git 初始化、本机从 macOS 钥匙串读取后经环境变量配置"
+  latest_user_decision_source: "设计交接 01a1be60-c9af-7571-b561-23060bf508f0 与当前开发聊天"
+  next_action: "按独立验收任务在本机候选构建输入未经开发调试的新需求"
+  next_done_condition: "验收任务单列给出该候选版本的结论"
+  remaining_risks: [真实模型输出的稳定性, 固定版本独立验收, AC-003 另行安排]
+recovery:
+  retry_allowed: false
+  max_attempts: 1
+  failed_operation: "本地真实开发自测的 HTTP 401，已恢复"
+  attempts_used: 1
+  idempotency_evidence: "401 未返回生成产物与用量；只有本机配置修正后才执行"
+  preserve_original_failure_evidence: true
+retrospective:
+  trigger: "准备阶段观测连续超时"
+  skill_gap: "模拟动作耗时不等于可控观测窗口"
+  candidate_rule: "断言过渡态可操作时，对替身响应及就绪消息设置测试信号"
+  promotion_state: case-only
+
+candidate_checkpoint:
+  goal: 固定第 4 版本地候选并准备独立验收交接
+  strategy_boxes_used: 1
+  active_method: 同构建补自动化负例并冻结本机源码与证据
+  current_slice: 失败后刷新、消息伪造及废弃预览、HTTP 异常与并发
+  baseline_build: v4-0dcfaae42ca6
+  available_evidence: [runs/workbench-v4-fixture/workbench-check.json, runs/workbench-live-61tvqY/workbench-check.json]
+  next_action: 更新既有回归入口，按质量门禁核对补验
+  status: 固定候选交接包已完成
+  result: Python 单测、Chrome 替身全回归与 8770 独立启动通过；同构建真实自测已核对
+  build: v4-0dcfaae42ca6
+  live_entry: "http://127.0.0.1:8767/"
+  handoff: runs/candidate-v4-0dcfaae42ca6/验收交接.md
+  checksum: runs/candidate-v4-0dcfaae42ca6/SHA256SUMS
+  evidence: [runs/candidate-v4-0dcfaae42ca6/runs/unit.log, runs/candidate-v4-0dcfaae42ca6/runs/g2-fixture/workbench-check.json, runs/candidate-v4-0dcfaae42ca6/runs/workbench-live-61tvqY/workbench-check.json]
+  first_unfinished_oracle: 独立验收执行另行安排
+  runtime_changes: 无，补充仅涉及回归测试与交接证据
+  remaining_risks: [120 秒为网络 I/O 超时, 未单独验证其他浏览器与弹窗或顶层导航, AC-003 另行安排]
+
+webrtc_checkpoint:
+  finding: ROOT-V4-IA-01
+  gate: AC-002 / TEST-002 / TASK-002
+  baseline_build: v4-0dcfaae42ca6
+  strategy_boxes_used: 1
+  current_strategy: 浏览器原生 Connection-Allowlist 加启动前执行检查
+  red: runs/webrtc-development-red/webrtc-isolation.json
+  first_unfinished_oracle: 同浏览器顶层 UDP 可达，生成预览零包
+  stage: 真实模型补验
+  candidate_build: v4-f58378aa55af
+  webrtc_green: runs/webrtc-development-final/webrtc-isolation.json
+  unsupported_browser: runs/webrtc-no-policy/webrtc-isolation.json
+  fixture_green: runs/workbench-webrtc-fixture/workbench-check.json
+  live_attempt_1: runs/run-ynscqckh/generation.json
+  live_failure_class: dependency 模型达到 4096 输出上限，原样重试零次
+  recovery: 将真实自测提示词收敛为最简界面和完整 HTML，一次独立复跑
+  status: 修复、开发自测及冻结完成，待独立复验
+  first_unfinished_oracle: 独立验收对新构建复测 ROOT-V4-IA-01
+  final_evidence: [runs/webrtc-release-direct/webrtc-isolation.json, runs/webrtc-release-nested/webrtc-isolation.json, runs/webrtc-release-no-policy/webrtc-isolation.json, runs/workbench-webrtc-g2/workbench-check.json, runs/workbench-webrtc-live-final/workbench-check.json]
+  handoff: runs/candidate-v4-f58378aa55af/验收交接.md
+  live_test_correction: 真实计算器预填 800 和 180，自测改为先清空再键入；替身加入预填初值
+  remaining_risks: [已验证 Chrome 156, 合成嵌套探针在恢复时初始化超时, 新旧端口浏览器数据分开, 独立复验待执行]

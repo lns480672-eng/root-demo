@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ROOT 工具工作台</title>
+  <link rel="stylesheet" href="/workbench.css">
+  <script src="/workbench.js" defer></script>
+</head>
+<body>
+  <main class="elys-product" data-state="initial">
+    <header class="elys-masthead">
+      <span class="elys-wordmark" role="img" aria-label="ROOT">R<span class="elys-counter" aria-hidden="true"></span><span class="elys-counter" aria-hidden="true"></span>T</span>
+      <span class="elys-brand-accent" aria-hidden="true"></span>
+      <span class="elys-brand-caption">工具工作台</span>
+    </header>
+    <div class="elys-workspace">
+      <section class="elys-composer" aria-labelledby="composer-title">
+        <h1 id="composer-title">你想做什么工具？</h1>
+        <p class="elys-intro">描述工具的用途、操作和要保存的数据。</p>
+        <form id="composer">
+          <div class="elys-requirement">
+            <label for="requirement">工具需求</label>
+            <textarea id="requirement" rows="5" maxlength="2000" placeholder="例如：做一个读书清单，添加书名后，刷新页面还能看见。"></textarea>
+          </div>
+          <div class="elys-actions">
+            <button id="example" class="elys-example" type="button">试试读书清单</button>
+            <p id="error" class="elys-error" role="alert" hidden></p>
+            <button id="generate" class="elys-primary" type="submit" disabled>生成工具</button>
+          </div>
+        </form>
+        <div id="loading" class="elys-loading" role="status" hidden>
+          <p id="phase"></p>
+          <ol aria-label="生成阶段">
+            <li id="model-step">模型生成</li>
+            <li id="preview-step">准备预览</li>
+          </ol>
+        </div>
+        <p id="config" class="elys-config" role="status" hidden></p>
+      </section>
+      <section class="elys-preview" aria-labelledby="preview-title">
+        <header class="elys-preview-header">
+          <h2 id="preview-title">工具预览</h2>
+          <span id="preview-status" class="elys-status" role="status">待生成</span>
+        </header>
+        <div id="empty" class="elys-empty">
+          <h3 id="empty-title">还没有生成工具</h3>
+          <p id="empty-copy">输入需求后，工具会在这里出现。</p>
+        </div>
+        <div id="preview" class="preview-frames"></div>
+        <footer class="elys-preview-footer">
+          隔离预览 <span id="storage-warning" class="elys-error" role="status" hidden></span>
+        </footer>
+      </section>
+    </div>
+  </main>
+</body>
+</html>

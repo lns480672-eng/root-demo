@@ -1,0 +1,205 @@
+html { background: #fafafe; }
+body { margin: 0; padding: clamp(10px, 2vw, 24px); }
+.elys-product { max-width: 1350px; margin-inline: auto; }
+button:enabled { cursor: pointer; }
+  .elys-product {
+    color-scheme: light;
+    --elys-ink: #1d1d22;
+    --elys-muted: #565969;
+    --elys-line: #dfe1e9;
+    --elys-border: #adb1c0;
+    --elys-white: #fafafe;
+    --elys-wash: #e9ecfa;
+    --elys-blue: #6883d0;
+    --elys-error: #a3372e;
+    --elys-serif: "Songti SC", "Noto Serif CJK SC", "Noto Serif SC", "SimSun", serif;
+    padding: clamp(12px, 2.5vw, 25px);
+    background: radial-gradient(ellipse at 86% 100%, #e4e8fc, transparent 72%), linear-gradient(130deg, #f7f7fc, #eceefa);
+    border-radius: 22px;
+    color: var(--elys-ink);
+    font: 400 14px/1.6 -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
+  }
+  .elys-product * { box-sizing: border-box; }
+  .elys-product [hidden] { display: none !important; }
+  .elys-product :is(h1, h2, h3, p, ol) { margin: 0; }
+  .elys-masthead {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    min-height: 48px;
+    padding: 8px 19px;
+    border: 1px solid #e6e7ef;
+    border-radius: 999px;
+    background: #fafafe;
+    box-shadow: 0 8px 24px #323d6810;
+  }
+  .elys-wordmark {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    color: #15151b;
+    font: 900 23px/.95 "Avenir Next", "Arial Black", sans-serif;
+  }
+  .elys-counter {
+    display: grid;
+    width: 15px;
+    height: 16px;
+    place-items: center;
+    background: currentColor;
+    clip-path: polygon(19% 0, 81% 0, 100% 18%, 100% 82%, 81% 100%, 19% 100%, 0 82%, 0 18%);
+  }
+  .elys-counter::before {
+    content: "";
+    width: 7px;
+    height: 7px;
+    background: radial-gradient(circle, #15151b 0 1px, var(--elys-white) 1.25px);
+  }
+  .elys-brand-accent {
+    width: 8px;
+    height: 8px;
+    background: #879cea;
+    border-radius: 2px;
+  }
+  .elys-brand-caption { font-size: 13px; }
+  .elys-workspace {
+    display: grid;
+    grid-template-columns: minmax(0, .76fr) minmax(0, 1.24fr);
+    gap: clamp(20px, 3.4vw, 34px);
+    margin-block-start: clamp(21px, 3.6vw, 37px);
+  }
+  .elys-composer {
+    min-width: 0;
+    padding: 10px 0 20px clamp(0px, 1.4vw, 14px);
+  }
+  :is(.elys-composer h1, .elys-empty h3) {
+    font-family: var(--elys-serif);
+    font-weight: 750;
+    line-height: 1.2;
+    letter-spacing: -.045em;
+  }
+  .elys-composer h1 { font-size: clamp(24px, 3.7vw, 39px); }
+  .elys-intro { margin-block-start: 10px; color: var(--elys-muted); }
+  .elys-requirement { margin-block-start: 28px; }
+  .elys-product label { display: block; font-size: 13px; font-weight: 650; }
+  .elys-product :is(input, textarea) {
+    inline-size: 100%;
+    min-inline-size: 0;
+    border: 1px solid var(--elys-border);
+    border-radius: 9px;
+    padding: 9px 12px;
+    background: var(--elys-white);
+    color: var(--elys-ink);
+    font: inherit;
+  }
+  .elys-product :is(input, textarea)::placeholder { color: #666a7b; opacity: 1; }
+  .elys-product textarea { display: block; margin-block-start: 8px; min-block-size: 113px; resize: vertical; }
+  .elys-actions {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin-block-start: 16px;
+  }
+  .elys-product button {
+    font: inherit;
+    font-weight: 650;
+    min-block-size: 36px;
+    padding: 6px 15px;
+    border: 1px solid var(--elys-border);
+    border-radius: 999px;
+    white-space: nowrap;
+  }
+  .elys-product :is(button, input, textarea):focus-visible {
+    outline: 2px solid #4565b9;
+    outline-offset: 2px;
+  }
+  .elys-product .elys-primary { background: #202127; color: #fff; border-color: #202127; }
+  .elys-product .elys-example,
+  .elys-product[data-state="failure"] #generate { background: var(--elys-white); color: var(--elys-ink); }
+  .elys-product #generate { margin-inline-start: auto; }
+  .elys-product button:enabled:hover { filter: brightness(.94); }
+  .elys-product button:disabled { background: #e2e4f0; color: #5e6275; border-color: #c9cede; }
+  .elys-error { color: var(--elys-error); font-size: 13px; }
+  .elys-loading { margin-block-start: 16px; color: var(--elys-muted); }
+  .elys-loading p { color: var(--elys-ink); }
+  .elys-loading ol { display: flex; flex-wrap: wrap; gap: 4px 23px; padding-inline-start: 19px; font-size: 12px; }
+  .elys-loading [aria-current="step"] { color: #38539c; font-weight: 700; }
+  .elys-preview {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    min-height: 405px;
+    padding: clamp(16px, 2.6vw, 28px);
+    border: 1px solid #dce0ee;
+    border-radius: 24px;
+    background: #f9f9fd;
+    box-shadow: 0 18px 42px #45559219;
+  }
+  .elys-preview-header {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 4px 10px;
+    padding-block-end: 12px;
+    border-block-end: 1px solid var(--elys-line);
+  }
+  .elys-preview-header h2 { font-size: 15px; font-weight: 700; }
+  .elys-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--elys-muted);
+    font-size: 12px;
+  }
+  .elys-status::before {
+    content: "";
+    inline-size: 6px;
+    block-size: 6px;
+    border-radius: 50%;
+    background: #8d91a0;
+  }
+  .elys-status[data-usable]::before {
+    background: var(--elys-blue);
+    box-shadow: 0 0 0 3px #e1e7fa;
+  }
+  .elys-empty {
+    flex: 1;
+    display: grid;
+    align-content: center;
+    gap: 6px;
+    min-block-size: 160px;
+    text-align: center;
+    color: var(--elys-muted);
+  }
+  .elys-empty h3 { font-size: 22px; color: var(--elys-ink); }
+  .elys-preview-footer { margin-block-start: auto; padding-block-start: 22px; color: var(--elys-muted); font-size: 12px; }
+  @media (max-width: 650px) {
+    .elys-workspace { grid-template-columns: minmax(0, 1fr); gap: 14px; }
+    .elys-composer { padding: 0; }
+    .elys-preview { min-block-size: 275px; }
+  }
+  @media (pointer: coarse) {
+    .elys-product button { min-block-size: 44px; }
+    .elys-product :is(input, textarea) { font-size: 16px; }
+  }
+
+.elys-product .elys-config { margin-block-start: 16px; color: var(--elys-muted); font-size: 13px; }
+.preview-frames { position: relative; min-width: 0; }
+.preview-frames iframe {
+  display: block;
+  width: 100%;
+  height: clamp(290px, 54vh, 590px);
+  border: 0;
+  margin-block-start: 16px;
+}
+.preview-frames iframe:not([data-tool]) {
+  position: absolute;
+  inset: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+#storage-warning { margin-inline-start: 8px; }
+@media (max-width: 650px) {
+  .preview-frames iframe { height: clamp(235px, 48vh, 440px); }
+}
