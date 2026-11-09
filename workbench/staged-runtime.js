@@ -9,6 +9,7 @@ let records = JSON.parse(localStorage.getItem(storageKey) || '[]');
 let lastRecordId = records.reduce((maximum, row) => Math.max(maximum, Number(row.id) || 0), 0);
 let editingId = null;
 let deletingId = null;
+let savingBackup = false;
 const el = (tag, text = '') => {
   const node = document.createElement(tag);
   node.textContent = text;
@@ -80,6 +81,7 @@ function fieldValue(field, input) {
 }
 
 function save(next) {
+  if (savingBackup) throw new Error('正在恢复备份，请稍候。');
   localStorage.setItem(storageKey, JSON.stringify(next));
   records = next;
   render();
@@ -260,17 +262,24 @@ function installBackup() {
   fileInput.id = 'import-backup';
   fileInput.type = 'file';
   fileInput.accept = '.json,application/json';
-  const confirm = button('确认导入并替换', () => {
-    if (!pending) return;
+  const confirm = button('确认导入并替换', async () => {
+    if (!pending || savingBackup) return;
+    const restored = pending;
+    setSaving(true);
+    status.textContent = '正在确认保存，当前记录暂不改变。';
     try {
-      save(pending);
+      if (typeof window.rootSaveBackup !== 'function') throw new Error('备份保存不可用。');
+      await window.rootSaveBackup(storageKey, JSON.stringify(restored));
+      records = restored;
       lastRecordId = records.reduce((maximum, row) => Math.max(maximum, Number(row.id)), 0);
       deletingId = null;
       resetEditor();
       render();
       clearPending('已恢复 ' + records.length + ' 条记录。');
     } catch (err) {
-      status.textContent = '导入失败，已有记录未改变。' + err.message;
+      clearPending(err instanceof Error ? err.message : '尚未确认备份已保存，请重新打开工具核对。');
+    } finally {
+      setSaving(false);
     }
   });
   confirm.id = 'confirm-import';
@@ -279,6 +288,12 @@ function installBackup() {
     clearPending('已取消导入，已有记录未改变。');
   });
   cancel.id = 'cancel-import';
+
+  function setSaving(value) {
+    savingBackup = value;
+    section('entry').inert = section('records').inert = value;
+    confirm.disabled = cancel.disabled = download.disabled = fileInput.disabled = value;
+  }
 
   function clearPending(message) {
     pending = null;
