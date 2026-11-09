@@ -10,7 +10,7 @@ import tempfile
 import time
 import uuid
 
-from accounts import ApiError, pack_entries
+from accounts import ApiError, TABLE_STORAGE_BYTES, pack_entries
 
 MAX_ATTEMPTS = 8
 LEASE_SECONDS = 90
@@ -201,10 +201,17 @@ class StagedJobs:
                 require_digest = digest(files["app.html"])
                 if require_digest != source["digest"]:
                     raise ValueError("revision source mismatch")
-                context = self.revision.prepare(files)
+                context = (self.revision.prepare_table(tool["entries"], tool["title"], files)
+                           if tool["table_tool"] else self.revision.prepare(files))
                 return source["repo_id"] or source["id"], source["head"], require_digest, context
             html = (self.runs / tool["run_id"] / "app.html").read_bytes()
-            return None, ZERO, digest(html), self.revision.prepare({}, html)
+            if tool["table_tool"]:
+                if tool["version"] != 1:
+                    raise ValueError("unrecognized table revision")
+                context = self.revision.prepare_table(tool["entries"], tool["title"])
+            else:
+                context = self.revision.prepare({}, html)
+            return None, ZERO, digest(html), context
         except (ApiError, ValueError, OSError, subprocess.SubprocessError):
             raise ApiError(422, "staged_revision_source", "这个旧版本暂时无法安全地分阶段修改，原工具与记录仍可用。") from None
 
@@ -249,7 +256,10 @@ class StagedJobs:
     def check_revision(self, db, row, stage, content):
         revision = self.revision_record(db, row["id"])
         if revision:
-            self.revision.check(stage, content, json.loads(revision["context"]))
+            self.revision.check(stage, content, json.loads(revision["context"]), row["requirement"])
+        elif stage == "spec" and self.revision is not None:
+            if self.blueprint.stage_plan(content) == self.blueprint.TABLE_PLAN:
+                raise ValueError("unexpected table specification")
 
     def recover(self, db, row):
         tip = self.tip(row)
@@ -391,6 +401,7 @@ class StagedJobs:
             if revision:
                 current = self.store.owned_tool(db, {"id":row["owner"]}, revision["tool_id"])
                 self.store.require_version(revision["base_version"], current["version"])
+                self.check_table_schema(revision, current)
             candidate = self.candidate_record(db, identifier)
             if candidate is None:
                 tool_id = Path(tempfile.mkdtemp(prefix="run-", dir=self.runs)).name
@@ -404,9 +415,17 @@ class StagedJobs:
             if revision:
                 result.update(id=current["id"], runId=candidate["tool_id"], entries=json.loads(current["entries"]),
                               revision=current["revision"], version=current["version"] + 1)
+                if current["table_tool"]:
+                    result["storageLimit"] = TABLE_STORAGE_BYTES
             if self.permits_backup(row):
                 result["stagedBackup"] = True
             return result
+
+    def check_table_schema(self, revision, tool):
+        if tool["table_tool"]:
+            context = json.loads(revision["context"])
+            if context["kind"] != "table" or context["columns"] != self.revision.table_columns(tool["entries"]):
+                raise ApiError(409, "incompatible_revision", "已保存的表格字段发生变化，原工具仍可用。")
 
     def permits_backup(self, row):
         return self.blueprint.permits_backup(self.files(row))
@@ -461,6 +480,7 @@ class StagedJobs:
                 if revision:
                     current = self.store.owned_tool(db, owner, result_id)
                     self.store.require_version(revision["base_version"], current["version"])
+                    self.check_table_schema(revision, current)
                     if type(data.get("revision")) is not int or data["revision"] != current["revision"]:
                         raise ApiError(409, "revision_conflict", "已有更新的数据，请用最新记录重新准备预览。")
                 run = self.runs / tool_id
@@ -473,6 +493,9 @@ class StagedJobs:
                 if revision:
                     self.store.insert_revision_draft(db, current, tool_id, row["requirement"], model=True)
                     self.store.publish_revision(db, current, data, self.budget.record_generation_success)
+                    if current["table_tool"]:
+                        spec = json.loads(self.read(row, row["head"], "spec.json"))
+                        db.execute("UPDATE tools SET title=? WHERE id=?", (spec["title"], result_id))
                 else:
                     spec = json.loads(self.read(row, row["head"], "spec.json"))
                     title = " ".join(spec["title"].split())[:48]

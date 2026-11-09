@@ -8,6 +8,7 @@ import re
 from accounts import ApiError
 import staged_blueprint as blueprint
 import staged_program
+import table_import
 
 
 MAX_LEGACY_HTML = 24 * 1024
@@ -136,15 +137,77 @@ def prepare(prior_artifacts, legacy_html=None):
         raise ApiError(409, "revision_source_unsupported", "旧工具的来源或结构无法安全修改，旧版仍可用。") from None
 
 
+def table_columns(entries):
+    """Extract the stored schema without adding record data to the revision context."""
+    try:
+        table = json.loads(dict(json.loads(entries))[table_import.TABLE_KEY])
+        columns = table["columns"]
+        blueprint.require(isinstance(columns, list) and 1 <= len(columns) <= table_import.MAX_TABLE_COLUMNS,
+                          "bad_table_columns")
+        for column in columns:
+            blueprint.keys(column, "name", "type")
+            blueprint.require(table_import.valid_label(column["name"], table_import.MAX_HEADER_LENGTH)
+                              and column["type"] in table_import.COLUMN_TYPES, "bad_table_column")
+        blueprint.require(len({column["name"] for column in columns}) == len(columns), "bad_table_columns")
+        return columns
+    except (KeyError, RecursionError, TypeError, ValueError):
+        raise ApiError(409, "revision_source_unsupported", "旧表格的字段无法安全修改，原工具仍可用。") from None
+
+
+def prepare_table(entries, title, prior_artifacts=None):
+    columns = table_columns(entries)
+    if prior_artifacts is None:
+        spec = {"kind": "table", "title": title, "filters": []}
+    else:
+        blueprint.require(set(prior_artifacts) == {"spec.json", "app.html"}, "bad_table_artifacts")
+        spec = blueprint.read_artifact(prior_artifacts["spec.json"])
+        blueprint.require(spec.get("kind") == "table", "bad_table_source_kind")
+    blueprint.validate_spec(spec)
+    blueprint.require(all(index < len(columns) for index in spec["filters"]), "bad_table_column")
+    return {"kind": "table", "source": {"spec": spec}, "columns": columns}
+
+
+def _table_patch(payload, base):
+    patch = blueprint.read_artifact(payload)
+    current = base["source"]["spec"]
+    if isinstance(patch, dict) and patch.keys() == {"addFilter"}:
+        candidate = {**current, "filters": [*current["filters"], patch["addFilter"]]}
+    else:
+        blueprint.keys(patch, "title")
+        candidate = {**current, "title": patch["title"]}
+    return json.dumps(candidate, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+
+
+def _check_table(candidate, base, requirement):
+    current = base["source"]["spec"]
+    if candidate.get("kind") != "table":
+        raise _incompatible()
+    title, filters = candidate["title"], candidate["filters"]
+    rename = bool(re.search(r"(?:标题|名称|名字)\s*(?:改|换|变|为|叫|设|更)|更名|重命名", requirement))
+    if title != current["title"] and filters == current["filters"] and rename and title in requirement:
+        return
+    if title == current["title"] and filters[:-1] == current["filters"] and filters:
+        index = filters[-1]
+        if index >= len(base["columns"]):
+            raise ValueError("bad_table_column")
+        name = base["columns"][index]["name"]
+        if not rename and name in requirement and re.search(r"筛选|过滤", requirement):
+            return
+    raise ApiError(422, "staged_unsupported", "表格工具仅支持新增指定列的精确筛选或只修改标题，原工具仍可用。")
+
+
 def _incompatible():
     return ApiError(409, "incompatible_revision", "新版无法兼容原工具的数据结构，旧版仍可用。")
 
 
-def check(stage, payload, base):
+def check(stage, payload, base, requirement=""):
     """Check semantic data compatibility after normal stage validation."""
     if stage == "spec":
         candidate = blueprint.read_artifact(payload)
-        if (candidate.get("kind") == "program") != (base["kind"] == "program"):
+        if base["kind"] == "table":
+            _check_table(candidate, base, requirement)
+            return
+        if candidate.get("kind") == "table" or (candidate.get("kind") == "program") != (base["kind"] == "program"):
             raise _incompatible()
         if base["kind"] == "program":
             return
@@ -170,6 +233,15 @@ def check(stage, payload, base):
 
 def provide(stage, requirement, previous, key, admit, record, *, base):
     """Generate one revision stage from source-only context and check before success."""
+    if base["kind"] == "table":
+        spec = base["source"]["spec"]
+        context = {**spec, "columns": [
+            {"index": index, **column} for index, column in enumerate(base["columns"])
+            if column["name"] in requirement
+        ]}
+        return blueprint.provide(stage, requirement, previous, key, admit, record, revision_context=context,
+                                 table_patch=lambda payload: _table_patch(payload, base),
+                                 accept=lambda payload: check(stage, payload, base, requirement))
     context = {"kind":base["kind"], "storageKeys":base["storageKeys"]}
     if stage == "spec" and base["kind"] == "ledger":
         context["active_modules"] = [

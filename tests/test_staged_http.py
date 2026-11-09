@@ -20,7 +20,10 @@ from pathlib import Path
 import json
 import sys
 import time
+from unittest.mock import patch
+import assistant_model
 import generate
+import staged_revision
 from staged_jobs import StagedJobs
 import workbench
 from accounts import ApiError, Store
@@ -95,10 +98,32 @@ store = Store(runs / "workspace.sqlite3")
 store.register({"username":"staged-operator","password":"test-only-password","invite":store.create_invite()})
 def revise(stage, requirement, prior, key, admit, record, *, base):
     assert "persisted-marker" not in json.dumps(base, ensure_ascii=False)
+    if base["kind"] == "table":
+        def exchange(payload, dispatch, **kwargs):
+            message = json.loads(payload)["body"]["messages"][-1]["content"]
+            assert "private-table.csv" not in message and "private-row" not in message
+            context = json.loads(message)["revision_source"]
+            assert context["kind"] == "table"
+            if "负责人" in requirement:
+                assert context["columns"] == [{"index": 1, "name": "负责人", "type": "text"}]
+            dispatch()
+            if "超出范围" in requirement:
+                result = {"addFilter": 999}
+            elif "误给标题" in requirement:
+                result = {"title": "误给标题"}
+            elif "标题" in requirement:
+                result = {"title": "每周交付台账"}
+            else:
+                result = {"addFilter": 1}
+            return {"status": 200, "body": json.dumps({"choices": [
+                {"finish_reason": "stop", "message": {"content": json.dumps(result)}}
+            ]})}
+        with patch.object(assistant_model, "_exchange", exchange):
+            return staged_revision.provide(stage, requirement, prior, key, admit, record, base=base)
     return stages(stage, requirement, prior, key, admit, record)
 
 workbench.serve("fixture-key", 0, runs, staged_enabled=True, staged_provider=stages,
-                staged_revision_provider=revise, admin_usernames=("staged-operator",))
+                staged_revision_provider=revise, generation_limits=(5, 100), admin_usernames=("staged-operator",))
 """
 
 
@@ -258,6 +283,8 @@ class StagedHTTP(unittest.TestCase):
         data = {**candidate["staged"], "toolId":candidate["id"], "entries":[["fixture","draft"]]}
         self.assertEqual(self.request(path + "/publish", {**data,"sha256":"wrong"}, owner)[0], 409)
         self.assertEqual(self.request(path + "/publish", {**data,"entries":["invalid"]}, owner)[0], 400)
+        large = {**data, "entries": [["ordinary", "x" * (600 * 1024)]]}
+        self.assertEqual(self.request(path + "/publish", large, owner)[1]["code"], "tool_quota")
         self.assertFalse(self.request("/api/tools", auth=owner)[1]["items"])
         self.assertEqual(self.request(path + "/publish", data, other)[0], 404)
         failed_path = self.runs / candidate["id"] / "app.pending"
@@ -329,6 +356,73 @@ class StagedHTTP(unittest.TestCase):
                              "version_conflict")
         self.assertEqual(set(self.runs.glob("run-*")), runs_before)
         self.assertEqual(self.request("/api/trial", auth=owner)[1]["generation"]["used"], 2)
+
+    def test_imported_table_revisions_add_filter_and_preserve_rows_across_versions(self):
+        # CHG-029 / TEST-010 / TEST-007 / TEST-018-C through the real account and staged routes.
+        owner = self.account("staged-table-revision")
+        other = self.account("staged-table-other")
+        table = {
+            "source": "upload", "filename": "private-table.csv",
+            "columns": [{"name": "事项", "type": "text"}, {"name": "负责人", "type": "text"}],
+            "rows": [["private-row", "小周"]],
+        }
+        code, initial, _ = self.request("/api/table/generate", {"table": table}, owner)
+        self.assertEqual(code, 200)
+        tool = "/api/tools/" + initial["id"]
+        self.assertEqual(self.request(tool + "/commit", {"entries": initial["entries"]}, owner)[0], 200)
+        entries = json.loads(initial["entries"][0][1])
+        extra = [["追加记录" + "x" * 3072, "小林"] for _ in range(180)]
+        entries["rows"].extend(extra)
+        entries["done"].extend([False] * len(extra))
+        updated = [[initial["entries"][0][0], json.dumps(entries, ensure_ascii=False)]]
+        code, _, _ = self.request(tool + "/data", {"entries": updated, "revision": 1, "version": 1}, owner)
+        self.assertEqual(code, 200)
+        before = self.request("/api/trial", auth=owner)[1]["generation"]
+
+        def revise(version, requirement):
+            request = {"requirement": requirement, "version": version, "requestId": uuid4().hex}
+            self.assertEqual(self.request(tool + "/revise", request, other)[0], 404)
+            code, response, _ = self.request(tool + "/revise", request, owner)
+            self.assertEqual(code, 202)
+            return response["task"]["id"]
+
+        def publish(task, version, title):
+            complete = self.wait_task(owner, task, "complete")
+            self.assertEqual(complete["steps"], ["spec", "assemble"])
+            path = "/api/staged/" + task
+            code, candidate, _ = self.request(path + "/candidate", {}, owner)
+            self.assertEqual(code, 200)
+            self.assertEqual((candidate["id"], candidate["version"], candidate["entries"]),
+                             (initial["id"], version, updated))
+            self.assertEqual(candidate["storageLimit"], 8 * 1024 * 1024)
+            self.assertIn("const columnFilters = [1];", candidate["html"])
+            self.assertIn("<title>" + title + "</title>", candidate["html"])
+            self.assertNotIn("private-row", candidate["html"])
+            data = {**candidate["staged"], "toolId": candidate["id"], "runId": candidate["runId"],
+                    "entries": candidate["entries"], "revision": candidate["revision"]}
+            status, saved, _ = self.request(path + "/publish", data, owner)
+            self.assertEqual(status, 200)
+            self.assertEqual(self.request(path + "/publish", data, owner)[1], saved)
+            self.assertEqual((saved["id"], saved["version"], saved["entries"]),
+                             (initial["id"], version, updated))
+            self.assertTrue(saved.pop("applied"))
+            self.assertEqual(self.request(tool, auth=owner)[1], saved)
+
+        publish(revise(1, "增加负责人精确筛选"), 2, "交付跟进板")
+        publish(revise(2, "只把标题改成每周交付台账"), 3, "每周交付台账")
+        failed = revise(3, "超出范围的负责人筛选")
+        self.wait_task(owner, failed, "failed")
+        self.assertEqual(self.request("/api/staged/" + failed + "/candidate", {}, owner)[0], 409)
+        unrequested = revise(3, "新增负责人筛选，不能误给标题")
+        self.wait_task(owner, unrequested, "unsupported")
+        self.assertEqual(self.request("/api/staged/" + unrequested + "/candidate", {}, owner)[0], 409)
+        self.assertEqual(self.request(tool, auth=owner)[1]["entries"], updated)
+        versions = self.request(tool + "/versions", auth=owner)[1]
+        self.assertEqual(versions["current"], 3)
+        self.assertEqual(versions["items"][0]["note"], "只把标题改成每周交付台账")
+        self.assertEqual(self.request("/api/tools", auth=owner)[1]["items"][0]["title"], "每周交付台账")
+        after = self.request("/api/trial", auth=owner)[1]["generation"]
+        self.assertEqual((after["used"] - before["used"], after["totalUsed"] - before["totalUsed"]), (2, 4))
 
     def test_resolve_fences_a_late_publish_without_revoking_the_new_preview(self):
         owner = self.account("staged-resolve")
