@@ -71,10 +71,14 @@ export async function verifyAdmin({evaluate, click, type, until, cdp, login, log
   assert.match(await text('.top-up:not([hidden]) .error'), /正整数/);
   await evaluate(`(() => {
     const original = window.fetch;
+    let dropGrant = true;
     window.fetch = async (path, options) => {
       const response = await original(path, options);
-      if (String(path) === '/api/trial/admin' && options?.method === 'POST' &&
-          JSON.parse(options.body).action === 'grant') throw new TypeError('lost response');
+      if (dropGrant && String(path) === '/api/trial/admin' && options?.method === 'POST' &&
+          JSON.parse(options.body).action === 'grant') {
+        dropGrant = false;
+        throw new TypeError('lost response');
+      }
       return response;
     };
     document.querySelector('.top-up:not([hidden]) input').value = '';
@@ -82,6 +86,14 @@ export async function verifyAdmin({evaluate, click, type, until, cdp, login, log
   await type('.top-up:not([hidden]) input', '2');
   await click('.top-up:not([hidden]) [type=submit]');
   await until(() => visible('#retry-action'));
+  const relogged = await evaluate(`fetch('/api/login', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({username: ${JSON.stringify(admin)}, password: 'root-browser-test-only!'}),
+  }).then(response => response.status)`);
+  assert.equal(relogged, 200);
+  await click('#retry-action');
+  await until(async () => /会话已变更|重新登录/.test(await text('#action-feedback')));
+  assert.equal(await visible('#retry-action'), true, '失效会话无法确认上一次操作，必须保留原请求号');
   await cdp('Page.reload', { ignoreCache: true });
   await until(() => visible('#retry-action'));
   assert.equal(Number(await quota()), before + 2);
@@ -126,7 +138,7 @@ export async function verifyAdmin({evaluate, click, type, until, cdp, login, log
   return [{
     id: 'TEST-017', result: 'passed', normalAccountDenied: true, noSampleState: true,
     generationFailures: [1, 2], analysisFailures: [0, 1], pauseResume: true,
-    lostGrantResponseChargedOnce: true, loadErrorDoesNotShowFakeData: true,
+    lostGrantResponseChargedOnce: true, idempotencySurvivesSessionChange: true, loadErrorDoesNotShowFakeData: true,
     accountActionsLocked: true, responsiveWidths: [1360, 700, 390, 320],
   }];
 }

@@ -48,7 +48,8 @@ async function request(path, data) {
   const payload = await response.json();
   if (!response.ok) {
     const error = new Error(payload.message || '请求未完成。');
-    error.knownRejection = response.status >= 400 && response.status < 500;
+    error.authorizationChanged = ['login_required', 'session_changed', 'admin_required'].includes(payload.code);
+    error.knownRejection = !error.authorizationChanged && response.status >= 400 && response.status < 500;
     throw error;
   }
   return payload;
@@ -206,6 +207,8 @@ async function applyAction(data, fieldError) {
     if (error.knownRejection) {
       remember(null);
       (fieldError || feedback).textContent = error.message;
+    } else if (error.authorizationChanged) {
+      feedback.textContent = '登录会话或权限已变化。请返回工作台重新登录，再确认上次操作。';
     } else {
       feedback.textContent = '暂时无法确认操作结果，请点击「确认上次操作」。';
     }
