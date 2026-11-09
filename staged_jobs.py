@@ -334,10 +334,10 @@ class StagedJobs:
                    (next_stage, oid, "complete" if complete else "running",
                     0 if complete else self.clock() + self.lease_seconds, self.clock(), json.dumps(steps), row["id"]))
 
-    def check_revision(self, db, row, stage, content):
+    def check_revision(self, db, row, stage, content, prior):
         revision = self.revision_record(db, row["id"])
         if revision:
-            self.revision.check(stage, content, json.loads(revision["context"]), row["requirement"])
+            self.revision.check(stage, content, json.loads(revision["context"]), row["requirement"], previous=prior)
         elif stage == "spec" and self.revision is not None:
             if self.blueprint.stage_plan(content) == self.blueprint.TABLE_PLAN:
                 raise ValueError("unexpected table specification")
@@ -351,7 +351,7 @@ class StagedJobs:
         name = filename(stage)
         content = self.read(row, tip, name)
         self.blueprint.validate(stage, content, prior)
-        self.check_revision(db, row, stage, content)
+        self.check_revision(db, row, stage, content, prior)
         parent = [] if row["head"] == ZERO else [row["head"]]
         parents = self.git(row, "rev-list", "--parents", "-n", "1", tip).decode().split()[1:]
         actual = json.loads(self.read(row, tip, "manifest.json"))
@@ -404,7 +404,7 @@ class StagedJobs:
         self.blueprint.validate(stage, content, prior)
         with self.store.connection(write=True) as db:
             row = self.worker(db, identifier, fence, index)
-            self.check_revision(db, row, stage, content)
+            self.check_revision(db, row, stage, content, prior)
             files = {**prior, filename(stage):content,
                      "manifest.json":encoded(self.manifest(row, stage, prior, content))}
             entries = []
@@ -448,7 +448,8 @@ class StagedJobs:
         except (ApiError, OSError, ValueError, subprocess.SubprocessError, sqlite3.Error) as error:
             issue = uuid.uuid4().hex[:12]
             code = error.code if isinstance(error, ApiError) else ""
-            state = {"staged_exhausted":"exhausted", "staged_unsupported":"unsupported"}.get(code, "failed")
+            state = {"staged_exhausted":"exhausted", "staged_unsupported":"unsupported",
+                     "revision_no_change":"unsupported"}.get(code, "failed")
             with self.store.connection(write=True) as db:
                 db.execute("""UPDATE staged_jobs SET state=?,lease_until=0,issue=?,failure=?,updated_at=?
                               WHERE id=? AND fence=? AND state='running' AND lease_until>?""",
@@ -480,6 +481,7 @@ class StagedJobs:
                 raise ApiError(409, "staged_not_ready", "此任务尚未生成可预览的候选，或已发布。")
             revision = self.revision_record(db, identifier)
             if revision:
+                self.check_revision_candidate(row, revision, html)
                 current = self.store.owned_tool(db, {"id":row["owner"]}, revision["tool_id"])
                 self.store.require_version(revision["base_version"], current["version"])
                 self.check_table_schema(revision, current)
@@ -501,6 +503,11 @@ class StagedJobs:
             if self.permits_backup(row):
                 result["stagedBackup"] = True
             return result
+
+    def check_revision_candidate(self, row, revision, html):
+        context = json.loads(revision["context"])
+        if context["kind"] == "ledger":
+            self.revision.check("assemble", html, context, previous=self.files(row))
 
     def check_table_schema(self, revision, tool):
         if tool["table_tool"]:
@@ -559,6 +566,7 @@ class StagedJobs:
             tool_id = candidate["tool_id"]
             if state == "complete":
                 if revision:
+                    self.check_revision_candidate(row, revision, html)
                     current = self.store.owned_tool(db, owner, result_id)
                     self.store.require_version(revision["base_version"], current["version"])
                     self.check_table_schema(revision, current)

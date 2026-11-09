@@ -349,6 +349,94 @@ export async function verifyStagedReconnect(ctx) {
   evidence.tests.push({id:'TEST-020-01/03', taskId, toolId:saved.id, submissions:requests.length, personal:1});
 }
 
+export async function verifyLedgerTheme(ctx) {
+  const { cdp, evaluate, until, base, click, visible, appRequest, login, generate,
+    activeTool, accountA, root, evidence, screenshot, stored } = ctx;
+  const input = '做一个中文求职投递看板。每条卡片填写公司名称、岗位名称、投递时间。' +
+    '按待投递、已投递、简历筛选、面试中、已发offer、已结束分栏；默认待投递，能移动、编辑和删除。';
+  const live = process.env.ROOT_STAGED_LIVE === '1';
+  async function settle(text) {
+    const task = await until(async () => (await appRequest('/api/staged')).body.tasks?.find(item => item.requirement === text), 12000);
+    return until(async () => {
+      const current = (await appRequest(taskPath + task.id)).body.task;
+      return ['published','unsupported','failed'].includes(current.state) && current;
+    }, 135000);
+  }
+  const balance = async () => (await appRequest('/api/trial')).body.generation;
+  const board = ({ context }) => evaluate(`({
+    background: getComputedStyle(document.body).backgroundColor,
+    columns: [...document.querySelectorAll('[data-board-column]')].map(col => ({
+      name: col.dataset.boardColumn, background: getComputedStyle(col).backgroundColor,
+      cards: [...col.querySelectorAll('article')].map(card => card.textContent),
+    })),
+  })`, context);
+  await cdp('Page.navigate', {url:base});
+  await login(accountA, true);
+  if (await visible('#workspace-guide')) await click('#guide-skip');
+  await generate(input);
+  const initial = await settle(input);
+  assert.equal(initial.state, 'published', initial.reason);
+  const old = await activeTool();
+  const fields = await evaluate('[...document.querySelectorAll("#entry label")].map(label => [label.firstChild.textContent, label.lastElementChild.id])', old.context);
+  for (const company of ['合成甲公司', '合成乙公司']) {
+    const inputs = [[/公司/, company], [/岗位|职位/, '验收'], [/时间|日期/, '2026-11-09']];
+    for (const [pattern, value] of inputs) {
+      const [, id] = fields.find(([label]) => pattern.test(label));
+      await evaluate('document.getElementById(' + JSON.stringify(id) + ').value=' + JSON.stringify(value), old.context);
+    }
+    await click('#add-record', old.context);
+    await until(async () => JSON.stringify((await stored(old.id)).entries).includes(company));
+  }
+  await click('[data-record="1"] [data-move-stage="面试中"]', old.context);
+  const before = await until(async () => {
+    const current = await stored(old.id);
+    return JSON.stringify(current.entries).includes('面试中') && current;
+  });
+  const beforeBoard = await board(old);
+  assert.equal(beforeBoard.background, 'rgb(244, 245, 248)');
+  assert.match(beforeBoard.columns.find(col => col.name === '面试中').cards.join(), /合成甲公司/);
+  const beforeBalance = await balance();
+  const versions = async () => (await appRequest('/api/tools/' + old.id + '/versions')).body;
+  await screenshot('before-theme');
+  await click('#revise-tool');
+  await generate('把颜色改成黄色');
+  const revised = await settle('把颜色改成黄色');
+  assert.equal(revised.state, 'published', revised.reason);
+  assert.equal(revised.toolId, old.id);
+  const history = await versions();
+  assert.deepEqual(history.items.map(item => item.version), [2, 1]);
+  assert.notEqual(history.items[0].commit, history.items[1].commit);
+  assert.deepEqual((await stored(old.id)).entries, before.entries);
+  assert.equal((await balance()).used, beforeBalance.used + 1);
+  assert.equal((await balance()).totalUsed, beforeBalance.totalUsed + 1);
+  await cdp('Page.reload');
+  await until(() => evaluate('document.documentElement.dataset.ready === "true"'));
+  const restored = await activeTool();
+  assert.equal(restored.id, old.id);
+  const after = await board(restored);
+  assert.equal(after.background, 'rgb(255, 241, 184)');
+  assert.deepEqual(after.columns, beforeBoard.columns.map(col => ({...col, background:after.background})));
+  await screenshot('after-theme-reload');
+  const negatives = live ? ['把颜色改成黑色'] : ['把颜色改成黑色', '把标题字号调整到 22px'];
+  for (const change of negatives) {
+    await click('#revise-tool');
+    await generate(change);
+    const rejected = await settle(change);
+    assert.equal(rejected.state, 'unsupported');
+    if (change.includes('22px')) assert.equal(rejected.reason, 'revision_no_change');
+    await until(async () => /旧版仍可用.*未扣除/.test(await evaluate('document.querySelector("#staged-reason").textContent')));
+    assert.deepEqual(await versions(), history);
+    assert.deepEqual((await stored(old.id)).entries, before.entries);
+    assert.equal((await balance()).used, beforeBalance.used + 1);
+    assert.deepEqual(await board(await activeTool()), after);
+    await screenshot(change.includes('22px') ? 'unchanged-theme' : 'unsupported-theme');
+  }
+  const receipts = (await readFile(join(root, 'runs', 'staged-usage.jsonl'), 'utf8')).trim().split('\n').map(JSON.parse);
+  evidence.runs = receipts.filter(item => [initial.id, revised.id].includes(item.task));
+  if (live) assert.ok(evidence.runs.every(item => item.request_id && item.usage?.total_tokens > 0));
+  evidence.tests.push({id:'ROOT-REV-VIS-01', before:beforeBoard, after, toolId:old.id, history, personal:1, negatives});
+}
+
 export async function verifyStagedCalculator(ctx) {
   const { cdp, evaluate, until, base, click, visible, appRequest, login, generate,
     activeTool, accountA, root, evidence, screenshot } = ctx;

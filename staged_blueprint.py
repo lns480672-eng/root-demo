@@ -14,6 +14,10 @@ from generate import MODEL
 
 
 OPTIONAL_MODULES = ("filters", "summary", "export")
+LEDGER_THEMES = {
+    "gray": "#f4f5f8", "yellow": "#fff1b8", "blue": "#dbeafe",
+    "green": "#dcfce7", "pink": "#fce7f3", "purple": "#ede9fe",
+}
 STAGES = ("spec", "entry", *OPTIONAL_MODULES, "assemble")
 TABLE_PLAN = ("spec", "assemble")
 RUNTIME = Path(__file__).resolve().parent / "workbench" / "staged-runtime.js"
@@ -115,8 +119,10 @@ def validate_spec(value):
         require(isinstance(goal, str) and goal.isprintable() and 0 < len(goal.strip()) <= 240,
                 "bad_program_goal")
         return
-    keys(value, "title", "fields", optional=("kind", "modules"))
+    keys(value, "title", "fields", optional=("kind", "modules", "theme"))
     require(value.get("kind", "ledger") == "ledger", "bad_spec_kind")
+    theme = value.get("theme", "gray")
+    require(isinstance(theme, str) and theme in LEDGER_THEMES, "bad_ledger_theme")
     if "modules" in value:
         modules = value["modules"]
         require(unique_strings(modules, len(OPTIONAL_MODULES)) and set(modules) <= set(OPTIONAL_MODULES),
@@ -250,6 +256,14 @@ def permits_backup(previous):
     return read_artifact(payload).get("backup", False)
 
 
+def ledger_config(source):
+    config = dict(source)
+    config.setdefault("filters", {"search": [], "exact": [], "date": None})
+    config.setdefault("summary", {"count": None, "sum": None, "group": None})
+    config.setdefault("export", {"columns": [], "label": None})
+    return config
+
+
 def assemble(previous):
     """Render the validated plans as one deterministic standalone HTML document."""
     spec_bytes = previous.get("spec.json")
@@ -265,16 +279,15 @@ def assemble(previous):
         payload = previous.get(stage + ".json")
         validate(stage, payload, previous)
         config[stage] = read_artifact(payload)
-    config.setdefault("filters", {"search": [], "exact": [], "date": None})
-    config.setdefault("summary", {"count": None, "sum": None, "group": None})
-    config.setdefault("export", {"columns": [], "label": None})
+    config = ledger_config(config)
     data = json.dumps(config, ensure_ascii=True, sort_keys=True, separators=(",", ":")).replace("<", "\\u003c")
     title = html.escape(config["spec"]["title"])
+    background = LEDGER_THEMES[config["spec"].get("theme", "gray")]
     shell = RUNTIME.read_text(encoding="utf-8")
     return ('''<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>''' + title + '''</title><style>
-body{font:15px/1.55 system-ui,sans-serif;margin:14px;color:#202637;background:#f4f5f8}
+body{font:15px/1.55 system-ui,sans-serif;margin:14px;color:#202637;background:''' + background + '''}
 main{display:grid;gap:12px}section{border:1px solid #d6dbe7;background:#fff;border-radius:8px;padding:12px;overflow:auto}
 h1{font-size:22px}h2{font-size:17px;margin:0 0 6px}
 form,.filter-bar{display:flex;flex-wrap:wrap;gap:10px;align-items:end}label{display:grid;gap:3px}
@@ -282,7 +295,7 @@ input,button,select,textarea{font:inherit;padding:4px;max-width:100%}
 table{border-collapse:collapse;width:100%}th,td{padding:4px 8px;text-align:left;border-bottom:1px solid #ddd}
 textarea{box-sizing:border-box;width:100%}[role=alert]{color:#ae2b2b}
 #record-board{display:flex;gap:10px;overflow-x:auto;padding-bottom:6px}
-#record-board>section{flex:1 0 12rem;background:#f4f5f8}
+#record-board>section{flex:1 0 12rem;background:''' + background + '''}
 #record-board h3{margin:0 0 8px;font-size:15px}
 #record-board article{background:white;border:1px solid #d6dbe7;border-radius:6px;margin-bottom:8px;padding:8px}
 #record-board dl{margin:0 0 8px}#record-board dt{font-weight:600}
@@ -326,7 +339,7 @@ def _decode_response(envelope, key, evidence, *, limit=MAX_ARTIFACT_BYTES):
 
 
 def provide(stage, requirement, previous, key, admit, record=None, *, revision_context=None, accept=None,
-            table_patch=None):
+            spec_patch=None):
     """Request one stage, admitting its usage immediately before dispatch."""
     if stage not in RULES and stage != "implementation":
         raise ValueError("unexpected_stage")
@@ -369,7 +382,7 @@ def provide(stage, requirement, previous, key, admit, record=None, *, revision_c
             system, tokens, output_limit = RULES["spec"], 1200, MAX_ARTIFACT_BYTES
         else:
             system, tokens, output_limit = SYSTEM + "\n" + RULES[stage], 550, MAX_ARTIFACT_BYTES
-        if table_patch is not None:
+        if revision_context is not None and revision_context["kind"] == "table":
             system, tokens = TABLE_REVISION_SYSTEM, 220
         elif revision_context is not None:
             system += ("\n这是修改现有工具。保持 revision_source.kind 对应的计划类型。"
@@ -377,6 +390,12 @@ def provide(stage, requirement, previous, key, admit, record=None, *, revision_c
                        "台账规格以 revision_source.active_modules 为基础，只按修改需求增减模块。"
                        "台账字段 ID、类型和已有选项必须保留，新增字段只能可选。"
                        "程序继续用旧 localStorage 键与数据格式，初始化读取、显示已有记录，不得覆盖。")
+            if stage == "spec" and revision_context["kind"] == "ledger":
+                system += ('''\n台账支持单独修改整体背景配色。需求只指定改配色时，只返回 {"theme":"颜色编号"}，'''
+                           "颜色编号为 gray（灰白）、yellow（黄色）、blue（蓝色）、green（绿色）、"
+                           "pink（粉色）、purple（紫色），均为浅色背景。不要返回字段或完整规格。"
+                           '''不支持的颜色、指定局部样式、或同时要求改配色和功能时返回 {"unsupported":true}。'''
+                           "其他功能修改返回原有规格形状，配色沿用旧版。无法实现需求时必须返回不支持。")
         body = {
             "model": MODEL,
             "messages": [
@@ -400,12 +419,12 @@ def provide(stage, requirement, previous, key, admit, record=None, *, revision_c
                 raise ApiError(502, "staged_provider", "本阶段模型服务暂时不可用，可以继续生成。") from None
             raise
         result = _decode_response(envelope, key, evidence, limit=output_limit)
-        if table_patch is not None:
-            result = table_patch(result)
+        if spec_patch is not None:
+            result = spec_patch(result)
         validate(stage, result, previous)
         if stage == "spec":
             spec = read_artifact(result)
-            if table_patch is None:
+            if revision_context is None or revision_context["kind"] != "table":
                 require(spec.get("kind") != "table", "bad_spec_kind")
             require(spec.get("kind") in ("program", "table") or "modules" in spec, "bad_missing_ledger_modules")
         if accept is not None:

@@ -31,6 +31,7 @@ modules = {
     "export":{"columns":[],"label":None},
 }
 failed = set()
+theme_check = "--ledger-theme" in sys.argv[5:]
 
 
 def staged(stage, requirement, prior, key, admit, record):
@@ -53,6 +54,10 @@ render();
     if live:
         return staged_blueprint.provide(stage, requirement, prior, key, admit, record)
     admit()
+    if theme_check:
+        content = {**modules["spec"], "kind":"ledger", "modules":[]} if stage == "spec" else modules[stage]
+        record({"stage":stage, "status":"ok", "dispatched":True})
+        return json.dumps(content, ensure_ascii=False).encode()
     if requirement.startswith("做一个公益活动雨具归还登记"):
         fields = [
             {"id":"item", "label":"物品编号", "type":"text", "required":True, "options":[]},
@@ -81,12 +86,19 @@ if not key:
 runs = Path(sys.argv[3])
 Store(runs / "workspace.sqlite3").create_invite("fixture-invite", uses=2)
 def revise(stage, requirement, prior, key, admit, record, *, base):
-    if live or base["kind"] != "table":
+    if live or (base["kind"] != "table" and not theme_check):
         return staged_revision.provide(stage, requirement, prior, key, admit, record, base=base)
 
     def exchange(payload, reserve, **_):
         reserve()
-        if requirement.startswith("增加一个"):
+        if theme_check:
+            if requirement == "把颜色改成黄色":
+                content = {"theme":"yellow"}
+            elif requirement == "把颜色改成黑色":
+                content = {"unsupported":True}
+            else:
+                content = base["source"][stage]
+        elif requirement.startswith("增加一个"):
             content = {"addFilter": 1}
         elif requirement.startswith("只把标题"):
             content = {"title": "交付行动看板"}

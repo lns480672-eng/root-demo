@@ -202,7 +202,41 @@ def _incompatible():
     return ApiError(409, "incompatible_revision", "新版无法兼容原工具的数据结构，旧版仍可用。")
 
 
-def check(stage, payload, base, requirement=""):
+def _no_change():
+    return ApiError(422, "revision_no_change", "这次修改没有产生可应用的变化。旧版仍可用，未扣除个人生成次数。")
+
+
+def _theme(spec):
+    return spec.get("theme", "gray")
+
+
+def _ledger_patch(payload, base, active_modules):
+    candidate = blueprint.read_artifact(payload)
+    original = base["source"]["spec"]
+    if isinstance(candidate, dict) and candidate.keys() == {"theme"}:
+        theme = candidate["theme"]
+        if not isinstance(theme, str) or theme not in blueprint.LEDGER_THEMES:
+            raise ApiError(422, "staged_unsupported", "工作台暂不支持这个配色，旧版仍可用。")
+        if theme == _theme(original):
+            raise _no_change()
+        candidate = {**original, "modules": active_modules, "theme": theme}
+    elif isinstance(candidate, dict):
+        if "theme" in original:
+            candidate["theme"] = original["theme"]
+        else:
+            candidate.pop("theme", None)
+    return json.dumps(candidate, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+
+
+def _effective_ledger(source):
+    config = blueprint.ledger_config(source)
+    spec, entry = config["spec"], config["entry"]
+    config["spec"] = {"title": spec["title"], "fields": spec["fields"], "theme": _theme(spec)}
+    config["entry"] = {**entry, **{flag: entry.get(flag, False) for flag in ("allow_edit", "allow_delete", "backup")}}
+    return config
+
+
+def check(stage, payload, base, requirement="", *, previous=None):
     """Check semantic data compatibility after normal stage validation."""
     if stage == "spec":
         candidate = blueprint.read_artifact(payload)
@@ -231,6 +265,10 @@ def check(stage, payload, base, requirement=""):
         result = blueprint.read_artifact(payload, limit=staged_program.MAX_ARTIFACT_BYTES)
         if not set(base["storageKeys"]) <= set(storage_keys(result["script"])):
             raise _incompatible()
+    elif stage == "assemble" and base["kind"] == "ledger":
+        source = {name[:-5]: blueprint.read_artifact(data) for name, data in previous.items() if name != "app.html"}
+        if _effective_ledger(source) == _effective_ledger(base["source"]):
+            raise _no_change()
 
 
 def provide(stage, requirement, previous, key, admit, record, *, base):
@@ -242,15 +280,22 @@ def provide(stage, requirement, previous, key, admit, record, *, base):
             if column["name"] in requirement
         ]}
         return blueprint.provide(stage, requirement, previous, key, admit, record, revision_context=context,
-                                 table_patch=lambda payload: _table_patch(payload, base),
+                                 spec_patch=lambda payload: _table_patch(payload, base),
                                  accept=lambda payload: check(stage, payload, base, requirement))
     context = {"kind":base["kind"], "storageKeys":base["storageKeys"]}
+    spec_patch = None
     if stage == "spec" and base["kind"] == "ledger":
-        context["active_modules"] = [
+        active_modules = context["active_modules"] = [
             module for module in blueprint.OPTIONAL_MODULES
             if any(base["source"].get(module, {}).values())
         ]
+        spec_patch = lambda payload: _ledger_patch(payload, base, active_modules)
+    elif base["kind"] == "ledger":
+        spec = blueprint.read_artifact(previous["spec.json"])
+        if _theme(spec) != _theme(base["source"]["spec"]):
+            return json.dumps(base["source"][stage], ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
     if stage in base["source"]:
         context["prior_stage"] = base["source"][stage]
     return blueprint.provide(stage, requirement, previous, key, admit, record,
-                             revision_context=context, accept=lambda payload: check(stage, payload, base))
+                             revision_context=context, spec_patch=spec_patch,
+                             accept=lambda payload: check(stage, payload, base))

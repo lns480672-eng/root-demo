@@ -259,7 +259,10 @@ function stagedReason(task) {
   if (!task) return '';
   if (task.state === 'expired') return '任务已过期。可用保留的原需求重新生成。';
   if (task.state === 'exhausted') return '已达到此任务的调用上限。可用保留的原需求重新生成。';
-  if (task.state === 'unsupported') return '此需求含当前工作台暂不支持的功能。可编辑原需求后重新生成。';
+  if (task.reason === 'revision_no_change') return '这次修改没有产生可应用的变化。旧版仍可用，未扣除个人生成次数。';
+  if (task.state === 'unsupported') return task.baseToolId
+    ? '这项修改暂不支持。旧版仍可用，未扣除个人生成次数。'
+    : '此需求含当前工作台暂不支持的功能。可编辑原需求后重新生成。';
   if (task.state === 'interrupted') return '执行中断。可从首个未完成阶段继续。';
   return {
     model_paused: '模型调用暂时暂停，恢复后可继续此任务。',

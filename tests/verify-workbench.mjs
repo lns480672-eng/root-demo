@@ -1,7 +1,7 @@
 // TEST-001 / TEST-002 / TEST-004 / TEST-005 / TEST-006. Default uses a deterministic provider fixture. --live uses DeepSeek.
 import assert from 'node:assert/strict';
 import { verifyTableJourney } from './verify-table-journey.mjs';
-import { verifyStagedFlow, verifyStagedCalculator, verifyStagedRegistration, verifyStagedRevision, verifyStagedReconnect } from './verify-staged-flow.mjs';
+import { verifyStagedFlow, verifyStagedCalculator, verifyStagedRegistration, verifyStagedRevision, verifyStagedReconnect, verifyLedgerTheme } from './verify-staged-flow.mjs';
 import { execFileSync, spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { createServer } from 'node:http';
@@ -12,6 +12,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 
 const live = process.argv.includes('--live');
 const stagedFlow = process.argv.includes('--staged-flow');
+const ledgerTheme = stagedFlow && process.argv.includes('--ledger-theme');
 if (live && stagedFlow) throw new Error('--staged-flow uses ROOT_STAGED_LIVE=1 for real staged generation');
 const liveRevision = live && process.argv.includes('--revision');
 const collectCoverage = process.argv.includes('--coverage');
@@ -79,7 +80,8 @@ try {
     assert.equal((await fetch(probeUrl + '/control')).status, 200);
     const fixture = stagedFlow ? 'tests/staged_fixtures.py' : 'tests/fixtures.py';
     const server = launch('python3', [fixture, 'fixture-key', '0', join(root, 'runs'), probeUrl,
-      ...(adminFlow ? ['--admin-flow'] : []), ...(entryFlow ? ['--entry-flow'] : [])]);
+      ...(adminFlow ? ['--admin-flow'] : []), ...(entryFlow ? ['--entry-flow'] : []),
+      ...(ledgerTheme ? ['--ledger-theme'] : [])]);
     const [line] = await Promise.race([once(server.stdout, 'data'), once(server, 'exit').then(() => [''])]);
     base = String(line).match(/http:\/\/127\.0\.0\.1:\d+/)?.[0];
     assert.ok(base, '工作台应启动并提供本机地址');
@@ -409,9 +411,9 @@ try {
     const registration = process.env.ROOT_STAGED_REGISTRATION === '1';
     const revision = process.env.ROOT_STAGED_REVISION === '1';
     const reconnect = process.argv.includes('--reconnect-fallback');
-    stage = reconnect ? 'AC-020 staged reconnect fallback' : tableJourney ? 'CHG-029 same imported tool journey' : registration ? 'staged workbench registration' : revision ? 'staged workbench revision' :
+    stage = ledgerTheme ? 'ROOT-REV-VIS-01 ledger theme' : reconnect ? 'AC-020 staged reconnect fallback' : tableJourney ? 'CHG-029 same imported tool journey' : registration ? 'staged workbench registration' : revision ? 'staged workbench revision' :
       calculator ? 'staged workbench calculator' : 'staged workbench board flow';
-    const verify = reconnect ? verifyStagedReconnect : tableJourney ? verifyTableJourney : registration ? verifyStagedRegistration : revision ? verifyStagedRevision :
+    const verify = ledgerTheme ? verifyLedgerTheme : reconnect ? verifyStagedReconnect : tableJourney ? verifyTableJourney : registration ? verifyStagedRegistration : revision ? verifyStagedRevision :
       calculator ? verifyStagedCalculator : verifyStagedFlow;
     const anotherBrowser = async (name, action) => {
       const original = socket;

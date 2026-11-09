@@ -29,6 +29,33 @@ def encode(value):
 
 
 class RevisionContextTests(unittest.TestCase):
+    def test_ledger_color_patch_changes_css_and_preserves_the_original_configuration(self):
+        original = artifacts()
+        base = revision.prepare(original)
+        with patch.object(assistant_model, "_exchange", return_value=envelope('{"theme":"yellow"}')):
+            spec = revision.provide("spec", "把颜色改成黄色", {}, "fixture-key", Mock(), None, base=base)
+        prior = {"spec.json": spec}
+        for stage in blueprint.stage_plan(spec)[1:-1]:
+            with patch.object(assistant_model, "_exchange") as exchange:
+                content = revision.provide(stage, "把颜色改成黄色", prior, "fixture-key", Mock(), None, base=base)
+                exchange.assert_not_called()
+            self.assertEqual(json.loads(content), json.loads(original[stage + ".json"]))
+            prior[stage + ".json"] = content
+        rendered = blueprint.assemble(prior)
+        self.assertIn(b"#record-board>section{flex:1 0 12rem;background:#fff1b8}", rendered)
+        self.assertNotIn(b"background:#fff1b8", blueprint.assemble(original))
+        revision.check("assemble", rendered, base, previous=prior)
+
+    def test_ledger_semantically_unchanged_candidate_cannot_publish(self):
+        original = artifacts()
+        base = revision.prepare(original)
+        candidate = {**original, "spec.json": encode({
+            **base["source"]["spec"], "kind": "ledger", "modules": ["export", "summary", "filters"],
+        }), "entry.json": encode({**base["source"]["entry"], "backup": False})}
+        with self.assertRaises(ApiError) as raised:
+            revision.check("assemble", blueprint.assemble(candidate), base, previous=candidate)
+        self.assertEqual(raised.exception.code, "revision_no_change")
+
     def test_legacy_uses_bounded_fragment_and_code_keys(self):
         base = revision.prepare({}, LEGACY)
         self.assertEqual(json.loads(json.dumps(base)), base)
