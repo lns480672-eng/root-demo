@@ -5,7 +5,11 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>ROOT 工具工作台</title>
   <link rel="stylesheet" href="/workbench.css">
+  <link rel="stylesheet" href="/assistant.css">
+  <link rel="stylesheet" href="/table.css">
   <script src="/entry.js" defer></script>
+  <script src="/assistant.js" defer></script>
+  <script src="/table.js" defer></script>
   <script src="/workbench.js" defer></script>
 </head>
 <body>
@@ -66,6 +70,7 @@
       </div>
     </section>
     <div id="workspace" class="elys-workspace" hidden>
+      <section id="assistant-panel" hidden></section>
       <section class="tool-library" aria-labelledby="library-title">
         <header>
           <h1 id="library-title">我的工具</h1>
@@ -124,9 +129,9 @@
         <nav class="entry-actions" aria-label="开始方式">
           <button id="quick-entry" type="button" aria-pressed="false" aria-controls="quick-panel">快速体验</button>
           <button id="direct-entry" type="button" aria-pressed="true">直接开发</button>
-          <button id="idea-entry" type="button" aria-describedby="idea-entry-note" disabled>需求助手</button>
+          <button id="idea-entry" type="button">需求助手</button>
+          <button id="table-entry" type="button" aria-pressed="false" aria-controls="table-panel">从表格生成</button>
         </nav>
-        <p id="idea-entry-note" class="entry-note">需求助手待开放。</p>
         <div class="entry-actions">
           <button id="guide-start" type="button">新手引导</button>
         </div>
@@ -151,6 +156,7 @@
             <button id="template-generate" class="elys-primary" type="button">用此模板生成</button>
           </div>
         </section>
+        <section id="table-panel" hidden></section>
         <form id="composer">
           <div class="elys-requirement">
             <label for="requirement">工具需求</label>

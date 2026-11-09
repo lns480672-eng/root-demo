@@ -1,0 +1,79 @@
+#table-panel {
+  min-inline-size: 0;
+  margin-block-start: 1rem;
+  overflow-wrap: anywhere;
+}
+
+#table-panel h3 {
+  margin-block: .25rem .75rem;
+  font-size: 1.15rem;
+}
+
+#table-panel :is(#table-status, #table-error) { margin-block-start: .75rem; }
+
+.table-drop {
+  display: grid;
+  gap: .5rem;
+  padding: .85rem;
+  border: 1px dashed var(--elys-border);
+  border-radius: 12px;
+  background: var(--elys-white);
+}
+
+.table-summary {
+  margin-block: .75rem;
+  padding: .75rem;
+  border: 1px solid var(--elys-line);
+  border-radius: 10px;
+  background: var(--elys-white);
+}
+
+.table-summary strong { display: block; margin-block: .2rem; }
+
+#table-fields {
+  display: grid;
+  gap: .5rem;
+  min-inline-size: 0;
+  margin: 0 0 .75rem;
+  padding: .65rem;
+  border: 1px solid var(--elys-line);
+  border-radius: 10px;
+}
+
+#table-fields legend { padding-inline: .25rem; font-weight: 650; }
+
+.table-field {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: .5rem;
+}
+
+.table-field select {
+  border: 1px solid var(--elys-border);
+  border-radius: 8px;
+  padding: .4rem;
+  background: var(--elys-white);
+  color: var(--elys-ink);
+  font: inherit;
+}
+
+.table-records-scroll {
+  max-inline-size: 100%;
+  overflow-x: auto;
+  border: 1px solid var(--elys-line);
+  border-radius: 10px;
+  background: var(--elys-white);
+}
+
+#table-records { min-inline-size: 100%; border-collapse: collapse; text-align: start; }
+#table-records caption { padding: .5rem; color: var(--elys-muted); text-align: start; }
+#table-records :is(th, td) {
+  min-inline-size: 5rem;
+  max-inline-size: 14rem;
+  padding: .4rem .55rem;
+  border-block-start: 1px solid var(--elys-line);
+  text-align: start;
+  white-space: pre-wrap;
+}
+
+#table-records th { background: var(--elys-wash); }

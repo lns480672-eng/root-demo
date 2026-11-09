@@ -73,6 +73,12 @@ class Store:
                     run_id TEXT PRIMARY KEY, tool_id TEXT NOT NULL REFERENCES tools(id),
                     base_version INTEGER NOT NULL, note TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS requirement_drafts (
+                    id TEXT PRIMARY KEY, owner INTEGER NOT NULL REFERENCES accounts(id),
+                    text TEXT NOT NULL, revision INTEGER NOT NULL, updated_at INTEGER NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS requirement_drafts_owner
+                    ON requirement_drafts(owner, updated_at DESC, id);
             """)
 
     @contextmanager
@@ -151,6 +157,56 @@ class Store:
             self.session(db, token, marker)
             db.execute("DELETE FROM sessions WHERE digest=?", (digest(token),))
 
+    def list_requirement_drafts(self, token, marker):
+        with self.connection() as db:
+            user = self.session(db, token, marker)
+            rows = db.execute("""
+                SELECT id, text, revision, updated_at AS updatedAt FROM requirement_drafts
+                WHERE owner=? ORDER BY updated_at DESC, id
+            """, (user["id"],))
+            return {"items": [
+                {"id": row["id"], "revision": row["revision"], "updatedAt": row["updatedAt"],
+                 "title": row["text"].strip().splitlines()[0][:70]}
+                for row in rows
+            ]}
+
+    def requirement_draft(self, token, marker, identifier, change=None):
+        unavailable = ApiError(404, "draft_unavailable", "此需求草稿不可用。")
+        with self.connection(write=change is not None) as db:
+            user = self.session(db, token, marker)
+            row = db.execute("""
+                SELECT id, owner, text, revision, updated_at AS updatedAt
+                FROM requirement_drafts WHERE id=?
+            """, (identifier,)).fetchone()
+            if row is not None and row["owner"] != user["id"]:
+                raise unavailable
+            if change is None:
+                if row is None:
+                    raise unavailable
+                return {field: row[field] for field in ("id", "text", "revision", "updatedAt")}
+            value, revision = change.get("text"), change.get("revision")
+            if not isinstance(value, str) or not value.strip() or len(value) > 2000:
+                raise ApiError(400, "invalid_draft_text", "请输入 1–2000 字的需求草稿。")
+            if type(revision) is not int or revision < 0:
+                raise ApiError(400, "invalid_draft_revision", "草稿修订号无效。")
+            updated = int(time.time() * 1000)
+            if row is None:
+                if revision != 0:
+                    raise unavailable
+                count = db.execute("SELECT count(*) FROM requirement_drafts WHERE owner=?", (user["id"],)).fetchone()[0]
+                if count >= 100:
+                    raise ApiError(409, "draft_limit", "每个账号最多保存 100 份需求草稿。已有草稿仍可编辑。")
+                db.execute("INSERT INTO requirement_drafts VALUES (?,?,?,?,?)",
+                           (identifier, user["id"], value, 1, updated))
+            elif revision + 1 == row["revision"] and value == row["text"]:
+                updated = row["updatedAt"]
+            else:
+                if revision != row["revision"]:
+                    raise ApiError(409, "draft_conflict", "草稿已在别处更新。本次编辑仍保留，请核对后再保存。")
+                db.execute("UPDATE requirement_drafts SET text=?,revision=?,updated_at=? WHERE id=? AND owner=?",
+                           (value, revision + 1, updated, identifier, user["id"]))
+            return {"id": identifier, "text": value, "revision": revision + 1, "updatedAt": updated}
+
     def list_tools(self, token, marker):
         with self.connection() as db:
             user = self.session(db, token, marker)
@@ -177,11 +233,13 @@ class Store:
             user = self.session(db, token, marker)
             return dict(self.owned_tool(db, user, tool_id))
 
-    def draft(self, token, marker, tool_id, requirement):
+    def draft(self, token, marker, tool_id, requirement, entries=None):
         title = " ".join(requirement.split())[:48]
+        initial = pack_entries([] if entries is None else entries)
         with self.connection(write=True) as db:
             user = self.session(db, token, marker)
-            db.execute("INSERT INTO tools(id, owner, title) VALUES (?,?,?)", (tool_id, user["id"], title))
+            db.execute("INSERT INTO tools(id, owner, title, entries) VALUES (?,?,?,?)",
+                       (tool_id, user["id"], title, initial))
 
     @staticmethod
     def require_version(value, version):
@@ -262,6 +320,8 @@ class Store:
                 self.require_version(data["version"], row["version"])
             if action in ("commit", "data"):
                 entries = pack_entries(data.get("entries"))
+                if action == "commit" and not dict(json.loads(row["entries"])).items() <= dict(data["entries"]).items():
+                    raise ApiError(409, "incompatible_data", "预览未能原样保留预填记录，请重试。")
                 if action == "data" and (type(data.get("revision")) is not int or data["revision"] != revision):
                     raise ApiError(409, "revision_conflict", "此工具已在别处更新，请重新打开后编辑。")
                 revision += 1

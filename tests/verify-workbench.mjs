@@ -142,7 +142,7 @@ try {
     callback?.(reply);
   }
   socket = await connectBrowser(profile);
-  const coverageSources = ['/workbench.js', '/entry.js'];
+  const coverageSources = ['/workbench.js', '/entry.js', '/assistant.js', '/table.js'];
   const coverage = [];
   async function startCoverage() {
     if (!collectCoverage) return;
@@ -1140,6 +1140,22 @@ try {
     evidence.tests.push({ id: 'TEST-011', result: 'passed', sampleTemplates: ['board', 'list', 'budget'],
       zeroSampleGenerations: true, noSavedSampleTools: true, customizeWithoutRequest: true,
       templateGenerationRequests: 1, directGenerationRequests: 1 });
+  }
+  const setStage = name => { stage = name; };
+  const slices = process.argv.includes('--slices');
+  if (!live && (slices || process.argv.includes('--assistant-flow'))) {
+    const { verifyAssistant } = await import('./slice-assistant.mjs');
+    evidence.tests.push(await verifyAssistant({
+      evaluate, click, type, until, cdp, activeTool, appRequest, library, login, logout, accountA, accountB,
+      screenshot, stage: setStage, accountBRegistered: !mainOnly,
+    }));
+  }
+  if (!live && (slices || process.argv.includes('--table-flow'))) {
+    const { verifyCsv } = await import('./slice-csv.mjs');
+    evidence.tests.push(await verifyCsv({
+      evaluate, click, type, until, cdp, activeTool, appRequest, library, stored, selectHistory,
+      screenshot, stage: setStage,
+    }));
   }
   evidence.status = 'passed';
 } catch (error) {

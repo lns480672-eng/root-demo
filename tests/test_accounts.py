@@ -9,6 +9,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
+from uuid import uuid4
 from accounts import Store
 
 
@@ -49,6 +50,95 @@ class AccountHTTP(unittest.TestCase):
     def test_unauthenticated_generation_is_rejected(self):
         status, body, _ = self.request("/api/generate", {"requirement": "待授权"})
         self.assertEqual((status, body.get("code")), (401, "login_required"))
+
+    def test_requirement_drafts_owner_revision_and_replay(self):
+        for username in ("draft-one", "draft-two"):
+            self.assertEqual(self.register(username, self.store.create_invite())[0], 201)
+        owner, marker = self.login("draft-one")
+        other, other_marker = self.login("draft-two")
+        collection = "/api/requirement-drafts"
+        identifier = str(uuid4())
+        path = collection + "/" + identifier
+        original = {"revision": 0, "text": "  可编辑需求\n第二行  "}
+        self.assertEqual(self.request(collection)[0], 401)
+        self.assertEqual(self.request(path, original, owner, marker)[0], 200)
+        first = self.request(path, cookie=owner, marker=marker)[1]
+        self.assertEqual((first["text"], first["revision"]), (original["text"], 1))
+        self.assertEqual(self.request(path, original, owner, marker)[1], first)
+        self.assertEqual(self.request(path, cookie=other, marker=other_marker)[0], 404)
+        self.assertEqual(self.request(path, original, other, other_marker)[0], 404)
+        self.assertEqual(self.request(collection, cookie=other, marker=other_marker)[1]["items"], [])
+        second, second_marker = self.login("draft-one")
+        self.assertEqual(self.request(collection, cookie=second, marker=second_marker)[1]["items"][0]["id"], identifier)
+        with ThreadPoolExecutor(2) as pool:
+            attempts = [
+                pool.submit(self.request, path, {"revision": 1, "text": text}, cookie, token)
+                for text, cookie, token in [("窗口甲", owner, marker), ("窗口乙", second, second_marker)]
+            ]
+            statuses = sorted(attempt.result()[0] for attempt in attempts)
+        self.assertEqual(statuses, [200, 409])
+        current = self.request(path, cookie=owner, marker=marker)[1]
+        self.assertEqual(current["revision"], 2)
+        self.assertEqual(self.request(path, {"revision": 1, "text": current["text"]}, second, second_marker)[1], current)
+        self.assertEqual(self.request("/api/tools", cookie=owner, marker=marker)[1]["items"], [])
+
+    def test_assistant_fixture_has_structured_paths_without_generation(self):
+        path = "/api/assistant/analyze"
+        start = {"step": "start", "idea": "每周都要在群里问项目进度，不知道谁卡住了"}
+        self.assertEqual(self.request(path, start)[0], 401)
+        self.assertEqual(self.register("assistant-path", self.store.create_invite())[0], 201)
+        cookie, marker = self.login("assistant-path")
+        status, first, _ = self.request(path, start, cookie, marker)
+        self.assertEqual(status, 200)
+        self.assertEqual(first["kind"], "directions")
+        self.assertGreaterEqual(len(first["directions"]), 2)
+        results = []
+        for selected in first["directions"][:2]:
+            status, questions, _ = self.request(path, {
+                **start, "step": "direction", "direction": selected,
+            }, cookie, marker)
+            self.assertEqual(status, 200)
+            self.assertEqual(questions["kind"], "questions")
+            prompts = questions["questions"]
+            status, draft, _ = self.request(path, {
+                **start, "step": "answers", "direction": selected, "questions": prompts,
+                "answers": [item["options"][0] for item in prompts],
+            }, cookie, marker)
+            self.assertEqual((status, draft["kind"]), (200, "draft"))
+            self.assertIn(selected["title"], draft["text"])
+            results.append(prompts)
+        self.assertNotEqual(*results)
+        status, clear, _ = self.request(path, {
+            "step": "start", "idea": "做一个读书清单，可以添加书名并标记已读，刷新后保留记录。",
+        }, cookie, marker)
+        self.assertEqual((status, clear["kind"]), (200, "draft"))
+        self.assertEqual(self.request(path, {**start, "step": "answers"}, cookie, marker)[0], 400)
+        self.assertEqual(self.request("/api/tools", cookie=cookie, marker=marker)[1]["items"], [])
+
+    def test_csv_confirmation_publishes_with_original_rows(self):
+        inspect = "/api/table/inspect"
+        generate = "/api/table/generate"
+        payload = {"source": "upload", "filename": "交付.csv", "csv": "编号,事项,状态\n001,原始事项,待处理\n"}
+        self.assertEqual(self.request(inspect, payload)[0], 401)
+        for username in ("table-owner", "table-other"):
+            self.assertEqual(self.register(username, self.store.create_invite())[0], 201)
+        owner, marker = self.login("table-owner")
+        other, other_marker = self.login("table-other")
+        status, table, _ = self.request(inspect, payload, owner, marker)
+        self.assertEqual(status, 200)
+        self.assertEqual(table["rows"], [["001", "原始事项", "待处理"]])
+        self.assertEqual(self.request(inspect, {**payload, "csv": "a,b\n1\n"}, owner, marker)[0], 400)
+        self.assertEqual(self.request("/api/tools", cookie=owner, marker=marker)[1]["items"], [])
+        status, tool, _ = self.request(generate, {"table": table}, owner, marker)
+        self.assertEqual(status, 200)
+        self.assertNotIn("原始事项", tool["html"])
+        self.assertEqual(self.request("/api/tools", cookie=owner, marker=marker)[1]["items"], [])
+        path = "/api/tools/" + tool["id"]
+        self.assertEqual(self.request(path + "/commit", {"entries": tool["entries"]}, other, other_marker)[0], 404)
+        self.assertEqual(self.request(path + "/commit", {"entries": []}, owner, marker)[1]["code"], "incompatible_data")
+        self.assertEqual(self.request(path + "/commit", {"entries": tool["entries"]}, owner, marker)[0], 200)
+        self.assertEqual(self.request(path, cookie=owner, marker=marker)[1]["entries"], tool["entries"])
+        self.assertEqual(self.request(path, cookie=other, marker=other_marker)[0], 404)
 
     def register(self, name, invite):
         return self.request("/api/register", {

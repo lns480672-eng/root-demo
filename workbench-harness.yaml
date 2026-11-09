@@ -163,3 +163,15 @@ entry_checkpoint:
   evidence: runs/workbench-entry/registration-final/开发自测.md
   handoff: runs/workbench-entry/registration-final/handoff.json
   separate_g1_review: runs/workbench-entry/g1-需求助手与草稿.md
+
+slices_checkpoint:
+  scope: [AC-010 CSV 本地切片, AC-012 本地分析替身, AC-013 账号草稿]
+  baseline_commit: f9c977c
+  build: v4-24f0593afb65
+  entry: "http://127.0.0.1:8782/"
+  strategy_boxes_used: 1
+  red: [runs/workbench-slices/red-draft-http.log, runs/workbench-slices/red-assistant-http.log, runs/workbench-slices/red-table-http.log]
+  oracle: "账号草稿可重读且写入有修订校验；本地分析可分支并显式带入；CSV 确认后预填、筛选、保存和找回"
+  evidence: runs/workbench-slices/final/开发自测.md
+  handoff: runs/workbench-slices/final/handoff.json
+  separate_review: [runs/workbench-slices/CSV技术取舍.md, runs/workbench-entry/g1-需求助手与草稿.md]

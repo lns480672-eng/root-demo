@@ -9,6 +9,8 @@
 !/质量门禁设计.md
 !/workbench-harness.yaml
 !/generate.py
+!/assistant_fixture.py
+!/table_import.py
 !/verify-preview.mjs
 !/workbench.py
 !/README.md
@@ -24,11 +26,18 @@
 !/workbench/workbench.css
 !/workbench/workbench.js
 !/workbench/entry.js
+!/workbench/assistant.js
+!/workbench/assistant.css
+!/workbench/table.js
+!/workbench/table.css
 !/tests/
 /tests/*
 !/tests/fixtures.py
 !/tests/verify-workbench.mjs
 !/tests/test_generation.py
+!/tests/test_table_import.py
+!/tests/slice-csv.mjs
+!/tests/slice-assistant.mjs
 !/tests/verify-webrtc-isolation.mjs
 !/账号与工具设计.md
 !/accounts.py

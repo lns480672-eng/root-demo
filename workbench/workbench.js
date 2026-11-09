@@ -37,14 +37,16 @@ let guideTool = null;
 let guideTarget = null;
 
 function render() {
-  const pending = ['model', 'preview', 'restore', 'sync'].includes(phase);
+  const pending = ['model', 'preview', 'restore', 'sync', 'table'].includes(phase);
   const syncing = Boolean(pendingPublication);
   const blocked = pending || syncing;
+  const tableMode = entryMode === 'table';
   const showingSample = Boolean(sampleTemplate);
   const showingTool = Boolean(active) && !showingSample;
   product.dataset.state = pending ? 'loading' : failure ? 'failure' : active ? 'success' : 'initial';
   generate.textContent = pending ? '生成中…' : failure ? '重试' : editing ? '生成新版' : '直接生成';
-  generate.disabled = !session || !configured || !networkIsolated || phase === 'startup' || blocked || !requirement.value.trim();
+  generate.disabled = !session || !configured || !networkIsolated || phase === 'startup' || blocked ||
+    tableMode || !requirement.value.trim();
   requirement.readOnly = blocked;
   byId('new-tool').disabled = blocked;
   let currentTitle = '工具预览';
@@ -74,10 +76,12 @@ function render() {
     model: '正在等待 DeepSeek 响应',
     preview: '正在准备预览',
     restore: '正在恢复上次的工具',
+    table: '正在准备表格工具',
   }[phase] || '';
+  byId('model-step').hidden = tableMode;
   for (const step of ['model', 'preview']) {
     const item = byId(step + '-step');
-    if (step === phase) item.setAttribute('aria-current', 'step');
+    if (step === phase || (step === 'preview' && phase === 'table')) item.setAttribute('aria-current', 'step');
     else item.removeAttribute('aria-current');
   }
   const status = byId('preview-status');
@@ -90,10 +94,12 @@ function render() {
   byId('empty-copy').textContent = pending ? '工具准备好后，会在这里显示。' : '输入需求后，工具会在这里出现。';
   const fast = entryMode === 'fast';
   byId('quick-panel').hidden = !fast;
-  form.hidden = fast && !failure;
+  byId('table-panel').hidden = !tableMode;
+  form.hidden = tableMode || (fast && !failure);
   byId('quick-entry').setAttribute('aria-pressed', String(fast));
-  byId('direct-entry').setAttribute('aria-pressed', String(!fast && !editing));
-  for (const button of [byId('quick-entry'), byId('direct-entry'), byId('template-sample'),
+  byId('direct-entry').setAttribute('aria-pressed', String(entryMode === 'direct' && !editing));
+  byId('table-entry').setAttribute('aria-pressed', String(tableMode));
+  for (const button of [byId('quick-entry'), byId('direct-entry'), byId('table-entry'), byId('idea-entry'), byId('template-sample'),
     byId('template-customize'), ...document.querySelectorAll('[data-entry-template]')]) {
     button.disabled = blocked;
   }
@@ -214,6 +220,7 @@ function hideSample() {
 }
 
 function enterQuickExperience() {
+  if (entryMode === 'table') tableImport.close();
   editing = false;
   entryMode = 'fast';
   failure = '';
@@ -223,8 +230,35 @@ function enterQuickExperience() {
   byId('quick-panel').querySelector('[aria-pressed="true"]')?.focus();
 }
 
+const tableImport = setupTableImport({
+  request: workspaceApi,
+  generate: generateTable,
+  onExit: () => beginComposition(false, requirement.value),
+});
+const requirementAssistant = setupRequirementAssistant({
+  request: workspaceApi,
+  onBuild: text => {
+    requirementAssistant.close();
+    beginComposition(false, text);
+  },
+  onExit: () => {
+    requirementAssistant.close();
+    byId('idea-entry').focus();
+  },
+});
+
 byId('quick-entry').addEventListener('click', enterQuickExperience);
 byId('direct-entry').addEventListener('click', () => beginComposition(false, editing ? '' : requirement.value));
+byId('table-entry').addEventListener('click', () => {
+  hideSample();
+  editing = false;
+  failure = '';
+  entryMode = 'table';
+  compose(true);
+  render();
+  tableImport.open();
+});
+byId('idea-entry').addEventListener('click', () => requirementAssistant.open());
 byId('guide-start').addEventListener('click', () => {
   if (phase !== 'idle' || pendingPublication) return;
   startGuide();
@@ -682,6 +716,27 @@ function finishComposition() {
   compose(false);
 }
 
+async function generateTable(table) {
+  if (!networkIsolated || phase !== 'idle' || pendingPublication) {
+    throw new Error('当前无法开启隔离预览，请检查工作台状态后重试。');
+  }
+  failure = '';
+  phase = 'table';
+  render();
+  try {
+    const tool = await workspaceApi('/api/table/generate', { table });
+    await openTool(tool);
+    finishComposition();
+    await loadLibrary().catch(error => warnStorage(error.message));
+  } catch (error) {
+    failure = error.message;
+    throw error;
+  } finally {
+    phase = 'idle';
+    render();
+  }
+}
+
 form.addEventListener('submit', async event => {
   event.preventDefault();
   if (generate.disabled) return;
@@ -727,6 +782,7 @@ byId('sync-tool').addEventListener('click', async () => {
 async function selectTool(id) {
   if (!networkIsolated || pendingPublication || phase !== 'idle' || !validToolId(id)) return;
   hideSample();
+  if (entryMode === 'table') tableImport.close();
   phase = 'restore';
   failure = '';
   render();
@@ -748,6 +804,7 @@ async function selectTool(id) {
 
 function beginComposition(revise, value = '') {
   hideSample();
+  if (entryMode === 'table') tableImport.close();
   editing = revise;
   entryMode = 'direct';
   compose(true);

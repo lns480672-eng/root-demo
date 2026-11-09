@@ -6,6 +6,7 @@ import json
 import os
 import re
 import sqlite3
+import tempfile
 import threading
 from html.parser import HTMLParser
 from http.cookies import CookieError, SimpleCookie
@@ -13,6 +14,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import generate
+import assistant_fixture
+import table_import
 from accounts import ApiError, SESSION_SECONDS, Store
 
 ROOT = Path(__file__).resolve().parent
@@ -21,11 +24,20 @@ STATIC = {
     "/updates": ("index.html", "text/html; charset=utf-8"),
     "/workbench.css": ("workbench.css", "text/css; charset=utf-8"),
     "/entry.js": ("entry.js", "text/javascript; charset=utf-8"),
+    "/assistant.js": ("assistant.js", "text/javascript; charset=utf-8"),
+    "/assistant.css": ("assistant.css", "text/css; charset=utf-8"),
+    "/table.js": ("table.js", "text/javascript; charset=utf-8"),
+    "/table.css": ("table.css", "text/css; charset=utf-8"),
     "/workbench.js": ("workbench.js", "text/javascript; charset=utf-8"),
 }
 TOOL_PATH = re.compile(r"/api/tools/(run-[a-z0-9_]{8})")
 TOOL_ACTION = re.compile(r"/api/tools/(run-[a-z0-9_]{8})/(commit|open|data|publish|revise|resolve-publish)")
 TOOL_VERSIONS = re.compile(r"/api/tools/(run-[a-z0-9_]{8})/versions")
+DRAFTS = "/api/requirement-drafts"
+DRAFT_PATH = re.compile(DRAFTS + r"/([0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})")
+ANALYZE = "/api/assistant/analyze"
+TABLE_INSPECT = "/api/table/inspect"
+TABLE_GENERATE = "/api/table/generate"
 RELEASES = (
     ("0.3", "2026-11-09", None, "支持继续修改已有工具、查看工具版本历史，并调整窄屏生成流程。"),
     ("0.2", "2026-11-09", "v4-44e3da0cae1b", "加入邀请账号、个人工具列表和跨浏览器数据恢复。"),
@@ -74,7 +86,7 @@ class ToolTitle(HTMLParser):
 
 def build_id(assets):
     digest = hashlib.sha256()
-    for name in ("generate.py", "workbench.py", "accounts.py"):
+    for name in ("generate.py", "workbench.py", "accounts.py", "assistant_fixture.py", "table_import.py"):
         digest.update(name.encode() + b"\0" + (ROOT / name).read_bytes() + b"\0")
     for path, body in assets.items():
         digest.update(path.encode() + b"\0" + body + b"\0")
@@ -121,7 +133,8 @@ def serve(key, port, runs=generate.RUNS):
             if policy:
                 self.send_header("Content-Security-Policy", policy)
                 paths = (*STATIC, "/api/config", "/api/releases", "/api/session", "/api/register", "/api/login", "/api/logout",
-                         "/api/generate", "/api/tools", "/api/tools/*")
+                         "/api/generate", "/api/tools", "/api/tools/*", DRAFTS, DRAFTS + "/*", ANALYZE,
+                         TABLE_INSPECT, TABLE_GENERATE)
                 allowed = " ".join(f'"http://{host}{path}"' for path in paths)
                 self.send_header("Connection-Allowlist", f"({allowed}); webrtc=block")
             if cookie is not None:
@@ -191,6 +204,10 @@ def serve(key, port, runs=generate.RUNS):
                 self.send_json(200, {"allowed": True})
             elif self.path == "/api/tools":
                 self.send_json(200, store.list_tools(self.cookie_token(), self.marker()))
+            elif self.path == DRAFTS:
+                self.send_json(200, store.list_requirement_drafts(self.cookie_token(), self.marker()))
+            elif match := DRAFT_PATH.fullmatch(self.path):
+                self.send_json(200, store.requirement_draft(self.cookie_token(), self.marker(), match[1]))
             elif match := TOOL_VERSIONS.fullmatch(self.path):
                 history = store.versions(self.cookie_token(), self.marker(), match[1])
                 initial = history["items"][-1]
@@ -232,7 +249,8 @@ def serve(key, port, runs=generate.RUNS):
                 return
             try:
                 size = int(self.headers.get("Content-Length", "0"))
-                cap = 2 * 1024 * 1024 if TOOL_ACTION.fullmatch(self.path) else 16000
+                large_request = TOOL_ACTION.fullmatch(self.path) or self.path in (TABLE_INSPECT, TABLE_GENERATE)
+                cap = 2 * 1024 * 1024 if large_request else 16000
                 if not 0 < size <= cap:
                     raise ValueError
                 self.connection.settimeout(10)
@@ -261,6 +279,37 @@ def serve(key, port, runs=generate.RUNS):
             if self.path == "/api/logout":
                 store.logout(token, self.marker())
                 self.send_json(200, {"ok": True}, session_cookie("", 0))
+                return
+            if match := DRAFT_PATH.fullmatch(self.path):
+                value = data.get("text")
+                if key and isinstance(value, str) and key in value:
+                    with store.connection() as db:
+                        store.session(db, token, self.marker())
+                    raise ApiError(400, "invalid_draft_text", "请移除凭据后再保存。")
+                self.send_json(200, store.requirement_draft(token, self.marker(), match[1], data))
+                return
+            if self.path == ANALYZE:
+                with store.connection() as db:
+                    store.session(db, token, self.marker())
+                idea = data.get("idea")
+                if key and isinstance(idea, str) and key in idea:
+                    raise ApiError(400, "invalid_analysis", "请移除凭据后再分析。")
+                self.send_json(200, assistant_fixture.analyze(data))
+                return
+            if self.path in (TABLE_INSPECT, TABLE_GENERATE):
+                with store.connection() as db:
+                    store.session(db, token, self.marker())
+                if self.path == TABLE_INSPECT:
+                    self.send_json(200, table_import.inspect_table(data))
+                else:
+                    title, html, entries = table_import.build_table_tool(data.get("table"))
+                    try:
+                        run = Path(tempfile.mkdtemp(prefix="run-", dir=runs))
+                        (run / "app.html").write_text(html, encoding="utf-8")
+                    except OSError:
+                        raise ApiError(503, "save_failed", "本机无法保存表格工具，请重试。") from None
+                    store.draft(token, self.marker(), run.name, title, entries)
+                    self.send_json(200, {"id": run.name, "html": html, "entries": entries, "revision": 0, "version": 1})
                 return
             if match := TOOL_ACTION.fullmatch(self.path):
                 if match[2] == "revise":
