@@ -115,6 +115,94 @@ class AccountHTTP(unittest.TestCase):
         status, current, _ = self.request(path, cookie=owner, marker=marker)
         self.assertEqual((status, current["entries"]), (200, [["item", "second"]]))
 
+    def test_tool_versions_preserve_current_data(self):
+        self.assertEqual(self.register("version-owner", self.store.create_invite())[0], 201)
+        self.assertEqual(self.register("version-other", self.store.create_invite())[0], 201)
+        owner, marker = self.login("version-owner")
+        other, other_marker = self.login("version-other")
+        status, tool, _ = self.request("/api/generate", {"requirement": "版本清单"}, owner, marker)
+        self.assertEqual(status, 200)
+        path = "/api/tools/" + tool["id"]
+        original = [["books", "first"]]
+        self.assertEqual(self.request(path + "/commit", {"entries": original}, owner, marker)[0], 200)
+        versions = path + "/versions"
+        status, history, _ = self.request(versions, cookie=owner, marker=marker)
+        self.assertEqual(status, 200)
+        self.assertEqual(history["current"], 1)
+        self.assertEqual([item["version"] for item in history["items"]], [1])
+        self.assertGreater(history["items"][0]["effectiveAt"], 0)
+        self.assertEqual(self.request(versions, cookie=other, marker=other_marker)[0], 404)
+        instruction = {"requirement": "增加已读筛选", "version": 1}
+        self.assertEqual(self.request(path + "/revise", instruction, other, other_marker)[0], 404)
+        status, draft, _ = self.request(path + "/revise", instruction, owner, marker)
+        self.assertEqual((status, draft["id"], draft["version"]), (200, tool["id"], 2))
+        status, competing, _ = self.request(path + "/revise", {"requirement": "改标题", "version": 1}, owner, marker)
+        self.assertEqual(status, 200)
+        self.assertEqual(self.request("/api/tools/" + draft["runId"], cookie=owner, marker=marker)[0], 404)
+        self.assertEqual(self.request(versions, cookie=owner, marker=marker)[1], history)
+        updated = [["books", "first and second"]]
+        self.assertEqual(self.request(path + "/data", {
+            "revision": draft["revision"], "version": 1, "entries": updated,
+        }, owner, marker)[0], 200)
+        publish = {"revision": draft["revision"], "runId": draft["runId"], "entries": original}
+        self.assertEqual(self.request(path + "/publish", publish, owner, marker)[1]["code"], "revision_conflict")
+        publish["revision"] += 1
+        self.assertEqual(self.request(path + "/publish", publish, owner, marker)[1]["code"], "incompatible_data")
+        self.assertEqual(self.request(versions, cookie=owner, marker=marker)[1], history)
+        publish["entries"] = updated
+        self.assertEqual(self.request(path + "/publish", publish, other, other_marker)[0], 404)
+        self.assertEqual(self.request(path + "/publish", publish, owner, marker)[0], 200)
+        self.assertEqual(self.request(path + "/publish", publish, owner, marker)[0], 200)
+        status, current, _ = self.request(path, cookie=owner, marker=marker)
+        self.assertEqual((status, current["version"], current["entries"]), (200, 2, updated))
+        self.assertEqual(self.request(path + "/data", {
+            "revision": current["revision"], "version": 1, "entries": [],
+        }, owner, marker)[1]["code"], "version_conflict")
+        self.assertEqual(self.request(path + "/publish", {
+            "revision": current["revision"], "runId": competing["runId"], "entries": updated,
+        }, owner, marker)[1]["code"], "version_conflict")
+        self.assertEqual(len(self.request("/api/tools", cookie=owner, marker=marker)[1]["items"]), 1)
+        history = self.request(versions, cookie=owner, marker=marker)[1]
+        self.assertEqual(history["current"], 2)
+        self.assertEqual([item["version"] for item in history["items"]], [2, 1])
+        self.assertEqual(history["items"][0]["note"], instruction["requirement"])
+
+    def test_release_history_matches_running_build(self):
+        _, config, _ = self.request("/api/config")
+        status, releases, _ = self.request("/api/releases")
+        self.assertEqual(status, 200)
+        self.assertEqual(releases["items"][0]["build"], config["build"])
+        self.assertEqual(releases["items"][0]["version"], releases["current"])
+        self.assertIn("v4-44e3da0cae1b", [item["build"] for item in releases["items"][1:]])
+        with urlopen(self.base + "/updates", timeout=5) as response:
+            self.assertIn("webrtc=block", response.headers["Connection-Allowlist"])
+
+    def test_existing_tool_without_version_metadata(self):
+        self.assertEqual(self.register("legacy-version", self.store.create_invite())[0], 201)
+        cookie, marker = self.login("legacy-version")
+        tool_id = "run-legacy01"
+        with self.store.connection(write=True) as db:
+            owner = db.execute("SELECT id FROM accounts WHERE username='legacy-version'").fetchone()["id"]
+            db.execute("INSERT INTO tools VALUES (?,?,?,?,?,?)",
+                       (tool_id, owner, "保留的标题", 1, '[["books","legacy data"]]', 12))
+        directory = Path(self.runs) / tool_id
+        directory.mkdir()
+        (directory / "app.html").write_text("<!doctype html><html><body>原工具</body></html>", encoding="utf-8")
+        path = "/api/tools/" + tool_id
+        status, current, _ = self.request(path, cookie=cookie, marker=marker)
+        self.assertEqual((status, current["version"], current["revision"]), (200, 1, 12))
+        original = self.request(path + "/versions", cookie=cookie, marker=marker)[1]["items"][0]
+        self.assertTrue(original["approximate"])
+        status, draft, _ = self.request(path + "/revise", {"requirement": "保留旧工具", "version": 1}, cookie, marker)
+        self.assertEqual(status, 200)
+        self.assertEqual(self.request(path + "/publish", {
+            "revision": draft["revision"], "runId": draft["runId"], "entries": draft["entries"],
+        }, cookie, marker)[0], 200)
+        history = self.request(path + "/versions", cookie=cookie, marker=marker)[1]["items"]
+        self.assertEqual(history[1], original)
+        self.assertEqual(self.request("/api/tools", cookie=cookie, marker=marker)[1]["items"],
+                         [{"id": tool_id, "title": "保留的标题"}])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -7,11 +7,16 @@ const requirement = byId('requirement');
 const generate = byId('generate');
 const example = byId('example');
 const preview = byId('preview');
+const workspace = byId('workspace');
+const composer = form.closest('section');
+const library = byId('tool-list').closest('section');
+const toolHistory = byId('tool-version-panel');
 const maxStorageBytes = 256 * 1024;
 const validToolId = id => typeof id === 'string' && /^run-[a-z0-9_]{8}$/.test(id);
 const previewPolicy = "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; "
   + "img-src data:; connect-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'";
 let session = null;
+let identityResolved = false;
 let registering = false;
 let configured = false;
 let networkIsolated = false;
@@ -20,11 +25,12 @@ let candidate = null;
 let phase = 'startup';
 let failure = '';
 let restored = false;
+let editing = false;
 
 function render() {
   const pending = ['model', 'preview', 'restore'].includes(phase);
   product.dataset.state = pending ? 'loading' : failure ? 'failure' : active ? 'success' : 'initial';
-  generate.textContent = pending ? '生成中…' : failure ? '重试' : '生成工具';
+  generate.textContent = pending ? '生成中…' : failure ? '重试' : editing ? '生成新版' : '生成工具';
   generate.disabled = !session || !configured || !networkIsolated || phase === 'startup' || pending || !requirement.value.trim();
   requirement.readOnly = pending;
   byId('new-tool').disabled = pending;
@@ -36,7 +42,11 @@ function render() {
     if (selected) currentTitle = button.textContent;
   }
   byId('preview-title').textContent = currentTitle;
-  example.hidden = pending || Boolean(failure);
+  byId('composer-title').textContent = editing ? '要怎样修改这个工具？' : '你想做什么工具？';
+  byId('revise-tool').hidden = byId('tool-history').hidden = !active;
+  byId('revise-tool').disabled = pending || !configured;
+  byId('tool-history').textContent = active ? '工具 v' + active.version + ' · 版本历史' : '版本历史';
+  example.hidden = editing || pending || Boolean(failure);
   byId('error').textContent = failure;
   byId('error').hidden = !failure;
   byId('loading').hidden = !pending;
@@ -67,7 +77,9 @@ async function api(path, options) {
     response = await fetch(path, options);
     data = await response.json();
   } catch {
-    throw new Error('无法连接本机服务，请检查工作台是否正在运行。');
+    const error = new Error('无法连接本机服务，请检查工作台是否正在运行。');
+    error.code = 'transport';
+    throw error;
   }
   if (!response.ok) {
     const error = new Error(data.message || '请求未完成，请重试。');
@@ -114,6 +126,112 @@ async function loadLibrary() {
   return latest;
 }
 
+function compose(enabled) {
+  workspace.dataset.mode = enabled ? 'compose' : 'browse';
+  if (enabled) {
+    workspace.prepend(composer);
+    workspace.append(library);
+  } else {
+    workspace.prepend(library);
+    workspace.append(composer);
+  }
+}
+
+function versionRecord({ version, note, current, date, label, build }) {
+  const row = document.createElement('li');
+  const header = document.createElement('div');
+  const title = document.createElement('strong');
+  title.textContent = version + (current ? ' · ' + current : '');
+  if (current) row.setAttribute('aria-current', 'true');
+  const time = document.createElement('time');
+  if (date) time.dateTime = date;
+  time.textContent = label;
+  header.append(title, time);
+  const description = document.createElement('p');
+  description.textContent = note;
+  row.append(header, description);
+  if (build) {
+    const code = document.createElement('code');
+    code.textContent = build;
+    row.append(code);
+  }
+  return row;
+}
+
+function showToolHistory(open) {
+  toolHistory.hidden = !open;
+  byId('tool-history').setAttribute('aria-expanded', String(open));
+  if (open) loadToolHistory();
+}
+
+let historyRequest = 0;
+async function loadToolHistory() {
+  const request = ++historyRequest;
+  const id = active.id;
+  const list = byId('tool-version-list');
+  const status = byId('tool-version-status');
+  byId('version-tool-name').textContent = byId('preview-title').textContent;
+  list.replaceChildren();
+  status.textContent = '正在读取工具版本…';
+  try {
+    const { current, items } = await workspaceApi('/api/tools/' + id + '/versions');
+    if (request !== historyRequest || active?.id !== id) return;
+    list.replaceChildren(...items.map(item => {
+      const date = item.effectiveAt && new Date(item.effectiveAt * 1000);
+      return versionRecord({
+        version: 'v' + item.version, note: item.note,
+        current: item.version === current ? '当前' : '',
+        date: date && date.toISOString(),
+        label: date ? date.toLocaleString('zh-CN') + (item.approximate ? '（文件时间）' : '') : '时间未记录',
+      });
+    }));
+    status.textContent = '';
+  } catch (error) {
+    if (request === historyRequest && active?.id === id) status.textContent = error.message;
+  }
+}
+
+let releasesRequest = null;
+function loadReleases() {
+  if (releasesRequest) return;
+  releasesRequest = api('/api/releases').then(({ current, items }) => {
+    byId('updates-link').textContent = '工作台版本 ' + current + ' · 更新记录';
+    byId('release-list').replaceChildren(...items.map(item => versionRecord({
+      ...item, label: item.date, current: item.version === current ? '当前发布' : '',
+    })));
+    byId('release-status').textContent = '';
+  }).catch(error => {
+    releasesRequest = null;
+    byId('release-status').textContent = error.message;
+  });
+}
+
+function renderRoute(focus = false) {
+  const updates = location.pathname === '/updates';
+  byId('updates').hidden = byId('updates-back').hidden = !updates;
+  byId('updates-link').hidden = updates;
+  byId('auth').hidden = updates || !identityResolved || Boolean(session);
+  byId('account').hidden = workspace.hidden = updates || !session;
+  document.title = updates ? '工作台更新记录 · ROOT' : 'ROOT 工具工作台';
+  if (updates) loadReleases();
+  if (focus) byId(updates ? 'updates-title' : 'updates-link').focus();
+}
+
+for (const id of ['updates-link', 'updates-back']) {
+  byId(id).addEventListener('click', event => {
+    if (event.button || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    event.preventDefault();
+    if (id === 'updates-link') history.pushState({ fromWorkbench: true }, '', '/updates');
+    else if (history.state?.fromWorkbench) {
+      history.back();
+      return;
+    } else history.replaceState(null, '', '/');
+    renderRoute(true);
+  });
+}
+window.addEventListener('popstate', () => renderRoute(true));
+byId('tool-history').addEventListener('click', () => showToolHistory(toolHistory.hidden));
+
 async function confirmsNetworkPolicy() {
   try {
     // CSP permits this same-origin request. Only the browser's egress allowlist should reject it.
@@ -143,8 +261,21 @@ function serializeEntries(entries) {
 function initializeFrame(entries, token, parentOrigin, limit) {
   const send = parent.postMessage.bind(parent);
   const values = new Map(entries);
+  const existing = new Set(values.keys());
+  const reads = new Set();
+  let paused = false;
   const report = (type, extra = {}) => send({ token, type, ...extra }, parentOrigin);
+  window.addEventListener('message', event => {
+    if (event.source !== parent || event.origin !== parentOrigin || event.data?.token !== token) return;
+    if (event.data.type === 'pause-storage') {
+      paused = true;
+      report('storage-paused', { reads: Array.from(reads) });
+    } else if (event.data.type === 'resume-storage') {
+      paused = false;
+    }
+  });
   function commit(next) {
+    if (paused) throw new DOMException('正在切换工具版本，请稍后重试。', 'InvalidStateError');
     const snapshot = Array.from(next);
     if (new TextEncoder().encode(JSON.stringify(snapshot)).length > limit) {
       report('quota');
@@ -157,7 +288,11 @@ function initializeFrame(entries, token, parentOrigin, limit) {
   Object.defineProperty(window, 'localStorage', {
     value: Object.freeze({
       get length() { return values.size; },
-      getItem(key) { return values.get(String(key)) ?? null; },
+      getItem(key) {
+        const name = String(key);
+        if (existing.has(name)) reads.add(name);
+        return values.get(name) ?? null;
+      },
       setItem(key, value) { commit(new Map(values).set(String(key), String(value))); },
       removeItem(key) {
         const next = new Map(values);
@@ -186,7 +321,7 @@ function enqueueSave(frame, snapshot) {
     if (frame === active) warnStorage('正在保存…');
     try {
       const saved = await workspaceApi('/api/tools/' + frame.id + '/data', {
-        revision: frame.revision, entries: JSON.parse(snapshot),
+        revision: frame.revision, version: frame.version, entries: JSON.parse(snapshot),
       });
       frame.revision = saved.revision;
       if (frame === active) warnStorage('');
@@ -220,8 +355,54 @@ window.addEventListener('message', event => {
     frame.resolve();
   } else if (frame === candidate && type === 'init-error') {
     frame.reject(new Error('新工具预览初始化失败，需求已保留。'));
+  } else if (type === 'storage-paused') {
+    frame.acknowledgePause?.(event.data.reads);
   }
 });
+
+function signalStorage(frame, type) {
+  frame.iframe.contentWindow.postMessage({ type, token: frame.token }, '*');
+}
+
+async function pauseStorage(frame) {
+  frame.iframe.inert = true;
+  const acknowledgement = new Promise(resolve => { frame.acknowledgePause = resolve; });
+  let timeout;
+  try {
+    signalStorage(frame, 'pause-storage');
+    return await Promise.race([acknowledgement, new Promise((_, reject) => {
+      timeout = setTimeout(() => reject(new Error('切换版本超时，旧版仍可用。')), 2000);
+    })]);
+  } finally {
+    clearTimeout(timeout);
+    frame.acknowledgePause = null;
+  }
+}
+
+function resumeStorage(frame) {
+  signalStorage(frame, 'resume-storage');
+  frame.iframe.inert = false;
+}
+
+async function publishRevision(frame, old, tool) {
+  const reads = await pauseStorage(frame);
+  if (!Array.isArray(reads) || !tool.entries.every(([key]) => reads.includes(key))) {
+    throw new Error('新版无法读取全部已有数据，旧版仍可用。');
+  }
+  // The old frame's acknowledgement follows its queued storage messages.
+  await pauseStorage(old);
+  await old.saveTail;
+  if (old.saveFailed) throw new Error('旧版还有未保存的修改，请先解决保存问题再试。');
+  const path = '/api/tools/' + frame.id + '/publish';
+  const payload = { runId: tool.runId, revision: frame.revision, entries: JSON.parse(frame.snapshot) };
+  try {
+    return await workspaceApi(path, payload);
+  } catch (error) {
+    if (error.code !== 'transport') throw error;
+    // The response may have been lost after SQLite committed the same draft.
+    return workspaceApi(path, payload);
+  }
+}
 
 async function openTool(tool, restore = false) {
   if (!validToolId(tool.id) || typeof tool.html !== 'string' || !/^<!doctype html>/i.test(tool.html)) {
@@ -238,8 +419,9 @@ async function openTool(tool, restore = false) {
   iframe.inert = true;
   const frame = {
     id: tool.id, token: crypto.randomUUID(), iframe, snapshot: original,
-    revision: tool.revision, saveTail: Promise.resolve(), saveFailed: false,
+    revision: tool.revision, version: tool.version, saveTail: Promise.resolve(), saveFailed: false,
   };
+  const old = active;
   candidate = frame;
   const ready = new Promise((resolve, reject) => Object.assign(frame, { resolve, reject }));
   const deadline = setTimeout(() => frame.reject(new Error('准备预览超时，需求已保留。')), 5000);
@@ -253,27 +435,47 @@ async function openTool(tool, restore = false) {
     preview.append(iframe);
     await ready;
     let savedSnapshot = original;
-    if (!restore) {
+    if (tool.runId) {
+      const saved = await publishRevision(frame, old, tool);
+      savedSnapshot = frame.snapshot;
+      frame.revision = saved.revision;
+    } else if (!restore) {
       savedSnapshot = frame.snapshot;
       const saved = await workspaceApi('/api/tools/' + frame.id + '/commit', {
         entries: JSON.parse(savedSnapshot),
       });
       frame.revision = saved.revision;
     } else {
-      await workspaceApi('/api/tools/' + frame.id + '/open', {});
+      await workspaceApi('/api/tools/' + frame.id + '/open', { version: frame.version });
     }
-    active?.iframe.remove();
+    old?.iframe.remove();
     active = frame;
     iframe.dataset.tool = frame.id;
     iframe.removeAttribute('tabindex');
-    iframe.inert = false;
+    resumeStorage(frame);
     warnStorage('');
     restored = restore;
     if (frame.snapshot !== savedSnapshot) enqueueSave(frame, frame.snapshot);
+    if (old?.id !== frame.id) showToolHistory(false);
+    else if (!toolHistory.hidden) loadToolHistory();
   } finally {
     clearTimeout(deadline);
-    if (active !== frame) iframe.remove();
+    if (active !== frame) {
+      iframe.remove();
+      if (tool.runId && old.iframe.inert && old.iframe.isConnected) resumeStorage(old);
+    }
     candidate = null;
+  }
+}
+
+async function openRevision(tool) {
+  try {
+    await openTool(tool);
+  } catch (error) {
+    if (error.code !== 'revision_conflict') throw error;
+    const current = await workspaceApi('/api/tools/' + tool.id);
+    if (current.version !== tool.version - 1) throw new Error('工具已更新，请重新打开后再修改。');
+    await openTool({ ...tool, entries: current.entries, revision: current.revision });
   }
 }
 
@@ -286,14 +488,22 @@ example.addEventListener('click', () => {
 form.addEventListener('submit', async event => {
   event.preventDefault();
   if (generate.disabled) return;
+  compose(true);
   failure = '';
   phase = 'model';
   render();
   try {
-    const tool = await workspaceApi('/api/generate', { requirement: requirement.value.trim() });
+    const path = editing ? '/api/tools/' + active.id + '/revise' : '/api/generate';
+    const tool = await workspaceApi(path, {
+      requirement: requirement.value.trim(), version: editing ? active.version : undefined,
+    });
     phase = 'preview';
     render();
-    await openTool(tool);
+    if (editing) await openRevision(tool);
+    else await openTool(tool);
+    editing = false;
+    requirement.value = '';
+    compose(false);
     await loadLibrary().catch(error => warnStorage(error.message));
   } catch (error) {
     failure = error.message;
@@ -311,6 +521,9 @@ async function selectTool(id) {
   try {
     await active?.saveTail;
     await openTool(await workspaceApi('/api/tools/' + id), true);
+    if (editing) requirement.value = '';
+    editing = false;
+    compose(false);
   } catch (error) {
     warnStorage(error.message);
   } finally {
@@ -319,12 +532,16 @@ async function selectTool(id) {
   }
 }
 
-byId('new-tool').addEventListener('click', () => {
+function beginComposition(revise) {
+  editing = revise;
+  compose(true);
   requirement.value = '';
   failure = '';
   requirement.focus();
   render();
-});
+}
+byId('new-tool').addEventListener('click', () => beginComposition(false));
+byId('revise-tool').addEventListener('click', () => beginComposition(true));
 
 function authMode(next) {
   registering = next;
@@ -433,14 +650,15 @@ window.addEventListener('focus', async () => {
 
 async function start() {
   try {
+    compose(true);
+    loadReleases();
+    renderRoute();
     const identity = await api('/api/session');
-    if (!identity.user) {
-      byId('auth').hidden = false;
-      return;
-    }
-    session = identity;
+    identityResolved = true;
+    session = identity.user ? identity : null;
+    renderRoute();
+    if (!session) return;
     byId('account-name').textContent = session.user;
-    byId('account').hidden = byId('workspace').hidden = false;
     ({ configured } = await api('/api/config'));
     networkIsolated = await confirmsNetworkPolicy();
     if (!networkIsolated) {
@@ -457,7 +675,8 @@ async function start() {
     }
   } catch (error) {
     if (!session) {
-      byId('auth').hidden = false;
+      identityResolved = true;
+      renderRoute();
       byId('auth-status').textContent = error.message;
     } else {
       warnStorage(error.message);

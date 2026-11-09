@@ -124,3 +124,17 @@ accounts_checkpoint:
   recovery: 系统 Python 缺 scrypt，改为 PBKDF2-HMAC-SHA256；修正历史列表 390 px 溢出
   evidence: [runs/accounts-api/unit.log, runs/accounts-g2-trial3/workbench-check.json, runs/accounts-live/workbench-check.json, runs/accounts-udp-direct/webrtc-isolation.json, runs/accounts-udp-nested/webrtc-isolation.json, runs/accounts-udp-no-policy/webrtc-isolation.json]
   first_unfinished_oracle: 独立验收按固定提交另行执行
+
+stage3_checkpoint:
+  objective: "AC-007～AC-009 与生成四态对齐"
+  baseline_commit: bab4955
+  build: v4-cd90757a955a
+  entry: "http://127.0.0.1:8777/"
+  scope: [继续修改及数据兼容, 工具版本历史, 工作台更新记录, 窄屏新建和浏览顺序]
+  forbidden_side_effects: [使用体验服务数据, 修改 8774, 对外部署]
+  strategy_boxes_used: 1
+  current_strategy: "接口替身验证事务边界，Chrome 双浏览器验证并发读写，再单独验真模型"
+  red: [runs/stage3-dev/red-http.log, runs/stage3-dev/red-browser/workbench-check.json]
+  evidence: runs/stage3-final/开发自测.md
+  handoff: runs/stage3-final/handoff.json
+  first_unfinished_oracle: "独立验收以本轮固定提交与专用运行目录验证"

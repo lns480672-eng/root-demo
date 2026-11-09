@@ -258,11 +258,79 @@ button:enabled { cursor: pointer; }
 #tool-list button[aria-current="true"] { border-color: #506bb7; background: #f0f2fe; }
 .elys-preview { grid-area: preview; min-height: 320px; }
 .elys-preview-header h2 { flex-basis: 100%; margin-top: 6px; overflow-wrap: anywhere; }
+.elys-workspace[data-mode="compose"] {
+  grid-template-areas: "composer preview" "library preview";
+}
+.elys-workspace[data-mode="compose"] .elys-composer { border-top: 0; padding-top: 9px; }
+.elys-masthead { flex-wrap: wrap; }
+.masthead-link {
+  margin-inline-start: auto;
+  padding: 6px 12px;
+  border: 1px solid var(--elys-line);
+  border-radius: 999px;
+  color: #38539c;
+  text-decoration: none;
+}
+.masthead-link + .masthead-link + .account { margin-inline-start: 0; }
+.preview-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.preview-actions button { background: var(--elys-white); color: var(--elys-ink); }
+.release-history { max-width: 720px; margin: 22px auto 0; padding: clamp(18px, 4vw, 36px); }
+.release-history h1, .tool-version-panel h2 {
+  margin-block: 6px 12px;
+  font: 600 clamp(24px, 3.3vw, 33px)/1.2 var(--elys-serif);
+}
+.tool-version-panel {
+  grid-area: history;
+  padding: 16px;
+  border: 1px solid var(--elys-line);
+  border-radius: 16px;
+  background: var(--elys-white);
+}
+.elys-workspace:has(.tool-version-panel:not([hidden])) {
+  grid-template-areas: "library preview" "composer history";
+  align-items: start;
+}
+.elys-workspace[data-mode="compose"]:has(.tool-version-panel:not([hidden])) {
+  grid-template-areas: "composer preview" "library history";
+}
+.preview-actions button[aria-expanded="true"] { border-color: #506bb7; color: #38539c; }
+@media (min-width: 1050px) {
+  .elys-workspace:has(.tool-version-panel:not([hidden])) {
+    grid-template-columns: minmax(0, .7fr) minmax(0, 1.3fr) minmax(240px, .8fr);
+    grid-template-areas: "library preview history" "composer preview history";
+  }
+  .elys-workspace[data-mode="compose"]:has(.tool-version-panel:not([hidden])) {
+    grid-template-areas: "composer preview history" "library preview history";
+  }
+}
+.version-list { list-style: none; padding: 0; display: grid; gap: 8px; }
+.version-list li {
+  padding: 12px 14px;
+  border: 1px solid var(--elys-line);
+  border-radius: 12px;
+  background: var(--elys-white);
+  overflow-wrap: anywhere;
+}
+.version-list li > div { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 10px; }
+.version-list time, .version-list code { color: var(--elys-muted); font-size: 12px; }
+.version-list li[aria-current="true"] { border-color: #506bb7; }
+.version-list li[aria-current="true"] strong { color: #38539c; }
+.version-list li p { margin-top: 6px; white-space: pre-wrap; }
 @media (max-width: 650px) {
   .auth-layout { grid-template-columns: minmax(0, 1fr); gap: 17px; padding: 23px 0 0; }
   .auth-intro h1 { margin: 8px 0; }
   .auth-illustration { display: none; }
   .elys-workspace { grid-template-areas: "library" "preview" "composer"; grid-template-rows: auto; gap: 17px; }
+  .elys-workspace[data-mode="compose"] { grid-template-areas: "composer" "preview" "library"; }
+  .elys-workspace:has(.tool-version-panel:not([hidden])) {
+    grid-template-areas: "library" "preview" "history" "composer";
+  }
+  .elys-workspace[data-mode="compose"]:has(.tool-version-panel:not([hidden])) {
+    grid-template-areas: "composer" "preview" "history" "library";
+  }
+  .masthead-link { margin-inline-start: 0; }
+  .elys-masthead { padding: 9px 12px; border-radius: 18px; }
+  .masthead-link + .masthead-link + .account { margin-inline-start: auto; }
 }
 @media (pointer: coarse) {
   .auth-panel :is(input, #auth-submit) { min-height: 44px; }

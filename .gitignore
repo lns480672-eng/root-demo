@@ -16,6 +16,7 @@
 /design/*
 !/design/root-workbench.html
 !/design/root-account.html
+!/design/root-version-history.html
 !/workbench/
 /workbench/*
 !/workbench/index.html

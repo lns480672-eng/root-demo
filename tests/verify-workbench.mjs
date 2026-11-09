@@ -9,6 +9,8 @@ import { join, resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 
 const live = process.argv.includes('--live');
+const liveRevision = live && process.argv.includes('--revision');
+const collectCoverage = process.argv.includes('--coverage');
 const mainOnly = process.argv.includes('--main');
 const artifactsArg = process.argv.find(arg => arg.startsWith('--artifacts='));
 let artifacts = artifactsArg?.slice('--artifacts='.length);
@@ -26,6 +28,7 @@ const children = [];
 const sockets = [];
 let socket;
 let readPage;
+let writeCoverage;
 
 function launch(command, args) {
   const child = spawn(command, args, { stdio: ['ignore', 'pipe', 'pipe'] });
@@ -45,7 +48,9 @@ async function until(check, timeout = 10000) {
 }
 
 const requirements = [
-  '请做一个 h1 为「读书清单」的工具。首次列表为空。用 form 包含 id="book" 的书名输入和 type="submit" 的「添加书籍」按钮，使用可见的 ul#list 显示书名。提交后清空输入。请使用 localStorage 保存并恢复书单。',
+  liveRevision
+    ? '做一个最小读书清单，h1 为「读书清单」。一个 form，文本框 id="book"，提交按钮文字「添加书籍」，提交清空输入。书名用文本渲染到 ul#list。用 localStorage 保存和恢复书名数组。无需 CSS、删除、示例数据或额外控件。首字符是 <!doctype html> 的尖括号，末尾是 </html>，无 Markdown 和前后文字。'
+    : '请做一个 h1 为「读书清单」的工具。首次列表为空。用 form 包含 id="book" 的书名输入和 type="submit" 的「添加书籍」按钮，使用可见的 ul#list 显示书名。提交后清空输入。请使用 localStorage 保存并恢复书单。',
   '请做一个 h1 为「搬家预算计算器」的工具，包含 id="truck" 的租车费数字输入和 id="boxes" 的纸箱费数字输入，点击 id="calculate" 的「计算总额」按钮时将两项相加，把纯数字结果显示到 #total。',
 ].map(requirement => live
   ? requirement + ' 采用最简界面，控制输出在 2500 tokens 以内，返回完整 HTML。'
@@ -85,6 +90,7 @@ try {
     artifacts = await mkdtemp(join(resolve('runs'), 'workbench-live-'));
   }
   if (artifacts) await mkdir(artifacts, { recursive: true, mode: 0o700 });
+  if (collectCoverage && !artifacts) throw new Error('--coverage requires --artifacts');
   async function connectBrowser(browserProfile) {
     const chrome = launch(process.env.CHROME_BIN || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', [
       '--headless=new', '--no-first-run', '--disable-background-networking', '--disable-extensions',
@@ -134,6 +140,24 @@ try {
     callback?.(reply);
   }
   socket = await connectBrowser(profile);
+  const coverage = [];
+  async function startCoverage() {
+    if (!collectCoverage) return;
+    await cdp('Profiler.enable');
+    await cdp('Profiler.startPreciseCoverage', { callCount: true, detailed: true });
+  }
+  async function sampleCoverage() {
+    if (!collectCoverage) return;
+    const { result } = await cdp('Profiler.takePreciseCoverage');
+    coverage.push(...result.filter(script => script.url === base + '/workbench.js'));
+  }
+  if (collectCoverage) writeCoverage = async () => {
+    await sampleCoverage();
+    await writeFile(join(artifacts, 'host-js-coverage.json'), JSON.stringify({
+      build: evidence.build, source: '/workbench.js', format: 'CDP detailed V8 ranges', samples: coverage,
+    }, null, 2) + '\n');
+  };
+  await startCoverage();
 
   async function evaluate(expression, context) {
     const result = await cdp('Runtime.evaluate', {
@@ -196,7 +220,8 @@ try {
   }
 
   async function recordRun(tool) {
-    const data = await readFile(join(live ? resolve(process.env.WORKBENCH_RUNS_DIR || 'runs') : join(root, 'runs'), tool.id, 'generation.json'), 'utf8');
+    const data = await readFile(join(live ? resolve(process.env.WORKBENCH_RUNS_DIR || 'runs') : join(root, 'runs'),
+      tool.runId || tool.id, 'generation.json'), 'utf8');
     const run = JSON.parse(data);
     assert.equal(run.http_status, 200);
     assert.equal(run.status, 'generated');
@@ -206,6 +231,7 @@ try {
     if (live) assert.ok(run.usage?.total_tokens > 0, '真实请求应提供用量证据');
     evidence.runs.push({ tool: tool.id, requestId: run.request_id, model: run.returned_model,
       elapsedSeconds: run.elapsed_seconds, usage: run.usage });
+    if (tool.runId) evidence.runs.at(-1).runId = tool.runId;
   }
 
   async function generate(requirement) {
@@ -256,12 +282,14 @@ try {
       await until(() => evaluate('document.querySelector("#auth-status").textContent === "注册成功，请登录。"'));
     }
     await type('#password', password);
+    await sampleCoverage();
     await click('#auth-submit');
     await until(() => evaluate(`document.documentElement.dataset.ready === "true" &&
       !document.querySelector("#workspace").hidden && document.querySelector("#account-name").textContent === ${JSON.stringify(username)}`));
   }
 
   async function logout() {
+    await sampleCoverage();
     await click('#logout');
     await until(() => evaluate('document.documentElement.dataset.ready === "true" && !document.querySelector("#auth").hidden'));
     assert.equal(await evaluate('document.querySelectorAll("#preview iframe").length'), 0);
@@ -270,6 +298,7 @@ try {
   async function selectHistory(id) {
     await until(() => evaluate(`Boolean(document.querySelector('#tool-list button[data-id="${id}"]:enabled'))`));
     await click(`#tool-list button[data-id="${id}"]`);
+    await until(() => evaluate('phase === "idle"'));
     const selected = await until(async () => {
       const tool = await activeTool();
       return tool.id === id && tool;
@@ -411,6 +440,7 @@ try {
     assert.deepEqual(probeRequests, probeControls);
   }
   stage = 'reload workbench';
+  await sampleCoverage();
   await cdp('Page.reload', { ignoreCache: true });
   await until(() => evaluate('performance.getEntriesByType("navigation")[0]?.type === "reload"'));
   let restored = await activeTool();
@@ -420,6 +450,77 @@ try {
   evidence.tests.push({ id: 'TEST-002', result: 'passed', tool: first.id, record: sample,
     reloadedDocument: true, isolationFixtureChecked: !live });
   await screenshot('record-restored');
+  if (liveRevision) {
+    stage = 'real DeepSeek revision preserves data and adds an operable filter';
+    await evaluate(`(() => {
+      const fetchFromWorkbench = window.fetch;
+      window.fetch = async (url, options) => {
+        const response = await fetchFromWorkbench(url, options);
+        if (String(url).endsWith('/revise') && response.ok) {
+          window.liveRevisionRun = (await response.clone().json()).runId;
+        }
+        return response;
+      };
+    })()`);
+    await type('#book', '已读：设计中的设计', restored.context);
+    await click('form button', restored.context);
+    await until(async () => JSON.stringify((await stored(first.id)).entries).includes('已读：设计中的设计'));
+    await click('#revise-tool');
+    await generate('加一个 id="read-filter" 的下拉菜单，选项 all 表示全部，read 表示仅显示书名以「已读：」开头的书。保留 #book、原表单和 #list，按原样保存书名和原有数据。');
+    await until(async () => {
+      const state = await readPage();
+      if (state.error) throw new Error(state.error);
+      return evaluate('document.querySelector("#tool-history").textContent.includes("v2")');
+    }, 135000);
+    let updated = await activeTool();
+    assert.equal(updated.id, first.id);
+    assert.notEqual(updated.loader, restored.loader);
+    await recordRun({ ...updated, runId: await evaluate('window.liveRevisionRun') });
+    const books = 'document.querySelector("#list").innerText';
+    assert.match(await evaluate(books, updated.context), /星际旅行手记/);
+    assert.match(await evaluate(books, updated.context), /已读：设计中的设计/);
+    await evaluate(`const filter = document.querySelector('#read-filter');
+      filter.value = 'read'; filter.dispatchEvent(new Event('change'));`, updated.context);
+    const filtered = await evaluate(books, updated.context);
+    assert.match(filtered, /已读：设计中的设计/);
+    assert.doesNotMatch(filtered, /星际旅行手记/);
+    await evaluate(`(() => {
+      const filter = document.querySelector('#read-filter');
+      filter.value = 'all'; filter.dispatchEvent(new Event('change'));
+    })()`, updated.context);
+    assert.match(await evaluate(books, updated.context), /星际旅行手记/);
+    await click('#tool-history');
+    await until(() => evaluate('document.querySelectorAll("#tool-version-list li").length === 2'));
+    await screenshot('live-revision');
+    await cdp('Page.reload', { ignoreCache: true });
+    await until(() => evaluate('document.documentElement.dataset.ready === "true"'));
+    updated = await activeTool();
+    assert.equal(updated.id, first.id);
+    assert.match(await evaluate(books, updated.context), /星际旅行手记/);
+    assert.match(await evaluate(books, updated.context), /已读：设计中的设计/);
+    assert.equal(await evaluate('Boolean(document.querySelector("#read-filter"))', updated.context), true);
+    evidence.tests.push({ id: 'TEST-007', result: 'passed', sameTool: true, filterVerified: true,
+      reloaded: true, persistedRecords: ['星际旅行手记', '已读：设计中的设计'] });
+    evidence.tests.push({ id: 'TEST-008', result: 'passed', versions: [2, 1] });
+  }
+  if (!live) {
+    stage = 'release history navigation retains the current preview';
+    const beforeUpdates = restored.loader;
+    await evaluate('document.querySelector("#requirement").value = "返回后保留的草稿"');
+    await click('#updates-link');
+    await until(() => evaluate('location.pathname === "/updates" && !document.querySelector("#updates").hidden'));
+    await until(() => evaluate('document.querySelectorAll("#release-list li").length >= 2'));
+    const config = await appRequest('/api/config');
+    assert.equal(await evaluate('document.querySelector("#release-list li[aria-current=true] code").textContent'),
+      config.body.build);
+    assert.equal(await evaluate('document.querySelector("#workspace").hidden'), true);
+    await screenshot('release-history');
+    await click('#updates-back');
+    await until(() => evaluate('location.pathname === "/" && !document.querySelector("#workspace").hidden'));
+    assert.equal((await activeTool()).loader, beforeUpdates);
+    assert.equal(await evaluate('document.querySelector("#requirement").value'), '返回后保留的草稿');
+    evidence.tests.push({ id: 'TEST-009', result: 'passed', currentBuild: config.body.build, retainedPreview: true });
+  }
   async function assertOldTool() {
     assert.equal(await evaluate('document.querySelector("#preview iframe[data-tool]").dataset.tool'), restored.id);
     assert.equal((await library()).latest, restored.id);
@@ -465,6 +566,7 @@ try {
       await screenshot('failure-with-old-tool');
 
       stage = 'reload after failure before candidate switch';
+      await sampleCoverage();
       const previousLoader = restored.loader;
       await cdp('Page.reload', { ignoreCache: true });
       await until(() => evaluate('performance.getEntriesByType("navigation")[0]?.type === "reload"'));
@@ -591,6 +693,11 @@ try {
       })`);
       assert.deepEqual(layout, { singleColumn: true, composerBelow: true, overflow: false });
       await screenshot('narrow-budget');
+      await click('#new-tool');
+      assert.equal(await evaluate(`document.querySelector('.elys-composer').getBoundingClientRect().bottom <
+        document.querySelector('.elys-preview').getBoundingClientRect().top`), true);
+      assert.equal((await activeTool()).loader, second.loader);
+      await screenshot('narrow-create');
       evidence.tests.push({ id: 'narrow-viewport', result: 'passed', width: 390 });
 
       stage = 'preview self-navigation isolation';
@@ -604,6 +711,7 @@ try {
       stage = 'cross-browser account restoration';
       const primary = socket;
       socket = await connectBrowser(join(root, 'chrome-independent'));
+      await startCoverage();
       await cdp('Target.setAutoAttach', { autoAttach: true, waitForDebuggerOnStart: false, flatten: true });
       await cdp('Page.enable');
       await cdp('Page.navigate', { url: base });
@@ -617,15 +725,83 @@ try {
       await click('form button', tool.context);
       await until(async () => JSON.stringify((await stored(first.id)).entries).includes('独立浏览器保存的书'));
       await screenshot('second-browser');
-      await logout();
+      const secondary = socket;
+      await sampleCoverage();
+      const secondaryReading = tool;
 
       socket = primary;
       await cdp('Emulation.setDeviceMetricsOverride', { width: 1360, height: 980, deviceScaleFactor: 1, mobile: false });
+      stage = 'tool revision incompatibility preserves version and allows writing';
+      restored = await selectHistory(first.id);
+      const versionPath = '/api/tools/' + first.id + '/versions';
+      await click('#tool-history');
+      await until(() => evaluate('document.querySelectorAll("#tool-version-list li").length === 1'));
+      const priorHistory = (await appRequest(versionPath)).body;
+      assert.equal(priorHistory.current, 1);
+      await click('#revise-tool');
+      await generate('回归：不兼容数据');
+      assert.match(await until(() => evaluate('document.querySelector("#error").textContent')), /无法.*已有数据/);
+      await addOldRecord('修改失败后保存的书');
+      assert.deepEqual((await appRequest(versionPath)).body, priorHistory);
+      assert.equal((await activeTool()).loader, restored.loader);
+
+      stage = 'revision keeps writes made from a second browser during preview';
+      await evaluate('window.holdFixturePreview = true; window.releaseFixturePreview = undefined');
+      await generate('增加已读筛选');
+      await until(() => evaluate('typeof window.releaseFixturePreview === "function"'));
+      assert.equal((await activeTool()).loader, restored.loader);
+      socket = secondary;
+      tool = await selectHistory(first.id);
+      assert.notEqual(tool.loader, secondaryReading.loader);
+      await type('#book', '已读：并发新增记录', tool.context);
+      await click('form button', tool.context);
+      await until(async () => JSON.stringify((await stored(first.id)).entries).includes('已读：并发新增记录'));
+      await sampleCoverage();
+      socket = primary;
+      await evaluate('window.releaseFixturePreview()');
+      tool = await until(async () => {
+        const current = await activeTool();
+        return current.loader !== restored.loader && current;
+      });
+      assert.equal(tool.id, first.id);
+      assert.equal((await library()).items.length, 2);
+      const books = 'document.querySelector("#list").innerText';
+      assert.match(await evaluate(books, tool.context), /星际旅行手记/);
+      assert.match(await evaluate(books, tool.context), /修改失败后保存的书/);
+      assert.match(await evaluate(books, tool.context), /已读：并发新增记录/);
+      await evaluate(`const filter = document.querySelector('#read-filter');
+        filter.value = 'read'; filter.dispatchEvent(new Event('change'));`, tool.context);
+      assert.equal((await evaluate(books, tool.context)).trim(), '已读：并发新增记录');
+      const history = (await appRequest(versionPath)).body;
+      assert.deepEqual(history.items.map(item => item.version), [2, 1]);
+      assert.equal(history.current, 2);
+      assert.equal(history.items[0].note, '增加已读筛选');
+      if (await evaluate('document.querySelector("#tool-version-panel").hidden')) await click('#tool-history');
+      await until(() => evaluate('document.querySelectorAll("#tool-version-list li").length === 2'));
+      assert.equal(await evaluate(`document.querySelector('#tool-version-panel').getBoundingClientRect().left >
+        document.querySelector('.elys-preview').getBoundingClientRect().right`), true);
+      await screenshot('tool-version-history');
+      await cdp('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
+      assert.equal(await evaluate(`document.querySelector('#tool-version-panel').getBoundingClientRect().top >
+        document.querySelector('.elys-preview').getBoundingClientRect().bottom &&
+        document.documentElement.scrollWidth === document.documentElement.clientWidth`), true);
+      await cdp('Emulation.setDeviceMetricsOverride', { width: 1360, height: 980, deviceScaleFactor: 1, mobile: false });
+      await click('#revise-tool');
+      await generate('回归：修改输出失败');
+      assert.match(await until(() => evaluate('document.querySelector("#error").textContent')), /模型输出不完整/);
+      assert.deepEqual((await appRequest(versionPath)).body, history);
       await logout();
       await login(accountA);
       tool = await activeTool();
       assert.equal(tool.id, first.id);
       assert.match(await evaluate('document.querySelector("#list").innerText', tool.context), /独立浏览器保存的书/);
+      assert.match(await evaluate(books, tool.context), /已读：并发新增记录/);
+      assert.equal(await evaluate('Boolean(document.querySelector("#read-filter"))', tool.context), true);
+      assert.deepEqual((await appRequest(versionPath)).body, history);
+      evidence.tests.push({ id: 'TEST-007', result: 'passed', sameTool: true, crossBrowserWriteDuringPreview: true,
+        incompatibleDraftRetainedOldVersion: true, filterVerified: true });
+      evidence.tests.push({ id: 'TEST-008', result: 'passed', versions: [2, 1], restoredAfterLogin: true,
+        failedRevisionDidNotPublish: true });
       assert.deepEqual((await library()).items.map(item => item.id).sort(), [first.id, second.id].sort());
       assert.deepEqual((await library()).items.map(item => item.title).sort(),
         ['读书清单', '搬家预算计算器'].sort());
@@ -672,6 +848,7 @@ try {
   if (readPage) evidence.page = await readPage().catch(() => null);
   process.exitCode = 1;
 } finally {
+  if (writeCoverage) await writeCoverage().catch(error => { console.error(error.message); process.exitCode = 1; });
   if (artifacts) {
     evidence.artifacts = artifacts;
     await writeFile(join(artifacts, 'workbench-check.json'), JSON.stringify(evidence, null, 2) + '\n')

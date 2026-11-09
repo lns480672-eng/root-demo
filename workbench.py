@@ -18,11 +18,18 @@ from accounts import ApiError, SESSION_SECONDS, Store
 ROOT = Path(__file__).resolve().parent
 STATIC = {
     "/": ("index.html", "text/html; charset=utf-8"),
+    "/updates": ("index.html", "text/html; charset=utf-8"),
     "/workbench.css": ("workbench.css", "text/css; charset=utf-8"),
     "/workbench.js": ("workbench.js", "text/javascript; charset=utf-8"),
 }
 TOOL_PATH = re.compile(r"/api/tools/(run-[a-z0-9_]{8})")
-TOOL_ACTION = re.compile(r"/api/tools/(run-[a-z0-9_]{8})/(commit|open|data)")
+TOOL_ACTION = re.compile(r"/api/tools/(run-[a-z0-9_]{8})/(commit|open|data|publish|revise)")
+TOOL_VERSIONS = re.compile(r"/api/tools/(run-[a-z0-9_]{8})/versions")
+RELEASES = (
+    ("0.3", "2026-11-09", None, "支持继续修改已有工具、查看工具版本历史，并调整窄屏生成流程。"),
+    ("0.2", "2026-11-09", "v4-44e3da0cae1b", "加入邀请账号、个人工具列表和跨浏览器数据恢复。"),
+    ("0.1", "2026-11-09", "v4-f58378aa55af", "提供自然语言生成、隔离预览、保存和刷新恢复。"),
+)
 SHELL_POLICY = (
     "default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; "
     "img-src data:; connect-src 'self'; frame-src 'none'; frame-ancestors 'none'; "
@@ -108,7 +115,7 @@ def serve(key, port, runs=generate.RUNS):
             self.send_header("Cross-Origin-Resource-Policy", "same-origin")
             if policy:
                 self.send_header("Content-Security-Policy", policy)
-                paths = (*STATIC, "/api/config", "/api/session", "/api/register", "/api/login", "/api/logout",
+                paths = (*STATIC, "/api/config", "/api/releases", "/api/session", "/api/register", "/api/login", "/api/logout",
                          "/api/generate", "/api/tools", "/api/tools/*")
                 allowed = " ".join(f'"http://{host}{path}"' for path in paths)
                 self.send_header("Connection-Allowlist", f"({allowed}); webrtc=block")
@@ -159,9 +166,13 @@ def serve(key, port, runs=generate.RUNS):
             if self.path in assets:
                 _, mime = STATIC[self.path]
                 self.send_bytes(200, assets[self.path], mime,
-                                SHELL_POLICY if self.path == "/" else None)
+                                SHELL_POLICY if self.path in ("/", "/updates") else None)
             elif self.path == "/api/config":
                 self.send_json(200, {"configured": bool(key), "build": build})
+            elif self.path == "/api/releases":
+                items = [{"version": version, "date": date, "build": source or build, "note": note}
+                         for version, date, source, note in RELEASES]
+                self.send_json(200, {"current": items[0]["version"], "items": items})
             elif self.path == "/api/session":
                 try:
                     with store.connection() as db:
@@ -175,15 +186,28 @@ def serve(key, port, runs=generate.RUNS):
                 self.send_json(200, {"allowed": True})
             elif self.path == "/api/tools":
                 self.send_json(200, store.list_tools(self.cookie_token(), self.marker()))
+            elif match := TOOL_VERSIONS.fullmatch(self.path):
+                history = store.versions(self.cookie_token(), self.marker(), match[1])
+                initial = history["items"][-1]
+                if initial["effectiveAt"] is None:
+                    try:
+                        initial["effectiveAt"] = int((runs / match[1] / "app.html").stat().st_mtime)
+                        initial["approximate"] = True
+                    except OSError:
+                        pass
+                self.send_json(200, history)
             elif match := TOOL_PATH.fullmatch(self.path):
                 row = store.get_tool(self.cookie_token(), self.marker(), match[1])
-                self.send_tool(match[1], json.loads(row["entries"]), row["revision"])
+                self.send_tool(row)
             else:
                 self.error(404, "not_found", "页面不存在。")
 
-        def send_tool(self, tool_id, entries, revision):
-            html = self.read_tool_html(tool_id)
-            self.send_json(200, {"id": tool_id, "html": html, "entries": entries, "revision": revision})
+        def send_tool(self, row, draft=None):
+            self.send_json(200, {
+                "id": row["id"], "html": self.read_tool_html(draft or row["run_id"]),
+                "entries": json.loads(row["entries"]), "revision": row["revision"],
+                "version": row["version"] + bool(draft), **({"runId": draft} if draft else {}),
+            })
 
         def read_tool_html(self, tool_id):
             try:
@@ -234,12 +258,23 @@ def serve(key, port, runs=generate.RUNS):
                 self.send_json(200, {"ok": True}, "root_session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0")
                 return
             if match := TOOL_ACTION.fullmatch(self.path):
-                self.send_json(200, store.change_tool(token, self.marker(), match[1], match[2], data))
+                if match[2] == "revise":
+                    self.handle_generation(data, match[1])
+                else:
+                    self.send_json(200, store.change_tool(token, self.marker(), match[1], match[2], data))
                 return
             if self.path != "/api/generate":
                 raise ApiError(404, "not_found", "页面不存在。")
-            with store.connection() as db:
-                store.session(db, token, self.marker())
+            self.handle_generation(data)
+
+        def handle_generation(self, data, tool_id=None):
+            token, marker = self.cookie_token(), self.marker()
+            if tool_id:
+                row = store.get_tool(token, marker, tool_id)
+                store.require_version(data.get("version"), row["version"])
+            else:
+                with store.connection() as db:
+                    store.session(db, token, marker)
             requirement = data.get("requirement")
             requirement = requirement.strip() if isinstance(requirement, str) else ""
             if not 0 < len(requirement) <= 2000 or (key and key in requirement):
@@ -247,17 +282,31 @@ def serve(key, port, runs=generate.RUNS):
             if not key:
                 self.error(503, "key_required", "请在本机服务配置 DeepSeek Key。")
                 return
+            model_input = None
+            if tool_id:
+                previous = self.read_tool_html(row["run_id"])
+                keys = [name for name, _ in json.loads(row["entries"])]
+                model_input = (
+                    "修改现有工具，返回完整 HTML。保留既有功能和每个 localStorage 键及值格式。"
+                    "启动时读取已有记录并渲染，勿在启动时重写或删除已有记录。\n"
+                    f"修改要求：{requirement}\n存储键名：{json.dumps(keys, ensure_ascii=False)}\n"
+                    f"现有 HTML：\n{previous}"
+                )
             if not generation_lock.acquire(blocking=False):
                 self.error(409, "busy", "另一个生成请求正在处理，请稍后重试。")
                 return
             try:
-                run, evidence = generate.run_generation(requirement, key, runs)
+                run, evidence = generate.run_generation(requirement, key, runs, model_input=model_input)
             except OSError:
                 self.error(500, "save_failed", "本机无法保存生成结果，请检查运行目录。")
                 return
             finally:
                 generation_lock.release()
             if evidence["status"] == "generated":
+                if tool_id:
+                    latest = store.revision_draft(token, marker, tool_id, row["version"], run.name, requirement)
+                    self.send_tool(latest, run.name)
+                    return
                 html = self.read_tool_html(run.name)
                 title = ToolTitle()
                 try:
@@ -267,7 +316,7 @@ def serve(key, port, runs=generate.RUNS):
                     # HTMLParser may reject malformed declarations that the browser tolerates.
                     label = requirement
                 store.draft(token, self.marker(), run.name, label)
-                self.send_json(200, {"id": run.name, "html": html, "entries": [], "revision": 0})
+                self.send_json(200, {"id": run.name, "html": html, "entries": [], "revision": 0, "version": 1})
             else:
                 self.error(502, evidence["status"], model_error(evidence))
 

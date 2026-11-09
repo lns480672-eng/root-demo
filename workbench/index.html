@@ -13,11 +13,19 @@
       <span class="elys-wordmark" role="img" aria-label="ROOT">R<span class="elys-counter" aria-hidden="true"></span><span class="elys-counter" aria-hidden="true"></span>T</span>
       <span class="elys-brand-accent" aria-hidden="true"></span>
       <span class="elys-brand-caption">工具工作台</span>
+      <a id="updates-link" class="masthead-link" href="/updates">工作台更新记录</a>
+      <a id="updates-back" class="masthead-link" href="/" hidden>← 返回工作台</a>
       <div id="account" class="account" hidden>
         <span id="account-name"></span>
         <button id="logout" type="button">退出登录</button>
       </div>
     </header>
+    <section id="updates" class="release-history" aria-labelledby="updates-title" hidden>
+      <p class="auth-eyebrow">ROOT / RELEASE NOTES</p>
+      <h1 id="updates-title" tabindex="-1">工作台更新记录</h1>
+      <p id="release-status" role="status"></p>
+      <ol id="release-list" class="version-list"></ol>
+    </section>
     <section id="auth" class="auth-layout" hidden aria-labelledby="auth-intro-title">
       <div id="auth-intro" class="auth-intro">
         <p class="auth-eyebrow">ROOT / WORKSPACE</p>
@@ -71,6 +79,10 @@
           <p class="auth-eyebrow" aria-hidden="true">工具预览</p>
           <span id="preview-status" class="elys-status" role="status">待生成</span>
           <h2 id="preview-title">工具预览</h2>
+          <div class="preview-actions">
+            <button id="revise-tool" type="button" hidden>继续修改</button>
+            <button id="tool-history" type="button" aria-expanded="false" aria-controls="tool-version-panel" hidden>版本历史</button>
+          </div>
         </header>
         <div id="empty" class="elys-empty">
           <h3 id="empty-title">还没有生成工具</h3>
@@ -80,6 +92,12 @@
         <footer class="elys-preview-footer">
           隔离预览 <span id="storage-warning" class="elys-error" role="status" hidden></span>
         </footer>
+      </section>
+      <section id="tool-version-panel" class="tool-version-panel" aria-labelledby="tool-version-title" hidden>
+        <p class="auth-eyebrow" id="version-tool-name"></p>
+        <h2 id="tool-version-title">工具版本历史</h2>
+        <p id="tool-version-status" role="status"></p>
+        <ol id="tool-version-list" class="version-list"></ol>
       </section>
       <section class="elys-composer" aria-labelledby="composer-title">
         <h2 id="composer-title">你想做什么工具？</h2>

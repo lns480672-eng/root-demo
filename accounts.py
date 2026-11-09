@@ -64,6 +64,15 @@ class Store:
                     entries TEXT NOT NULL DEFAULT '[]', revision INTEGER NOT NULL DEFAULT 0
                 );
                 CREATE INDEX IF NOT EXISTS tools_owner ON tools(owner, published);
+                CREATE TABLE IF NOT EXISTS tool_versions (
+                    tool_id TEXT NOT NULL REFERENCES tools(id), version INTEGER NOT NULL,
+                    run_id TEXT NOT NULL UNIQUE, note TEXT NOT NULL, effective_at INTEGER,
+                    PRIMARY KEY (tool_id, version)
+                );
+                CREATE TABLE IF NOT EXISTS revision_drafts (
+                    run_id TEXT PRIMARY KEY, tool_id TEXT NOT NULL REFERENCES tools(id),
+                    base_version INTEGER NOT NULL, note TEXT NOT NULL
+                );
             """)
 
     @contextmanager
@@ -145,8 +154,12 @@ class Store:
 
     @staticmethod
     def owned_tool(db, user, tool_id, published=True):
-        tool = db.execute("SELECT * FROM tools WHERE id=? AND owner=? AND published=?",
-                          (tool_id, user["id"], int(published))).fetchone()
+        tool = db.execute("""
+            SELECT tools.*, coalesce(v.version, 1) AS version, coalesce(v.run_id, tools.id) AS run_id
+            FROM tools LEFT JOIN tool_versions v ON v.tool_id=tools.id
+              AND v.version=(SELECT max(version) FROM tool_versions WHERE tool_id=tools.id)
+            WHERE tools.id=? AND owner=? AND published=?
+        """, (tool_id, user["id"], int(published))).fetchone()
         if tool is None:
             raise ApiError(404, "tool_unavailable", "此工具不可用。")
         return tool
@@ -162,11 +175,70 @@ class Store:
             user = self.session(db, token, marker)
             db.execute("INSERT INTO tools(id, owner, title) VALUES (?,?,?)", (tool_id, user["id"], title))
 
+    @staticmethod
+    def require_version(value, version):
+        if type(value) is not int or value != version:
+            raise ApiError(409, "version_conflict", "工具已更新，请重新打开后再修改。")
+
+    def versions(self, token, marker, tool_id):
+        with self.connection() as db:
+            user = self.session(db, token, marker)
+            self.owned_tool(db, user, tool_id)
+            rows = db.execute("""
+                SELECT version, note, effective_at AS effectiveAt FROM tool_versions
+                WHERE tool_id=? ORDER BY version DESC
+            """, (tool_id,)).fetchall()
+            items = [dict(row) for row in rows] or [
+                {"version": 1, "note": "首次生成", "effectiveAt": None},
+            ]
+            return {"current": items[0]["version"], "items": items}
+
+    def revision_draft(self, token, marker, tool_id, version, run_id, note):
+        with self.connection(write=True) as db:
+            user = self.session(db, token, marker)
+            row = self.owned_tool(db, user, tool_id)
+            self.require_version(version, row["version"])
+            db.execute("INSERT INTO revision_drafts VALUES (?,?,?,?)", (run_id, tool_id, version, note))
+            return dict(row)
+
+    def publish_revision(self, db, row, data):
+        run_id = data.get("runId")
+        if not isinstance(run_id, str):
+            raise ApiError(400, "invalid_draft", "修改候选无效。")
+        revision = data.get("revision")
+        if row["version"] > 1 and run_id == row["run_id"] and type(revision) is int and revision + 1 == row["revision"]:
+            return {"revision": row["revision"], "version": row["version"]}
+        draft = db.execute("SELECT * FROM revision_drafts WHERE run_id=? AND tool_id=?",
+                           (run_id, row["id"])).fetchone()
+        if draft is None:
+            raise ApiError(404, "tool_unavailable", "此修改候选不可用。")
+        self.require_version(draft["base_version"], row["version"])
+        if type(revision) is not int or revision != row["revision"]:
+            raise ApiError(409, "revision_conflict", "已有更新的数据，请用最新记录重新准备预览。")
+        packed = pack_entries(data.get("entries"))
+        if not dict(json.loads(row["entries"])).items() <= dict(data["entries"]).items():
+            raise ApiError(409, "incompatible_data", "新版无法原样保留已有数据，旧版仍可用。")
+        db.execute("INSERT OR IGNORE INTO tool_versions VALUES (?,1,?,'首次生成',NULL)",
+                   (row["id"], row["id"]))
+        version = row["version"] + 1
+        db.execute("INSERT INTO tool_versions VALUES (?,?,?,?,?)",
+                   (row["id"], version, run_id, draft["note"], int(time.time())))
+        db.execute("DELETE FROM revision_drafts WHERE run_id=?", (run_id,))
+        db.execute("UPDATE tools SET entries=?,revision=? WHERE id=?", (packed, revision + 1, row["id"]))
+        db.execute("UPDATE accounts SET latest_tool=? WHERE id=?", (row["id"], row["owner"]))
+        return {"revision": revision + 1, "version": version}
+
     def change_tool(self, token, marker, tool_id, action, data):
         with self.connection(write=True) as db:
             user = self.session(db, token, marker)
             row = self.owned_tool(db, user, tool_id, published=action != "commit")
+            if action == "publish":
+                return self.publish_revision(db, row, data)
             revision = row["revision"]
+            if action == "data":
+                self.require_version(data.get("version", 1), row["version"])
+            if action == "open" and "version" in data:
+                self.require_version(data["version"], row["version"])
             if action in ("commit", "data"):
                 entries = pack_entries(data.get("entries"))
                 if action == "data" and (type(data.get("revision")) is not int or data["revision"] != revision):
@@ -174,6 +246,9 @@ class Store:
                 revision += 1
                 db.execute("UPDATE tools SET entries=?,revision=?,published=1 WHERE id=? AND owner=?",
                            (entries, revision, tool_id, user["id"]))
+            if action == "commit":
+                db.execute("INSERT INTO tool_versions VALUES (?,1,?,'首次生成',?)",
+                           (tool_id, tool_id, int(time.time())))
             if action != "data":
                 db.execute("UPDATE accounts SET latest_tool=? WHERE id=?", (tool_id, user["id"]))
             return {"revision": revision}

@@ -75,7 +75,7 @@ def request_completion(requirement, key):
         return response.status, body
 
 
-def run_generation(requirement, key, runs=RUNS):
+def run_generation(requirement, key, runs=RUNS, *, model_input=None):
     runs.mkdir(mode=0o700, exist_ok=True)
     run = Path(tempfile.mkdtemp(prefix="run-", dir=runs))
     (run / "requirement.txt").write_text(requirement + "\n", encoding="utf-8")
@@ -88,7 +88,8 @@ def run_generation(requirement, key, runs=RUNS):
         "endpoint": ENDPOINT,
     }
     try:
-        evidence["http_status"], body = request_completion(requirement, key)
+        evidence["http_status"], body = request_completion(
+            requirement if model_input is None else model_input, key)
         evidence["elapsed_seconds"] = round(time.perf_counter() - start, 3)
         result = json.loads(body)
         choice = result["choices"][0]

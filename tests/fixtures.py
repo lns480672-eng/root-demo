@@ -74,7 +74,25 @@ def fixture(requirement, key):
         status = 429 if requirement == "回归：模型限流" else 402
         raise urllib.error.HTTPError(generate.ENDPOINT, status, "Fixture HTTP error", None, None)
     name = "reading"
-    if "读书清单" in requirement:
+    if requirement.startswith("修改现有工具"):
+        name = "reading-revision"
+        if "修改要求：回归：修改输出失败\n" in requirement:
+            html = "fixture failure"
+        elif "修改要求：回归：不兼容数据\n" in requirement:
+            html = reading.replace("'books'", "'other-books'").replace("PROBE_URL", json.dumps(sys.argv[4]))
+        else:
+            html = reading.replace(
+                '<ul id="list">',
+                '<label>筛选 <select id="read-filter"><option value="all">全部</option>'
+                '<option value="read">已读</option></select></label><ul id="list">',
+            ).replace(
+                'books.map(book => {', 'books.filter(book => readFilter.value === "all" || book.startsWith("已读：")).map(book => {',
+            ).replace(
+                "const books = ", 'const readFilter = document.querySelector("#read-filter");\nconst books = ',
+            ).replace(
+                "render();\ntry", "readFilter.onchange = render;\nrender();\ntry",
+            ).replace("PROBE_URL", json.dumps(sys.argv[4]))
+    elif "读书清单" in requirement:
         html = reading.replace("PROBE_URL", json.dumps(sys.argv[4]))
     elif "搬家预算计算器" in requirement:
         budget_attempt += 1
