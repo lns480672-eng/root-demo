@@ -183,7 +183,10 @@ def _check_table(candidate, base, requirement):
     if candidate.get("kind") != "table":
         raise _incompatible()
     title, filters = candidate["title"], candidate["filters"]
-    rename = bool(re.search(r"(?:标题|名称|名字)\s*(?:改|换|变|为|叫|设|更)|更名|重命名", requirement))
+    clauses = [clause for clause in re.split(r"[，,。；;！？!?\n]+", requirement)
+               if not re.search(r"不要|无需|不用|不必|不需要|不想|禁止|^别", clause)]
+    rename = any(re.search(r"(?:标题|名称|名字)\s*(?:改|换|变|为|叫|设|更)|更名|重命名", clause)
+                 for clause in clauses)
     if title != current["title"] and filters == current["filters"] and rename and title in requirement:
         return
     if title == current["title"] and filters[:-1] == current["filters"] and filters:
@@ -191,7 +194,10 @@ def _check_table(candidate, base, requirement):
         if index >= len(base["columns"]):
             raise ValueError("bad_table_column")
         name = base["columns"][index]["name"]
-        if not rename and name in requirement and re.search(r"筛选|过滤", requirement):
+        add_filter = any(name in clause and re.search(r"(?:加|添|补|按|支持|可以).*(?:筛选|过滤)", clause)
+                         and not re.search(r"(?:取消|去掉|移除|删除).*(?:筛选|过滤)", clause)
+                         for clause in clauses)
+        if not rename and add_filter:
             return
     raise ApiError(422, "staged_unsupported", "表格工具仅支持新增指定列的精确筛选或只修改标题，原工具仍可用。")
 

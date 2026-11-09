@@ -408,6 +408,9 @@ class StagedHTTP(unittest.TestCase):
             self.assertTrue(saved.pop("applied"))
             self.assertEqual(self.request(tool, auth=owner)[1], saved)
 
+        declined = revise(1, "不要增加负责人筛选")
+        self.wait_task(owner, declined, "unsupported")
+        self.assertEqual(self.request("/api/staged/" + declined + "/candidate", {}, owner)[0], 409)
         publish(revise(1, "增加负责人精确筛选"), 2, "交付跟进板")
         publish(revise(2, "只把标题改成每周交付台账"), 3, "每周交付台账")
         failed = revise(3, "超出范围的负责人筛选")
@@ -422,7 +425,7 @@ class StagedHTTP(unittest.TestCase):
         self.assertEqual(versions["items"][0]["note"], "只把标题改成每周交付台账")
         self.assertEqual(self.request("/api/tools", auth=owner)[1]["items"][0]["title"], "每周交付台账")
         after = self.request("/api/trial", auth=owner)[1]["generation"]
-        self.assertEqual((after["used"] - before["used"], after["totalUsed"] - before["totalUsed"]), (2, 4))
+        self.assertEqual((after["used"] - before["used"], after["totalUsed"] - before["totalUsed"]), (2, 5))
 
     def test_resolve_fences_a_late_publish_without_revoking_the_new_preview(self):
         owner = self.account("staged-resolve")
