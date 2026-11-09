@@ -1,5 +1,6 @@
 // TEST-001 / TEST-002 / TEST-004 / TEST-005 / TEST-006. Default uses a deterministic provider fixture. --live uses DeepSeek.
 import assert from 'node:assert/strict';
+import { verifyTableJourney } from './verify-table-journey.mjs';
 import { verifyStagedFlow, verifyStagedCalculator, verifyStagedRegistration, verifyStagedRevision } from './verify-staged-flow.mjs';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
@@ -401,12 +402,13 @@ try {
   }
   if (stagedFlow) {
     evidence.mode = process.env.ROOT_STAGED_LIVE === '1' ? 'deepseek-staged' : 'fixture-staged';
+    const tableJourney = process.argv.includes('--table-journey');
     const calculator = process.env.ROOT_STAGED_CALCULATOR === '1';
     const registration = process.env.ROOT_STAGED_REGISTRATION === '1';
     const revision = process.env.ROOT_STAGED_REVISION === '1';
-    stage = registration ? 'staged workbench registration' : revision ? 'staged workbench revision' :
+    stage = tableJourney ? 'CHG-029 same imported tool journey' : registration ? 'staged workbench registration' : revision ? 'staged workbench revision' :
       calculator ? 'staged workbench calculator' : 'staged workbench board flow';
-    const verify = registration ? verifyStagedRegistration : revision ? verifyStagedRevision :
+    const verify = tableJourney ? verifyTableJourney : registration ? verifyStagedRegistration : revision ? verifyStagedRevision :
       calculator ? verifyStagedCalculator : verifyStagedFlow;
     const anotherBrowser = async (name, action) => {
       const original = socket;

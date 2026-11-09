@@ -3,9 +3,11 @@ import json
 import os
 from pathlib import Path
 import sys
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from accounts import ApiError, Store
+import assistant_model
 import staged_blueprint
 import staged_revision
 import workbench
@@ -78,5 +80,25 @@ if not key:
     raise SystemExit("Missing configured model key")
 runs = Path(sys.argv[3])
 Store(runs / "workspace.sqlite3").create_invite("fixture-invite", uses=2)
+def revise(stage, requirement, prior, key, admit, record, *, base):
+    if live or base["kind"] != "table":
+        return staged_revision.provide(stage, requirement, prior, key, admit, record, base=base)
+
+    def exchange(payload, reserve, **_):
+        reserve()
+        if requirement.startswith("增加一个"):
+            content = {"addFilter": 1}
+        elif requirement.startswith("只把标题"):
+            content = {"title": "交付行动看板"}
+        else:
+            content = {"addFilter": 999}
+        return {"status": 200, "body": json.dumps({"choices": [{
+            "finish_reason": "stop", "message": {"content": json.dumps(content, ensure_ascii=False)},
+        }]})}
+
+    with patch.object(assistant_model, "_exchange", exchange):
+        return staged_revision.provide(stage, requirement, prior, key, admit, record, base=base)
+
+
 workbench.serve(key, int(sys.argv[2]), runs, staged_enabled=True,
-                staged_provider=staged, staged_revision_provider=staged_revision.provide)
+                staged_provider=staged, staged_revision_provider=revise)

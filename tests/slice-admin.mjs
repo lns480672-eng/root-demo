@@ -7,13 +7,14 @@ export async function verifyAdmin({evaluate, click, pointerClick, type, until, c
   const adminPath = '/api/trial/admin';
   const text = selector => evaluate('document.querySelector(' + JSON.stringify(selector) + ').textContent');
   const open = async () => {
+    if (!await visible('#admin-entry')) await click('#account-name');
     await until(() => visible('#admin-entry'));
     await click('#admin-entry');
     await until(() => visible('#backend'));
   };
   const close = async () => {
     await click('#back-to-workbench');
-    await until(() => visible('#logout'));
+    await until(() => visible('#account-name'));
   };
   const selectMember = `Array.from(document.querySelectorAll(".account")).find(row => row.querySelector("h3").textContent === ${JSON.stringify(member)})`;
   const quota = () => evaluate(selectMember + '.querySelector(".gen-left").textContent');
