@@ -87,21 +87,24 @@ export async function verifyTableJourney({
     }
   }
 
-  await evaluate(`(() => {
-    const original = window.fetch;
-    const taskListGate = new Promise(resolve => { window.resumeTableTaskList = resolve; });
-    window.fetch = async (url, options) => {
-      const response = await original(url, options);
-      if (url === '/api/staged' && window.holdTableTaskList) {
-        window.tableTaskListHeld = true;
-        await taskListGate;
-      }
-      if (String(url).endsWith('/revise') && response.ok) {
-        window.tableJourneyTask = (await response.clone().json()).task;
-      }
-      return response;
-    };
-  })()`);
+  async function monitorRevision() {
+    await evaluate(`(() => {
+      const original = window.fetch;
+      const taskListGate = new Promise(resolve => { window.resumeTableTaskList = resolve; });
+      window.fetch = async (url, options) => {
+        const response = await original(url, options);
+        if (url === '/api/staged' && window.holdTableTaskList) {
+          window.tableTaskListHeld = true;
+          await taskListGate;
+        }
+        if (String(url).endsWith('/revise') && response.ok) {
+          window.tableJourneyTask = (await response.clone().json()).task;
+        }
+        return response;
+      };
+    })()`);
+  }
+  await monitorRevision();
   const filter = 'select[data-table-column-filter="1"]';
   assert.equal(await evaluate(`Boolean(document.querySelector('${filter}'))`, tool.context), false);
   await revise('增加一个按「负责人」精确筛选的下拉框，保留其他功能和数据。', 2);
@@ -167,14 +170,22 @@ export async function verifyTableJourney({
   assert.match((await appRequest(toolPath + '/versions')).body.items[0].note, /恢复自 v1/);
   assert.deepEqual((await appRequest('/api/trial')).body.generation, beforeRestore);
   await screenshot('table-history-restored-v1');
+  if (!live) {
+    await monitorRevision();
+    await revise('增加一个按「负责人」精确筛选的下拉框，恢复后仍保留当前记录。', 5);
+    await assertFilter();
+  }
+  await cdp('Emulation.setDeviceMetricsOverride', {width:390,height:844,deviceScaleFactor:1,mobile:true});
+  assert.equal(await evaluate('document.documentElement.scrollWidth <= innerWidth'), true);
+  await screenshot('table-journey-390');
   const receipts = (await readFile(join(root, 'runs', 'staged-usage.jsonl'), 'utf8')).trim().split('\n').map(JSON.parse);
   evidence.runs = receipts.filter(item => taskIds.includes(item.task));
   if (live) {
     assert.ok(evidence.runs.length >= 2);
     assert.ok(evidence.runs.every(item => item.request_id && item.usage?.total_tokens > 0));
   }
-  evidence.tests.push({id:'CHG-029', result:'passed', live, tool:id, versions:[1,2,3,4],
+  evidence.tests.push({id:'CHG-029', result:'passed', live, tool:id, versions:live ? [1,2,3,4] : [1,2,3,4,5],
     sample:'合成交付跟进表.csv', importedRows:2, addedRows:1, exactFilter:true,
     titleOnlyRetainsFeatures:true, unsafeCandidateRejected:!live, sameToolAfterReload:true,
-    restoredHistoricalVersionRetainsData:true});
+    restoredHistoricalVersionRetainsData:true, revisedAfterRestore:!live});
 }
