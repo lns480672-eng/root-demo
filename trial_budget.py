@@ -62,6 +62,12 @@ class TrialBudget:
                     request_id TEXT NOT NULL,
                     PRIMARY KEY(account, request_id)
                 );
+                CREATE TABLE IF NOT EXISTS model_dispatches (
+                    kind TEXT NOT NULL CHECK(kind IN ('generation', 'analysis')),
+                    id TEXT NOT NULL,
+                    outcome INTEGER CHECK(outcome IN (0, 1)),
+                    PRIMARY KEY(kind, id)
+                );
                 CREATE TABLE IF NOT EXISTS trial_control (
                     id INTEGER PRIMARY KEY CHECK(id=1),
                     paused INTEGER NOT NULL
@@ -137,7 +143,21 @@ class TrialBudget:
         if self.paused(db):
             raise ApiError(503, "model_paused", "模型调用暂时暂停。已有工具和草稿可以继续使用。")
 
-    def reserve_generation(self, db, account_id):
+    @staticmethod
+    def track_dispatch(db, kind, dispatch_id):
+        if dispatch_id is not None and not db.execute(
+            "INSERT INTO model_dispatches(kind, id) VALUES (?, ?) ON CONFLICT(kind, id) DO NOTHING",
+            (kind, dispatch_id),
+        ).rowcount:
+            raise ApiError(409, "dispatch_duplicate", "此模型调用已登记，请重新发起。")
+
+    def finish_dispatch(self, kind, dispatch_id, *, success):
+        """Record the first known provider outcome without creating a new dispatch."""
+        with self.store.connection(write=True) as db:
+            db.execute("UPDATE model_dispatches SET outcome=? WHERE kind=? AND id=? AND outcome IS NULL",
+                       (int(success), kind, dispatch_id))
+
+    def reserve_generation(self, db, account_id, *, dispatch_id=None):
         """Admit one generation dispatch within the caller's authenticated write transaction."""
         self.require_dispatch_enabled(db)
         generation_total, _ = self.totals(db)
@@ -145,12 +165,13 @@ class TrialBudget:
             raise ApiError(429, "generation_total_limit", "试用的总生成额度已用完。已有工具可以继续使用。")
         day, _ = self.day_window()
         self.require_generation_slot(self.account_rows(db, day, account_id).fetchone())
+        self.track_dispatch(db, "generation", dispatch_id)
         db.execute("""
             INSERT INTO generation_usage(account, attempts) VALUES (?, 1)
             ON CONFLICT(account) DO UPDATE SET attempts=attempts+1
         """, (account_id,))
 
-    def reserve(self, token, marker, kind, request_id=None):
+    def reserve(self, token, marker, kind, request_id=None, *, dispatch_id=None):
         """Count one actual dispatch. Call only after preparing a provider request."""
         if kind not in ("generation", "analysis"):
             raise ValueError("未知的模型调用类型。")
@@ -158,7 +179,7 @@ class TrialBudget:
             user = self.store.session(db, token, marker)
             account_id = user["id"]
             if kind == "generation":
-                self.reserve_generation(db, account_id)
+                self.reserve_generation(db, account_id, dispatch_id=dispatch_id)
                 return
             if request_id is not None and db.execute(
                 "SELECT 1 FROM analysis_requests WHERE account=? AND request_id=?", (account_id, request_id),
@@ -172,6 +193,7 @@ class TrialBudget:
                 raise ApiError(429, "analysis_total_limit", "试用的总分析额度已用完。输入和草稿仍可编辑。")
             if own["analysis_used"] >= self.analysis_limit:
                 raise ApiError(429, "analysis_account_limit", "你的今日分析额度已用完。输入和草稿仍可编辑。")
+            self.track_dispatch(db, "analysis", dispatch_id)
             db.execute("""
                 INSERT INTO analysis_usage(account, day, attempts) VALUES (?, ?, 1)
                 ON CONFLICT(account, day) DO UPDATE SET attempts=attempts+1
@@ -196,19 +218,33 @@ class TrialBudget:
             raise ApiError(403, "admin_required", "需要管理员权限。")
         return user["username"]
 
+    @staticmethod
+    def dispatch_summary(db):
+        return {kind: (completed, failed) for kind, completed, failed in db.execute("""
+            SELECT kind, count(*), SUM(outcome=0) FROM model_dispatches
+            WHERE outcome IS NOT NULL GROUP BY kind
+        """)}
+
     def admin_state(self, token, marker):
         with self.store.connection() as db:
             db.execute("BEGIN")
             self.require_admin(db, token, marker)
             day, reset = self.day_window()
             generation_total, analysis_total = self.totals(db)
+            summaries = self.dispatch_summary(db)
+
+            def global_usage(kind, used, limit):
+                completed, failed = summaries.get(kind, (0, 0))
+                return {**usage(used, limit), "completed": completed, "failed": failed,
+                        "failureRate": failed / completed if completed else None}
+
             audit = db.execute("""
                 SELECT id, actor, action, username, amount, created_at AS createdAt
                 FROM trial_audit ORDER BY id DESC LIMIT 100
             """)
             return {
-                "generation": usage(generation_total, self.generation_total_limit),
-                "analysis": usage(analysis_total, self.analysis_total_limit),
+                "generation": global_usage("generation", generation_total, self.generation_total_limit),
+                "analysis": global_usage("analysis", analysis_total, self.analysis_total_limit),
                 "paused": self.paused(db),
                 "accounts": [
                     self.account_view(row, generation_total, analysis_total, reset)

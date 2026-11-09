@@ -23,18 +23,24 @@ class AccountHTTP(unittest.TestCase):
             [sys.executable, "-B", "-c",
              "import sys, workbench, generate, assistant_fixture, json\n"
              "from pathlib import Path\n"
-             "from accounts import Store\n"
+             "from accounts import ApiError, Store\n"
              "def fixture(requirement, key):\n"
              "    if requirement == '额度测试超时': raise TimeoutError('fixture timeout')\n"
+             "    if requirement == '额度统计不完整': return 200, b'{}'\n"
              "    return 200, json.dumps({'id':'fixture-account','model':generate.MODEL,"
              "'choices':[{'finish_reason':'stop','message':{'content':'<!doctype html><html><body>工具</body></html>'}}]}).encode()\n"
              "generate.request_completion = fixture\n"
+             "def analysis(data, key, admit, *, record=None):\n"
+             "    if data.get('idea') == '额度统计不完整':\n"
+             "        admit()\n"
+             "        raise ApiError(502, 'invalid_analysis_result', 'fixture validation error')\n"
+             "    return assistant_fixture.provider(data, key, admit, record=record)\n"
              "runs = Path(sys.argv[1])\n"
              "store = Store(runs / 'workspace.sqlite3')\n"
              "store.register({'username':'trial-admin','password':'fixture-test-password!',"
              "'invite':store.create_invite()})\n"
              "workbench.serve('fixture-key', 0, runs, generation_limits=(5, 100), "
-             "analysis_limits=(6, 100), admin_usernames=('trial-admin',), analysis_provider=assistant_fixture.provider)",
+             "analysis_limits=(6, 100), admin_usernames=('trial-admin',), analysis_provider=analysis)",
              cls.runs], stdout=subprocess.PIPE, text=True,
         )
         cls.addClassCleanup(cls.server.stdout.close)
@@ -95,6 +101,55 @@ class AccountHTTP(unittest.TestCase):
         status, current, _ = self.request(balance, cookie=user, marker=marker)
         self.assertEqual(status, 200)
         self.assertEqual((current["generation"]["remaining"], current["analysis"]["remaining"]), (2, 5))
+
+    def test_trial_admin_model_outcomes_follow_actual_dispatches(self):
+        # TEST-017-STAT. Exercise provider-backed handlers rather than seeding outcome totals.
+        self.assertEqual(self.register("stats-user", self.store.create_invite())[0], 201)
+        admin, admin_marker = self.login("trial-admin")
+        user, marker = self.login("stats-user")
+        manage = "/api/trial/admin"
+        generate = "/api/generate"
+        analyze = "/api/assistant/analyze"
+
+        def snapshot():
+            status, body, _ = self.request(manage, cookie=admin, marker=admin_marker)
+            self.assertEqual(status, 200)
+            return body
+
+        def analyze_input(idea):
+            return {"step": "start", "idea": idea, "requestId": str(uuid4())}
+
+        def counts(body, kind):
+            item = body[kind]
+            self.assertTrue({"used", "completed", "failed", "failureRate"} <= set(item),
+                            f"{kind} must expose model outcomes")
+            return item["used"], item["completed"], item["failed"]
+
+        initial = snapshot()
+        self.assertEqual(self.request(manage, cookie=user, marker=marker)[0], 403)
+        self.assertEqual(self.request(manage, {"action": "pause"}, admin, admin_marker)[0], 200)
+        self.addCleanup(self.request, manage, {"action": "resume"}, admin, admin_marker)
+        self.assertEqual(self.request(generate, {"requirement": "不应派发"}, user, marker)[0], 503)
+        self.assertEqual(self.request(analyze, analyze_input("不应派发"), user, marker)[0], 503)
+        self.assertEqual(snapshot()["generation"], initial["generation"])
+        self.assertEqual(snapshot()["analysis"], initial["analysis"])
+        self.assertEqual(self.request(manage, {"action": "resume"}, admin, admin_marker)[0], 200)
+        self.assertEqual(self.request(analyze, analyze_input(" "), user, marker)[0], 400)
+
+        for requirement, status in (("读书清单", 200), ("额度测试超时", 502), ("额度统计不完整", 502)):
+            self.assertEqual(self.request(generate, {"requirement": requirement}, user, marker)[0], status)
+        valid_analysis = analyze_input("记录项目跟进")
+        self.assertEqual(self.request(analyze, valid_analysis, user, marker)[0], 200)
+        self.assertEqual(self.request(analyze, valid_analysis, user, marker)[0], 409)
+        self.assertEqual(self.request(analyze, analyze_input("额度统计不完整"), user, marker)[0], 502)
+        current = snapshot()
+        for kind, expected in (("generation", (3, 3, 2)), ("analysis", (2, 2, 1))):
+            before = counts(initial, kind)
+            after = counts(current, kind)
+            self.assertEqual(tuple(now - old for now, old in zip(after, before)), expected)
+            self.assertAlmostEqual(current[kind]["failureRate"], after[2] / after[1])
+        own = self.request("/api/trial", cookie=user, marker=marker)[1]
+        self.assertEqual(own["generation"]["used"], 0)
 
     def test_initial_publication_readback_fences_late_commit_and_keeps_single_charge(self):
         self.assertEqual(self.register("initial-recover", self.store.create_invite())[0], 201)

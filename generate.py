@@ -76,7 +76,7 @@ def request_completion(requirement, key):
         return response.status, body
 
 
-def run_generation(requirement, key, runs=RUNS, *, model_input=None, admit=None):
+def run_generation(requirement, key, runs=RUNS, *, model_input=None, admit=None, record_outcome=None):
     runs.mkdir(mode=0o700, exist_ok=True)
     run = Path(tempfile.mkdtemp(prefix="run-", dir=runs))
     requirement_file = run / "requirement.txt"
@@ -97,6 +97,7 @@ def run_generation(requirement, key, runs=RUNS, *, model_input=None, admit=None)
         "thinking": "disabled",
         "endpoint": ENDPOINT,
     }
+    model_succeeded = False
     try:
         evidence["http_status"], body = request_completion(
             requirement if model_input is None else model_input, key)
@@ -122,6 +123,7 @@ def run_generation(requirement, key, runs=RUNS, *, model_input=None, admit=None)
         elif key in html:
             evidence["status"] = "credential_in_output"
         else:
+            model_succeeded = True
             (run / "app.html").write_text(html + "\n", encoding="utf-8")
             evidence["status"] = "generated"
     except urllib.error.HTTPError as exc:
@@ -134,8 +136,12 @@ def run_generation(requirement, key, runs=RUNS, *, model_input=None, admit=None)
         evidence.setdefault("elapsed_seconds", round(time.perf_counter() - start, 3))
         evidence_path = run / "generation.json"
         pending = evidence_path.with_suffix(".tmp")
-        pending.write_text(json.dumps(evidence, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-        os.replace(pending, evidence_path)
+        try:
+            pending.write_text(json.dumps(evidence, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            os.replace(pending, evidence_path)
+        finally:
+            if record_outcome is not None and "status" in evidence:
+                record_outcome(model_succeeded)
     return run, evidence
 
 

@@ -78,6 +78,41 @@ class TrialBudgetTests(unittest.TestCase):
         current = self.budget.balance(*self.alice)["generation"]
         self.assertEqual((current["used"], current["totalUsed"]), (0, 1))
 
+    def test_admin_outcomes_ignore_unknown_legacy_and_rejected_dispatches_after_restart(self):
+        # TEST-017-STAT. Results are per dispatch and survive a trial-budget restart.
+        self.budget = self.make_budget(generation=(5, 100), analysis=(6, 100))
+        initial = self.budget.admin_state(*self.admin)
+        for kind in ("generation", "analysis"):
+            self.assertEqual(initial[kind], {
+                "used": 0, "limit": 100, "remaining": 100,
+                "completed": 0, "failed": 0, "failureRate": None,
+            })
+        self.budget.reserve(*self.alice, "generation")  # pre-migration usage has no known outcome
+        self.budget.reserve(*self.alice, "generation", dispatch_id="in-flight")
+        self.budget.reserve(*self.alice, "generation", dispatch_id="valid")
+        self.budget.finish_dispatch("generation", "valid", success=True)
+        self.budget.finish_dispatch("generation", "valid", success=False)
+        self.budget.reserve(*self.alice, "analysis", "first-analysis", dispatch_id="failed")
+        self.budget.finish_dispatch("analysis", "failed", success=False)
+        self.now += 2
+        self.budget.admin_action(*self.admin, {"action": "pause"})
+        with self.assertRaises(ApiError) as error:
+            self.budget.reserve(*self.alice, "generation", dispatch_id="paused")
+        self.assertEqual(error.exception.code, "model_paused")
+        self.budget.finish_dispatch("generation", "paused", success=False)
+        restarted = self.make_budget(generation=(5, 100), analysis=(6, 100))
+        state = restarted.admin_state(*self.admin)
+        self.assertTrue(state["paused"])
+        self.assertEqual(state["generation"], {
+            "used": 3, "limit": 100, "remaining": 97,
+            "completed": 1, "failed": 0, "failureRate": 0.0,
+        })
+        self.assertEqual(state["analysis"], {
+            "used": 1, "limit": 100, "remaining": 99,
+            "completed": 1, "failed": 1, "failureRate": 1.0,
+        })
+        self.assertEqual(restarted.balance(*self.alice)["analysis"]["used"], 0)
+
     def test_analysis_resets_at_beijing_midnight_and_global_total_does_not_reset(self):
         self.budget.reserve(*self.alice, "analysis", "old")
         before = self.budget.balance(*self.alice)["analysis"]

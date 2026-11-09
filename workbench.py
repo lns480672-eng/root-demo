@@ -12,6 +12,7 @@ from html.parser import HTMLParser
 from http.cookies import CookieError, SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from uuid import uuid4
 
 import generate
 import assistant_fixture
@@ -428,9 +429,23 @@ def serve(key, port, runs=generate.RUNS, *, generation_limits=(5, 30), analysis_
                 except OSError:
                     pass
 
+            dispatch_id = uuid4().hex
+            admitted = False
+
+            def admit():
+                nonlocal admitted
+                budget.reserve(token, marker, "analysis", request_id=request_id, dispatch_id=dispatch_id)
+                admitted = True
+
             try:
-                result = analysis_provider(data, key, lambda: budget.reserve(
-                    token, marker, "analysis", request_id=request_id), record=receipt)
+                try:
+                    result = analysis_provider(data, key, admit, record=receipt)
+                except ApiError:
+                    if admitted:
+                        budget.finish_dispatch("analysis", dispatch_id, success=False)
+                    raise
+                if admitted:
+                    budget.finish_dispatch("analysis", dispatch_id, success=True)
                 with store.connection() as db:
                     store.session(db, token, marker)
             finally:
@@ -469,9 +484,13 @@ def serve(key, port, runs=generate.RUNS, *, generation_limits=(5, 30), analysis_
             if not model_lock.acquire(blocking=False):
                 self.error(409, "busy", "另一个生成请求正在处理，请稍后重试。")
                 return
+            dispatch_id = uuid4().hex
             try:
-                run, evidence = generate.run_generation(requirement, key, runs, model_input=model_input,
-                                                         admit=lambda: budget.reserve(token, marker, "generation"))
+                run, evidence = generate.run_generation(
+                    requirement, key, runs, model_input=model_input,
+                    admit=lambda: budget.reserve(token, marker, "generation", dispatch_id=dispatch_id),
+                    record_outcome=lambda success: budget.finish_dispatch("generation", dispatch_id, success=success),
+                )
             except OSError:
                 self.error(500, "save_failed", "本机无法保存生成结果，请检查运行目录。")
                 return

@@ -35,5 +35,26 @@ class GenerationContract(unittest.TestCase):
                 self.assertNotIn(KEY, (run / "generation.json").read_text(encoding="utf-8"))
 
 
+    def test_model_outcome_stays_successful_when_saving_the_valid_html_fails(self):
+        # TEST-017-STAT. Filesystem failures after model validation are excluded from model failures.
+        response = {"id": "unit-test", "model": generate.MODEL,
+                    "choices": [{"message": {"content": HTML}, "finish_reason": "stop"}]}
+        write = Path.write_text
+
+        def fail_html(path, data, **kwargs):
+            if path.name == "app.html":
+                raise OSError("fixture disk error")
+            return write(path, data, **kwargs)
+
+        outcomes = []
+        with tempfile.TemporaryDirectory() as folder, patch.object(
+            generate, "request_completion", return_value=(200, json.dumps(response).encode())
+        ), patch.object(Path, "write_text", fail_html):
+            run, evidence = generate.run_generation("新需求", KEY, Path(folder), record_outcome=outcomes.append)
+            self.assertEqual(evidence["status"], "request_failed")
+            self.assertFalse((run / "app.html").exists())
+        self.assertEqual(outcomes, [True])
+
+
 if __name__ == "__main__":
     unittest.main()
