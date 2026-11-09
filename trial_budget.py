@@ -133,6 +133,23 @@ class TrialBudget:
         if row["generation_used"] >= self.generation_limit + row["generation_grant"]:
             raise ApiError(429, "generation_account_limit", "你的生成额度已用完。已有工具可以继续使用。")
 
+    def require_dispatch_enabled(self, db):
+        if self.paused(db):
+            raise ApiError(503, "model_paused", "模型调用暂时暂停。已有工具和草稿可以继续使用。")
+
+    def reserve_generation(self, db, account_id):
+        """Admit one generation dispatch within the caller's authenticated write transaction."""
+        self.require_dispatch_enabled(db)
+        generation_total, _ = self.totals(db)
+        if generation_total >= self.generation_total_limit:
+            raise ApiError(429, "generation_total_limit", "试用的总生成额度已用完。已有工具可以继续使用。")
+        day, _ = self.day_window()
+        self.require_generation_slot(self.account_rows(db, day, account_id).fetchone())
+        db.execute("""
+            INSERT INTO generation_usage(account, attempts) VALUES (?, 1)
+            ON CONFLICT(account) DO UPDATE SET attempts=attempts+1
+        """, (account_id,))
+
     def reserve(self, token, marker, kind, request_id=None):
         """Count one actual dispatch. Call only after preparing a provider request."""
         if kind not in ("generation", "analysis"):
@@ -140,24 +157,17 @@ class TrialBudget:
         with self.store.connection(write=True) as db:
             user = self.store.session(db, token, marker)
             account_id = user["id"]
-            if kind == "analysis" and request_id is not None and db.execute(
+            if kind == "generation":
+                self.reserve_generation(db, account_id)
+                return
+            if request_id is not None and db.execute(
                 "SELECT 1 FROM analysis_requests WHERE account=? AND request_id=?", (account_id, request_id),
             ).fetchone() is not None:
                 raise ApiError(409, "analysis_duplicate", "此分析请求已提交，请等待结果或重新发起。")
-            if self.paused(db):
-                raise ApiError(503, "model_paused", "模型调用暂时暂停。已有工具和草稿可以继续使用。")
+            self.require_dispatch_enabled(db)
             day, _ = self.day_window()
             own = self.account_rows(db, day, account_id).fetchone()
-            generation_total, analysis_total = self.totals(db)
-            if kind == "generation":
-                if generation_total >= self.generation_total_limit:
-                    raise ApiError(429, "generation_total_limit", "试用的总生成额度已用完。已有工具可以继续使用。")
-                self.require_generation_slot(own)
-                db.execute("""
-                    INSERT INTO generation_usage(account, attempts) VALUES (?, 1)
-                    ON CONFLICT(account) DO UPDATE SET attempts=attempts+1
-                """, (account_id,))
-                return
+            _, analysis_total = self.totals(db)
             if analysis_total >= self.analysis_total_limit:
                 raise ApiError(429, "analysis_total_limit", "试用的总分析额度已用完。输入和草稿仍可编辑。")
             if own["analysis_used"] >= self.analysis_limit:

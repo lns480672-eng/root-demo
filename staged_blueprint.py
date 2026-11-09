@@ -238,11 +238,14 @@ def provide(stage, requirement, previous, key, admit, record=None):
             raise ApiError(503, "staged_unconfigured", "尚未配置生成服务。")
         if not isinstance(requirement, str) or not 0 < len(requirement.strip()) <= 2_000 or key in requirement:
             raise ApiError(400, "invalid_staged_requirement", "请输入有效需求并移除凭据。")
-        request = {"requirement": requirement}
+        request = {"requirement": requirement, "current_stage": stage}
         if stage != "spec":
             spec = read_artifact(previous.get("spec.json"))
             validate_spec(spec)
             request["accepted_spec"] = spec
+        if stage == "export":
+            request["current_task"] = "只设计 CSV，返回恰好两个键：columns 和 label。其他功能已由独立阶段实现。"
+            request["allowed_columns"] = [field["id"] for field in spec["fields"]]
         text = json.dumps(request, ensure_ascii=False)
         if key in text:
             raise ApiError(400, "invalid_staged_requirement", "请输入有效需求并移除凭据。")
@@ -275,8 +278,11 @@ def provide(stage, requirement, previous, key, admit, record=None):
     except ApiError as error:
         evidence["status"] = error.code
         raise
-    except (AttributeError, IndexError, KeyError, RecursionError, TypeError, ValueError):
+    except (AttributeError, IndexError, KeyError, RecursionError, TypeError, ValueError) as error:
         evidence["status"] = "invalid_staged_result"
+        code = str(error)
+        if re.fullmatch(r"(?:bad|invalid|duplicate|incomplete)_[a-z_]{1,40}", code):
+            evidence["validation"] = code
         raise ApiError(502, "invalid_staged_result", "本阶段返回的配置不完整，可以继续生成。") from None
     finally:
         if record is not None:

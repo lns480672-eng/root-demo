@@ -57,6 +57,27 @@ class TrialBudgetTests(unittest.TestCase):
         self.failure("generation_total_limit", self.budget.reserve, *self.bob, "generation")
         self.assertEqual(self.budget.balance(*self.alice)["generation"]["used"], 1)
 
+    def test_generation_admission_shares_the_task_dispatch_transaction(self):
+        with self.store.connection(write=True) as db:
+            db.execute("CREATE TABLE task_dispatches (task TEXT PRIMARY KEY)")
+
+        with self.assertRaisesRegex(RuntimeError, "dispatch interrupted"):
+            with self.store.connection(write=True) as db:
+                owner = self.store.session(db, *self.alice)["id"]
+                db.execute("INSERT INTO task_dispatches VALUES ('task-a')")
+                self.budget.reserve_generation(db, owner)
+                raise RuntimeError("dispatch interrupted")
+
+        self.assertEqual(self.budget.balance(*self.alice)["generation"]["totalUsed"], 0)
+        with self.store.connection(write=True) as db:
+            self.assertEqual(db.execute("SELECT count(*) FROM task_dispatches").fetchone()[0], 0)
+            owner = self.store.session(db, *self.alice)["id"]
+            db.execute("INSERT INTO task_dispatches VALUES ('task-a')")
+            self.budget.reserve_generation(db, owner)
+
+        current = self.budget.balance(*self.alice)["generation"]
+        self.assertEqual((current["used"], current["totalUsed"]), (0, 1))
+
     def test_analysis_resets_at_beijing_midnight_and_global_total_does_not_reset(self):
         self.budget.reserve(*self.alice, "analysis", "old")
         before = self.budget.balance(*self.alice)["analysis"]
