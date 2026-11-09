@@ -286,7 +286,7 @@ def _decode_response(envelope, key, evidence, *, limit=MAX_ARTIFACT_BYTES):
     return payload
 
 
-def provide(stage, requirement, previous, key, admit, record=None):
+def provide(stage, requirement, previous, key, admit, record=None, *, revision_context=None, accept=None):
     """Request one stage, admitting its usage immediately before dispatch."""
     if stage not in RULES and stage != "implementation":
         raise ValueError("unexpected_stage")
@@ -319,6 +319,8 @@ def provide(stage, requirement, previous, key, admit, record=None):
             )
             request["allowed_columns"] = [field["id"] for field in spec["fields"]]
             request["backup_available"] = "entry.json" in previous and permits_backup(previous)
+        if revision_context is not None:
+            request["revision_source"] = revision_context
         text = json.dumps(request, ensure_ascii=False)
         if key in text:
             raise ApiError(400, "invalid_staged_requirement", "请输入有效需求并移除凭据。")
@@ -328,6 +330,11 @@ def provide(stage, requirement, previous, key, admit, record=None):
             system, tokens, output_limit = RULES["spec"], 1200, MAX_ARTIFACT_BYTES
         else:
             system, tokens, output_limit = SYSTEM + "\n" + RULES[stage], 550, MAX_ARTIFACT_BYTES
+        if revision_context is not None:
+            system += ("\n这是修改现有工具。保持 revision_source.kind 对应的计划类型。"
+                       "只修改需求指定的行为，沿用旧配置与实现中其余功能和数据格式。"
+                       "台账字段 ID、类型和已有选项必须保留，新增字段只能可选。"
+                       "程序继续用旧 localStorage 键与数据格式，初始化读取、显示已有记录，不得覆盖。")
         body = {
             "model": MODEL,
             "messages": [
@@ -352,6 +359,8 @@ def provide(stage, requirement, previous, key, admit, record=None):
             raise
         result = _decode_response(envelope, key, evidence, limit=output_limit)
         validate(stage, result, previous)
+        if accept is not None:
+            accept(result)
         evidence["status"] = "ok"
         return result
     except ApiError as error:

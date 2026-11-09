@@ -5,7 +5,7 @@ const fields = new Map(spec.fields.map(field => [field.id, field]));
 const storageKey = 'root-structured-records-v1';
 const maxNumber = 1_000_000_000;
 const maxText = 300;
-let records = JSON.parse(localStorage.getItem(storageKey) || '[]');
+let records = JSON.parse(localStorage.getItem(storageKey) || '[]').map(fillOptionalFields);
 let lastRecordId = records.reduce((maximum, row) => Math.max(maximum, Number(row.id) || 0), 0);
 let editingId = null;
 let deletingId = null;
@@ -52,6 +52,11 @@ function withLabel(text, input) {
   const label = el('label', text);
   label.append(input);
   return label;
+}
+
+function fillOptionalFields(record) {
+  const missing = spec.fields.filter(field => !field.required && !Object.hasOwn(record, field.id));
+  return missing.length ? {...record, ...Object.fromEntries(missing.map(field => [field.id, '']))} : record;
 }
 
 function validValue(field, value) {
@@ -123,7 +128,7 @@ function resetEditor() {
 
 function startEditing(record) {
   editingId = record.id;
-  for (const [id, input] of inputs) input.value = record[id];
+  for (const [id, input] of inputs) input.value = record[id] ?? '';
   add.textContent = '保存修改';
   cancelEdit.hidden = false;
   error.textContent = '';
@@ -235,8 +240,6 @@ function installBackup() {
   const format = 'root-structured-backup';
   const version = 1;
   const schema = spec.fields.map(({id, type, required, options: values}) => [id, type, required, values]);
-  const schemaKey = JSON.stringify(schema);
-  const keys = ['id', ...fields.keys()];
   const invalid = '备份文件无效或不适用于当前工具。';
   let selection = 0;
   let pending = null;
@@ -301,6 +304,25 @@ function installBackup() {
     status.textContent = message;
   }
 
+  function compatibleFields(source) {
+    if (!Array.isArray(source) || !source.length || source.length > fields.size) throw new Error(invalid);
+    const ids = new Set();
+    for (const shape of source) {
+      if (!Array.isArray(shape) || shape.length !== 4) throw new Error(invalid);
+      const [id, type, required, options] = shape;
+      const field = fields.get(id);
+      if (!field || ids.has(id) || type !== field.type || typeof required !== 'boolean' ||
+          (field.required && !required) || !Array.isArray(options) ||
+          (field.type === 'choice' && options.length < 2) ||
+          JSON.stringify(field.options.filter(option => options.includes(option))) !== JSON.stringify(options)) {
+        throw new Error(invalid);
+      }
+      ids.add(id);
+    }
+    if (spec.fields.some(field => field.required && !ids.has(field.id))) throw new Error(invalid);
+    return ['id', ...ids];
+  }
+
   function parse(content) {
     let value;
     try {
@@ -309,21 +331,24 @@ function installBackup() {
       throw new Error(invalid);
     }
     if (!value || typeof value !== 'object' || Object.keys(value).length !== 4 ||
-        value.format !== format || value.version !== version || JSON.stringify(value.schema) !== schemaKey ||
-        !Array.isArray(value.records)) throw new Error(invalid);
+        value.format !== format || value.version !== version || !Array.isArray(value.records)) {
+      throw new Error(invalid);
+    }
+    const keys = compatibleFields(value.schema);
     const ids = new Set();
-    for (const record of value.records) {
+    return value.records.map(record => {
       if (!record || typeof record !== 'object' || Array.isArray(record) ||
           Object.keys(record).length !== keys.length || !keys.every(key => Object.hasOwn(record, key)) ||
           typeof record.id !== 'string' || !/^[1-9]\d{0,15}$/.test(record.id) ||
           !Number.isSafeInteger(Number(record.id)) || ids.has(record.id)) throw new Error(invalid);
+      const row = fillOptionalFields(record);
       for (const [id, field] of fields) {
-        if (!validValue(field, record[id])) throw new Error(invalid);
+        if (!validValue(field, row[id])) throw new Error(invalid);
       }
-      if (board && !boardColumns.has(record[entry.board])) throw new Error(invalid);
-      ids.add(record.id);
-    }
-    return value.records;
+      if (board && !boardColumns.has(row[entry.board])) throw new Error(invalid);
+      ids.add(row.id);
+      return row;
+    });
   }
 
   fileInput.addEventListener('change', async () => {
