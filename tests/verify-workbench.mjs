@@ -532,6 +532,12 @@ try {
     for (const id of ['welcome-fast', 'welcome-direct', 'welcome-idea', 'guide-skip']) assert.equal(await visible('#' + id), true);
     assert.equal(await visible('#requirement'), false);
     await guideAt('#welcome-fast');
+    assert.equal(await evaluate('document.activeElement.id'), 'guide-title');
+    for (const target of ['welcome-fast', 'welcome-direct']) {
+      await cdp('Input.dispatchKeyEvent', {type:'rawKeyDown',key:'Tab',code:'Tab',windowsVirtualKeyCode:9});
+      await cdp('Input.dispatchKeyEvent', {type:'keyUp',key:'Tab',code:'Tab',windowsVirtualKeyCode:9});
+      assert.equal(await evaluate('document.activeElement.id'), target);
+    }
     await screenshot('first-visit');
     await click('#welcome-direct');
     await guideAt('#requirement');
@@ -692,7 +698,7 @@ try {
     assert.equal(await visible('#workspace-guide'), false, '完成引导后重新进入不应自动打开');
     evidence.tests.push({ id: 'TEST-016-03/04', result: 'passed', autoShownOncePerAccountAcrossBrowsers: true,
       secondFreshAccountShown: true, skippedAndReopened: true, sampleUncounted: true, firstSavedEndsGuide: true,
-      reducedMotionAndNarrowScreen: true, skipRetainsInput: true, foundSameTool: true, dismissedAfterReload: true });
+      reducedMotionAndNarrowScreen: true, keyboardPaths: true, skipRetainsInput: true, foundSameTool: true, dismissedAfterReload: true });
   }
   evidence.tests.push({ id: 'TEST-002', result: 'passed', tool: first.id, record: sample,
     reloadedDocument: true, isolationFixtureChecked: !live });

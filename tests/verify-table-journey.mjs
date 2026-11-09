@@ -132,14 +132,34 @@ export async function verifyTableJourney({
   assert.equal(await version(), 3);
   assert.equal(await evaluate('document.querySelector("h1").textContent', tool.context), title);
   await assertFilter();
+  await screenshot('table-journey-restored');
+
+  const beforeRestore = (await appRequest('/api/trial')).body.generation;
+  const beforeRestoreLoader = tool.loader;
+  await click('#tool-history');
+  await until(() => visible('#tool-version-panel button[data-restore-version="1"]'));
+  await click('#tool-version-panel button[data-restore-version="1"]');
+  await until(() => visible('#restore-version-dialog'));
+  await click('#restore-version-confirm');
+  await until(async () => (await version()) === 4);
+  tool = await until(async () => {
+    const current = await activeTool().catch(() => null);
+    return current?.id === id && current.loader !== beforeRestoreLoader && current;
+  });
+  assert.deepEqual(await readRows(), [...seed, extra]);
+  assert.equal(await evaluate(`Boolean(document.querySelector('${filter}'))`, tool.context), false);
+  assert.equal(await evaluate('document.querySelector("h1").textContent', tool.context), '交付跟进板');
+  assert.match((await appRequest(toolPath + '/versions')).body.items[0].note, /恢复自 v1/);
+  assert.deepEqual((await appRequest('/api/trial')).body.generation, beforeRestore);
+  await screenshot('table-history-restored-v1');
   const receipts = (await readFile(join(root, 'runs', 'staged-usage.jsonl'), 'utf8')).trim().split('\n').map(JSON.parse);
   evidence.runs = receipts.filter(item => taskIds.includes(item.task));
   if (live) {
     assert.ok(evidence.runs.length >= 2);
     assert.ok(evidence.runs.every(item => item.request_id && item.usage?.total_tokens > 0));
   }
-  evidence.tests.push({id:'CHG-029', result:'passed', live, tool:id, versions:[1,2,3],
+  evidence.tests.push({id:'CHG-029', result:'passed', live, tool:id, versions:[1,2,3,4],
     sample:'合成交付跟进表.csv', importedRows:2, addedRows:1, exactFilter:true,
-    titleOnlyRetainsFeatures:true, unsafeCandidateRejected:!live, sameToolAfterReload:true});
-  await screenshot('table-journey-restored');
+    titleOnlyRetainsFeatures:true, unsafeCandidateRejected:!live, sameToolAfterReload:true,
+    restoredHistoricalVersionRetainsData:true});
 }

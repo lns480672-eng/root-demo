@@ -240,7 +240,10 @@ button:enabled { cursor: pointer; }
   justify-content: space-between;
   gap: 8px;
 }
-#workspace-guide { grid-area: content; align-self: start; padding: clamp(16px, 4vw, 34px); }
+#workspace-guide {
+  grid-area: content; align-self: start; padding: clamp(16px, 4vw, 34px);
+  border: 1px solid var(--elys-line); border-radius: 20px; background: #f9f9fd;
+}
 #guide-title:focus { outline: none; }
 #workspace-guide h1 { margin-block: 6px 14px; font: 600 clamp(25px, 4vw, 38px)/1.2 var(--elys-serif); }
 .welcome-routes { display: grid; gap: 8px; margin-block: 16px; }
