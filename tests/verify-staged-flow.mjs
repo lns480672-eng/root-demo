@@ -21,6 +21,8 @@ export async function verifyStagedFlow(ctx) {
   if (await visible('#workspace-guide')) await click('#guide-skip');
   await generate('做一份简单读书清单，新增书名并保存。');
   const old = await activeTool();
+  const used = async () => (await appRequest('/api/trial')).body.generation.used;
+  const before = await used();
   const sandbox = () => evaluate('document.querySelector("#preview iframe[data-tool]").getAttribute("sandbox")');
   assert.equal(await sandbox(), 'allow-scripts allow-forms');
   await click('#new-tool');
@@ -35,9 +37,13 @@ export async function verifyStagedFlow(ctx) {
   if (!stagedLive) {
     await until(async () => (await task())?.state === 'failed');
     assert.deepEqual((await task()).completed, ['spec']);
+    assert.equal((await task()).stage, 'entry');
+    assert.equal((await task()).reason, 'invalid_staged_result');
+    assert.equal(await used(), before);
     const second = await appRequest('/api/generate', {requirement:requirement + ' 另一个任务。', requestId:'2'.repeat(32)});
     assert.equal(second.status, 202);
     await until(async () => (await appRequest(taskPath + second.body.task.id)).body.task.state === 'failed');
+    assert.equal(await used(), before);
     await cdp('Page.reload');
     await until(() => evaluate('document.documentElement.dataset.ready === "true"'));
     assert.equal((await activeTool()).id, old.id);
@@ -85,6 +91,7 @@ export async function verifyStagedFlow(ctx) {
   }, 12000);
   assert.equal(await sandbox(), 'allow-scripts allow-forms allow-downloads');
   assert.equal((await library()).items.length, 2);
+  assert.equal(await used(), before + 1);
   const inBoard = expression => evaluate(expression, board.context);
   const count = () => inBoard('document.querySelectorAll("#record-board article").length');
   const columns = await inBoard('Array.from(document.querySelectorAll("[data-board-column]"), col => col.dataset.boardColumn)');
@@ -182,6 +189,11 @@ export async function verifyStagedFlow(ctx) {
   assert.equal(evidence.runs.filter(item => item.stage === 'spec').length, 1);
   const expected = stagedLive ? ['spec','entry'] : ['spec','entry','filters','summary','export'];
   assert.deepEqual(evidence.runs.filter(item => item.status === 'ok').map(item => item.stage), expected);
+  if (!stagedLive) {
+    const rejection = evidence.runs.find(item => item.validation === 'bad_field_reference');
+    assert.equal(rejection?.reference_slot, 'board');
+    assert.equal(rejection.reference_problem, 'unknown_id');
+  }
   if (stagedLive) assert.ok(evidence.runs.every(item => item.request_id && item.usage?.total_tokens > 0));
   evidence.tests.push('刷新恢复同一看板和状态，父页与外部探针隔离');
   await screenshot('staged-board-restored');

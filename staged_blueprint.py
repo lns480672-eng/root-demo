@@ -43,6 +43,7 @@ TABLE_REVISION_SYSTEM = """为现有导表工具识别一次明确的局部修�
 同一需求同时改多个地方、字段不明确、筛选已存在、删除、排序或其他操作时返回 {"unsupported":true}。
 只输出 JSON 对象，不得输出说明、代码、额外键或整份工具。"""
 TYPES = {"text", "date", "integer", "choice"}
+SORTABLE_TYPES = {"date", "integer"}
 RULES = {
     "spec": """本阶段只写 JSON 规格。先判断核心结果是什么，再选能保留业务功能的计划。
 如果核心结果是用户反复新增、查看或持久保存的一组独立记录，用 ledger，即使只需录入和明细。
@@ -60,6 +61,9 @@ ledger 的 choice 选项保留原文和顺序，至少两个；其余类型 opti
 只输出选定形状，不输出解释或实现。""",
     "entry": """{"form":["field_id"],"columns":["field_id"],"sort":{"field":"field_id","direction":"desc"},
 "edit_choice":{"field":"field_id","initial":"选项原文"}}。
+字段引用必须逐字复制 entry_fields.ids 中的 ID，不使用字段标签、序号、自拟别名或内置记录 ID。
+sort.field 只可使用 entry_fields.sortable_ids，edit_choice.field 和 board 只可使用 entry_fields.choice_ids。
+board 是字符串，必须与 edit_choice.field 完全相同；initial 使用该字段 options 中的原文。
 form 按录入顺序列出字段，默认状态由 edit_choice 设置，不要把该字段列入 form。columns 为实际显示的完整明细。
 sort 只可用日期或整数，edit_choice 只能用 choice。不需要排序或状态编辑的需求用 null。
 可选键 board 为 edit_choice 的 field，明确要求看板分栏、点按钮切换时必须返回，分栏顺序取字段选项。
@@ -79,6 +83,13 @@ search 指定关键词实际匹配的文本字段，exact 指定精确筛选字�
 def require(ok, reason):
     if not ok:
         raise ValueError(reason)
+
+
+class EntryFieldReferenceError(ValueError):
+    def __init__(self, slot, problem):
+        super().__init__("bad_field_reference")
+        self.slot = slot
+        self.problem = problem
 
 
 def keys(value, *expected, optional=()):
@@ -149,35 +160,39 @@ def validate_spec(value):
 def validate_module(stage, value, spec):
     fields = {field["id"]: field for field in spec["fields"]}
 
-    def ref(identifier, types=TYPES):
-        require(isinstance(identifier, str) and identifier in fields and fields[identifier]["type"] in types,
-                "bad_field_reference")
-        return fields[identifier]
+    def ref(identifier, types=TYPES, *, slot=None):
+        field = fields.get(identifier) if isinstance(identifier, str) else None
+        if field is not None and field["type"] in types:
+            return field
+        if slot is not None:
+            problem = "wrong_shape" if not isinstance(identifier, str) else "unknown_id" if field is None else "wrong_type"
+            raise EntryFieldReferenceError(slot, problem)
+        raise ValueError("bad_field_reference")
 
-    def refs(identifiers, types=TYPES, required=False):
+    def refs(identifiers, types=TYPES, required=False, *, slot=None):
         require(unique_strings(identifiers, 12) and (not required or bool(identifiers)), "bad_field_list")
         for identifier in identifiers:
-            ref(identifier, types)
+            ref(identifier, types, slot=slot)
 
     if stage == "entry":
         flags = ("allow_edit", "allow_delete", "backup")
         keys(value, "form", "columns", "sort", "edit_choice", optional=("board", *flags))
         require(all(type(value.get(flag, False)) is bool for flag in flags), "bad_entry_flag")
-        refs(value["form"], required=True)
-        refs(value["columns"], required=True)
+        refs(value["form"], required=True, slot="form")
+        refs(value["columns"], required=True, slot="columns")
         sort, choice = value["sort"], value["edit_choice"]
         if sort is not None:
             keys(sort, "field", "direction")
-            ref(sort["field"], {"date", "integer"})
+            ref(sort["field"], SORTABLE_TYPES, slot="sort.field")
             require(sort["direction"] in ("asc", "desc"), "bad_sort_direction")
         if choice is not None:
             keys(choice, "field", "initial")
-            field = ref(choice["field"], {"choice"})
+            field = ref(choice["field"], {"choice"}, slot="edit_choice.field")
             require(choice["initial"] in field["options"] and choice["field"] not in value["form"]
                     and choice["field"] in value["columns"], "bad_choice_default")
         if "board" in value:
             board = value["board"]
-            ref(board, {"choice"})
+            ref(board, {"choice"}, slot="board")
             require(choice is not None and board == choice["field"], "bad_board_choice")
         coverage = set(value["form"])
         if choice is not None:
@@ -361,6 +376,13 @@ def provide(stage, requirement, previous, key, admit, record=None, *, revision_c
             require(stage in stage_plan(spec_bytes)[1:-1], "unexpected_stage")
             spec = read_artifact(spec_bytes)
             request["accepted_spec"] = spec
+        if stage == "entry":
+            fields = spec["fields"]
+            request["entry_fields"] = {
+                "ids": [field["id"] for field in fields],
+                "sortable_ids": [field["id"] for field in fields if field["type"] in SORTABLE_TYPES],
+                "choice_ids": [field["id"] for field in fields if field["type"] == "choice"],
+            }
         if stage == "summary":
             request["current_task"] = ("只设计显式要求的统计，始终包含 count、sum、group 三键。"
                                        "分栏展示和阶段移动不是统计。没有统计需求时三项全部为 null。")
@@ -439,6 +461,8 @@ def provide(stage, requirement, previous, key, admit, record=None, *, revision_c
         code = str(error)
         if re.fullmatch(r"(?:bad|invalid|duplicate|incomplete)_[a-z_]{1,40}", code):
             evidence["validation"] = code
+        if isinstance(error, EntryFieldReferenceError):
+            evidence.update(reference_slot=error.slot, reference_problem=error.problem)
         raise ApiError(502, "invalid_staged_result", "本阶段返回的配置不完整，可以继续生成。") from None
     finally:
         if record is not None:

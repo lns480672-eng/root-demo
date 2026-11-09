@@ -6,7 +6,7 @@ import sys
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from accounts import ApiError, Store
+from accounts import Store
 import assistant_model
 import staged_blueprint
 import staged_revision
@@ -53,6 +53,20 @@ render();
         return json.dumps(content, ensure_ascii=False).encode()
     if live:
         return staged_blueprint.provide(stage, requirement, prior, key, admit, record)
+    if not theme_check and stage == "entry" and not requirement.startswith("做一个公益活动雨具归还登记"):
+        content = modules["entry"]
+        if requirement not in failed:
+            failed.add(requirement)
+            content = {**content, "board": "unknown_status_field"}
+
+        def exchange(payload, reserve, **_):
+            reserve()
+            return {"status": 200, "body": json.dumps({"choices": [{
+                "finish_reason": "stop", "message": {"content": json.dumps(content, ensure_ascii=False)},
+            }]})}
+
+        with patch.object(assistant_model, "_exchange", exchange):
+            return staged_blueprint.provide(stage, requirement, prior, key, admit, record)
     admit()
     if theme_check:
         content = {**modules["spec"], "kind":"ledger", "modules":[]} if stage == "spec" else modules[stage]
@@ -71,10 +85,6 @@ render();
         }
         record({"stage":stage,"status":"ok","dispatched":True})
         return json.dumps(registration[stage], ensure_ascii=False).encode()
-    if stage == "entry" and requirement not in failed:
-        failed.add(requirement)
-        record({"stage":stage, "status":"fixture_failed", "dispatched":True})
-        raise ApiError(502, "fixture_failed", "替身模拟录入阶段失败")
     record({"stage":stage, "status":"ok", "dispatched":True})
     return json.dumps(modules[stage], ensure_ascii=False).encode()
 

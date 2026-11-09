@@ -186,6 +186,37 @@ class StageArtifactTests(unittest.TestCase):
 
 
 class StageProviderTests(unittest.TestCase):
+    def test_entry_uses_committed_field_ids_and_reports_invalid_reference_without_its_value(self):
+        files = artifacts()
+        valid = json.loads(files["entry.json"])
+        invalid = {**valid, "board": "private-invalid-alias"}
+        results = iter((invalid, valid))
+        receipts = []
+        admitted = Mock()
+
+        def exchange(payload, admit, **_):
+            body = json.loads(payload)["body"]
+            context = json.loads(body["messages"][1]["content"])
+            self.assertEqual(context["entry_fields"], {
+                "ids": ["device", "date", "delay", "status"],
+                "sortable_ids": ["date", "delay"],
+                "choice_ids": ["status"],
+            })
+            admit()
+            return envelope(json.dumps(next(results)))
+
+        with patch.object(assistant_model, "_exchange", exchange):
+            with self.assertRaises(ApiError) as failure:
+                blueprint.provide("entry", "按状态分栏", files, "fixture-key", admitted, receipts.append)
+            result = blueprint.provide("entry", "按状态分栏", files, "fixture-key", admitted, receipts.append)
+        self.assertEqual(failure.exception.code, "invalid_staged_result")
+        self.assertEqual(receipts[0]["validation"], "bad_field_reference")
+        self.assertEqual(receipts[0]["reference_slot"], "board")
+        self.assertEqual(receipts[0]["reference_problem"], "unknown_id")
+        self.assertNotIn("private-invalid-alias", json.dumps(receipts))
+        self.assertEqual(admitted.call_count, 2)
+        self.assertEqual(json.loads(result), valid)
+
     def test_new_ledger_spec_cannot_fall_back_to_a_legacy_plan(self):
         legacy = artifacts()["spec.json"]
         with patch.object(assistant_model, "_exchange", return_value=envelope(legacy.decode())):
