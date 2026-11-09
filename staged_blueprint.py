@@ -271,6 +271,10 @@ def provide(stage, requirement, previous, key, admit, record=None):
             spec = read_artifact(previous.get("spec.json"))
             validate_spec(spec)
             request["accepted_spec"] = spec
+        if stage == "summary":
+            request["current_task"] = ("只设计显式要求的统计，始终包含 count、sum、group 三键。"
+                                       "分栏展示和阶段移动不是统计。没有统计需求时三项全部为 null。")
+            request["numeric_fields"] = [field["id"] for field in spec["fields"] if field["type"] == "integer"]
         if stage == "export":
             request["current_task"] = (
                 "只设计 CSV，返回恰好两个键：columns 和 label。其他功能已由独立阶段实现。"

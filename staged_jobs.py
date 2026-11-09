@@ -365,8 +365,11 @@ class StagedJobs:
                 title = " ".join(spec["title"].split())[:48]
                 run = self.runs / tool_id
                 path = run / "app.pending"
-                path.write_bytes(html)
-                path.replace(run / "app.html")
+                try:
+                    path.write_bytes(html)
+                    path.replace(run / "app.html")
+                except OSError:
+                    raise ApiError(503, "staged_save_failed", "候选尚未保存，可重新检查预览后继续。") from None
                 self.store.insert_draft(db, row["owner"], tool_id, title, pack_entries([]), model=True)
                 tool = self.store.owned_tool(db, owner, tool_id, published=False)
                 self.store.commit_initial(db, tool, data.get("entries"), self.budget.record_generation_success)

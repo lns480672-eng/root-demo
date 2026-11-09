@@ -104,6 +104,8 @@ class StagedHTTP(unittest.TestCase):
     def test_classification_uses_capabilities_and_does_not_charge_rejections(self):
         user = self.account("staged-routing")
         self.assertEqual(choose_route("新增看板卡片，分栏、跨栏移动、编辑和删除、备份导出与导入。"), "staged")
+        self.assertEqual(choose_route("帮我整理找工作的申请：按申请阶段分组，移动卡片，新建和改写申请，能保存成文件再加载。"), "staged")
+        self.assertEqual(choose_route("帮我写一份工作申请文案。"), "single")
         before = self.request("/api/trial", auth=user)[1]["generation"]["totalUsed"]
         for requirement in ("计算两个数字之和", "一个只添加书名的清单。" * 30,
                             "一个记事清单。不需要统计和导出，不需要组合筛选。"):
@@ -150,6 +152,15 @@ class StagedHTTP(unittest.TestCase):
         self.assertEqual(self.request(path + "/publish", {**data,"entries":["invalid"]}, owner)[0], 400)
         self.assertFalse(self.request("/api/tools", auth=owner)[1]["items"])
         self.assertEqual(self.request(path + "/publish", data, other)[0], 404)
+        failed_path = self.runs / candidate["id"] / "app.pending"
+        if failed_path.exists():
+            failed_path.unlink()
+        failed_path.mkdir()
+        status, failure, _ = self.request(path + "/publish", data, owner)
+        self.assertEqual((status, failure["code"]), (503, "staged_save_failed"))
+        self.assertEqual(self.request(path, auth=owner)[1]["task"]["state"], "complete")
+        self.assertEqual(self.request("/api/trial", auth=owner)[1]["generation"]["used"], 0)
+        failed_path.rmdir()
         with ThreadPoolExecutor(max_workers=2) as pool:
             responses = list(pool.map(lambda _: self.request(path + "/publish", data, owner), range(2)))
         self.assertEqual([response[0] for response in responses], [200,200])

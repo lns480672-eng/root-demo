@@ -1,5 +1,6 @@
 // TEST-001 / TEST-002 / TEST-004 / TEST-005 / TEST-006. Default uses a deterministic provider fixture. --live uses DeepSeek.
 import assert from 'node:assert/strict';
+import { verifyStagedFlow } from './verify-staged-flow.mjs';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { createServer } from 'node:http';
@@ -9,6 +10,8 @@ import { join, resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 
 const live = process.argv.includes('--live');
+const stagedFlow = process.argv.includes('--staged-flow');
+if (live && stagedFlow) throw new Error('--staged-flow uses ROOT_STAGED_LIVE=1 for real staged generation');
 const liveRevision = live && process.argv.includes('--revision');
 const collectCoverage = process.argv.includes('--coverage');
 const mainOnly = process.argv.includes('--main');
@@ -70,7 +73,8 @@ try {
     await once(probe, 'listening');
     probeUrl = 'http://127.0.0.1:' + probe.address().port;
     assert.equal((await fetch(probeUrl + '/control')).status, 200);
-    const server = launch('python3', ['tests/fixtures.py', 'fixture-key', '0', join(root, 'runs'), probeUrl]);
+    const fixture = stagedFlow ? 'tests/staged_fixtures.py' : 'tests/fixtures.py';
+    const server = launch('python3', [fixture, 'fixture-key', '0', join(root, 'runs'), probeUrl]);
     const [line] = await Promise.race([once(server.stdout, 'data'), once(server, 'exit').then(() => [''])]);
     base = String(line).match(/http:\/\/127\.0\.0\.1:\d+/)?.[0];
     assert.ok(base, '工作台应启动并提供本机地址');
@@ -78,7 +82,7 @@ try {
   const config = await (await fetch(base + '/api/config', { signal: AbortSignal.timeout(5000) })).json();
   evidence.build = config.build;
   assert.equal(config.configured, true, '需要配置本地工作台的 DeepSeek Key');
-  assert.deepEqual(Object.keys(config).sort(), ['build', 'configured']);
+  assert.deepEqual(Object.keys(config).sort(), stagedFlow ? ['build', 'configured', 'staged'] : ['build', 'configured']);
   if (!live) {
     const invalidOrigin = await fetch(base + '/api/generate', {
       method: 'POST', headers: { Origin: 'null', 'Content-Type': 'application/json' },
@@ -386,6 +390,12 @@ try {
     await until(() => evaluate('document.title === "Reachable HTTP probe"'));
     assert.deepEqual(probeRequests, probeControls);
   }
+  if (stagedFlow) {
+    evidence.mode = process.env.ROOT_STAGED_LIVE === '1' ? 'deepseek-staged' : 'fixture-staged';
+    stage = 'staged workbench board flow';
+    await verifyStagedFlow({ cdp, evaluate, until, base, click, pointerClick, type, visible, appRequest, login,
+      generate, activeTool, accountA, root, probeUrl, probeRequests, probeControls, library, stored, evidence, screenshot });
+  } else {
   await cdp('Emulation.setDeviceMetricsOverride', { width: 1360, height: 980, deviceScaleFactor: 1, mobile: false });
   await cdp('Page.navigate', { url: base });
   await until(() => evaluate('document.documentElement.dataset.ready === "true"'));
@@ -1195,6 +1205,7 @@ try {
       screenshot, stage: setStage,
     }));
   }
+  }
   evidence.status = 'passed';
 } catch (error) {
   evidence.status = 'failed';
@@ -1202,6 +1213,10 @@ try {
   evidence.failedStage = stage;
   if (runtimeErrors.length) evidence.runtimeErrors = runtimeErrors;
   if (readPage) evidence.page = await readPage().catch(() => null);
+  if (stagedFlow) {
+    const usage = await readFile(join(root, 'runs', 'staged-usage.jsonl'), 'utf8').catch(() => '');
+    if (usage.trim()) evidence.runs = usage.trim().split('\n').map(JSON.parse);
+  }
   process.exitCode = 1;
 } finally {
   if (writeCoverage) await writeCoverage().catch(error => { console.error(error.message); process.exitCode = 1; });
