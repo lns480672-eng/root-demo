@@ -203,3 +203,19 @@ button:enabled { cursor: pointer; }
 @media (max-width: 650px) {
   .preview-frames iframe { height: clamp(235px, 48vh, 440px); }
 }
+
+.account { margin-inline-start: auto; display: flex; align-items: center; gap: .75rem; min-width: 0; }
+.account span { overflow: hidden; text-overflow: ellipsis; }
+.auth-panel { width: min(100%, 26rem); margin: 2rem auto 3rem; padding: 1.5rem;
+  background: var(--elys-white); border: 1px solid var(--elys-line); border-radius: 16px; }
+.auth-panel label { margin-top: .75rem; }
+.auth-panel input { margin-top: .25rem; }
+#auth-status { margin-top: .75rem; min-height: 1.6em; }
+.tool-library { margin-top: 1.75rem; padding-top: 1rem; border-top: 1px solid var(--elys-line); }
+.tool-library header { display: flex; align-items: center; justify-content: space-between; gap: .5rem; }
+.tool-library h2 { font-size: 1rem; }
+#library-empty { margin-top: .75rem; color: var(--elys-muted); }
+#tool-list { list-style: none; padding: 0; margin: .75rem 0 0; display: grid;
+  grid-template-columns: minmax(0, 1fr); gap: .4rem; }
+#tool-list button { display: block; width: 100%; text-align: left; overflow: hidden; text-overflow: ellipsis; }
+#tool-list button[aria-current="true"] { background: #dfe6ff; }

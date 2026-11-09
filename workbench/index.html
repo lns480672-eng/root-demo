@@ -13,8 +13,30 @@
       <span class="elys-wordmark" role="img" aria-label="ROOT">R<span class="elys-counter" aria-hidden="true"></span><span class="elys-counter" aria-hidden="true"></span>T</span>
       <span class="elys-brand-accent" aria-hidden="true"></span>
       <span class="elys-brand-caption">工具工作台</span>
+      <div id="account" class="account" hidden>
+        <span id="account-name"></span>
+        <button id="logout" type="button">退出登录</button>
+      </div>
     </header>
-    <div class="elys-workspace">
+    <section id="auth" class="auth-panel" hidden aria-labelledby="auth-title">
+      <h1 id="auth-title">登录工作台</h1>
+      <form id="auth-form">
+        <label for="username">用户名</label>
+        <input id="username" autocomplete="username" maxlength="32" required>
+        <label for="password">密码</label>
+        <input id="password" type="password" autocomplete="current-password" maxlength="128" required>
+        <div id="invite-field" hidden>
+          <label for="invite">邀请码</label>
+          <input id="invite" maxlength="128" autocomplete="off">
+        </div>
+        <p id="auth-status" role="status"></p>
+        <div class="elys-actions">
+          <button id="auth-mode" type="button">凭邀请码注册</button>
+          <button id="auth-submit" class="elys-primary" type="submit">登录</button>
+        </div>
+      </form>
+    </section>
+    <div id="workspace" class="elys-workspace" hidden>
       <section class="elys-composer" aria-labelledby="composer-title">
         <h1 id="composer-title">你想做什么工具？</h1>
         <p class="elys-intro">描述工具的用途、操作和要保存的数据。</p>
@@ -37,6 +59,14 @@
           </ol>
         </div>
         <p id="config" class="elys-config" role="status" hidden></p>
+        <section class="tool-library" aria-labelledby="library-title">
+          <header>
+            <h2 id="library-title">我的工具</h2>
+            <button id="new-tool" type="button">新建工具</button>
+          </header>
+          <p id="library-empty">成功生成的工具会显示在这里。</p>
+          <ul id="tool-list"></ul>
+        </section>
       </section>
       <section class="elys-preview" aria-labelledby="preview-title">
         <header class="elys-preview-header">

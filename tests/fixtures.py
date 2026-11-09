@@ -8,6 +8,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import generate
+from accounts import Store
 
 reading = """<!doctype html><html lang="zh-CN"><head><title>读书清单</title></head>
 <body><h1>读书清单</h1><form><label>书名 <input id="book" required></label>
@@ -50,7 +51,16 @@ budget = """<!doctype html><html lang="zh-CN"><head><title>搬家预算计算器
 <label>纸箱费 <input id="boxes" type="number" value="180"></label>
 <button id="calculate">计算总额</button><p id="total" role="status"></p>
 <script>
-calculate.onclick = () => { total.textContent = Number(truck.value) + Number(boxes.value); };
+const saved = JSON.parse(localStorage.getItem('budget-values') || 'null');
+if (saved) {
+    truck.value = saved[0];
+    boxes.value = saved[1];
+    total.textContent = Number(truck.value) + Number(boxes.value);
+}
+calculate.onclick = () => {
+    localStorage.setItem('budget-values', JSON.stringify([truck.value, boxes.value]));
+    total.textContent = Number(truck.value) + Number(boxes.value);
+};
 document.body.dataset.readingData = localStorage.getItem('books') === null ? 'absent' : 'present';
 </script></body></html>"""
 
@@ -101,4 +111,6 @@ def fixture(requirement, key):
 generate.request_completion = fixture
 import workbench
 
-workbench.serve(sys.argv[1], int(sys.argv[2]), Path(sys.argv[3]))
+runs = Path(sys.argv[3])
+Store(runs / "workspace.sqlite3").create_invite("fixture-invite", uses=2)
+workbench.serve(sys.argv[1], int(sys.argv[2]), runs)

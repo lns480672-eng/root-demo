@@ -109,3 +109,18 @@ webrtc_checkpoint:
   handoff: runs/candidate-v4-f58378aa55af/验收交接.md
   live_test_correction: 真实计算器预填 800 和 180，自测改为先清空再键入；替身加入预填初值
   remaining_risks: [已验证 Chrome 156, 合成嵌套探针在恢复时初始化超时, 新旧端口浏览器数据分开, 独立复验待执行]
+
+accounts_checkpoint:
+  objective: AC-004 到 AC-006 本地可提测
+  design: 账号与工具设计.md
+  strategy_boxes_used: 1
+  slice: 邀请注册与会话 API
+  next_action: 用 HTTP 测试先验证保护接口和邀请的 Red
+  baseline_commit: a91568f
+  build: v4-48aeb8162662
+  entry: "http://127.0.0.1:8773/"
+  status: 开发自测完成
+  red: 未登录生成曾到达模型路径，受控替身返回 502，修复后请求在鉴权处返回 401
+  recovery: 系统 Python 缺 scrypt，改为 PBKDF2-HMAC-SHA256；修正历史列表 390 px 溢出
+  evidence: [runs/accounts-api/unit.log, runs/accounts-g2-trial3/workbench-check.json, runs/accounts-live/workbench-check.json, runs/accounts-udp-direct/webrtc-isolation.json, runs/accounts-udp-nested/webrtc-isolation.json, runs/accounts-udp-no-policy/webrtc-isolation.json]
+  first_unfinished_oracle: 独立验收按固定提交另行执行

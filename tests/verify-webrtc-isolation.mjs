@@ -113,8 +113,12 @@ try {
   const modelFixture = `
 import generate, workbench, json, sys
 from pathlib import Path
+from accounts import Store
 html = sys.argv[1]
 runs = Path(sys.argv[2])
+store = Store(runs / 'workspace.sqlite3')
+store.create_invite('fixture-webrtc-invite')
+store.register({'username':'webrtc-test','password':'fixture-webrtc-password!','invite':'fixture-webrtc-invite'})
 if sys.argv[3] == 'true':
     class WithoutAllowlist(workbench.BaseHTTPRequestHandler):
         def send_header(self, name, value):
@@ -124,6 +128,12 @@ if sys.argv[3] == 'true':
     saved = runs / 'run-existing'
     saved.mkdir(parents=True)
     (saved / 'app.html').write_text(html, encoding='utf-8')
+    seed = store.login({'username':'webrtc-test','password':'fixture-webrtc-password!'}, '')
+    with store.connection() as db:
+        marker = store.session(db, seed)['marker']
+    store.draft(seed, marker, 'run-existing', 'saved preview')
+    store.change_tool(seed, marker, 'run-existing', 'commit', {'entries':[]})
+    store.logout(seed, marker)
 generate.request_completion = lambda *a: (200, json.dumps({
     'id':'fixture-webrtc-isolation','model':generate.MODEL,
     'choices':[{'message':{'content':html},'finish_reason':'stop'}]
@@ -143,6 +153,12 @@ workbench.serve('fixture-key', 0, runs)
   assert.equal(Boolean(evidence.observations.connectionAllowlist), !withoutAllowlist);
   const canary = await fetch(base + '/api/egress-check');
   assert.equal(canary.status, 200);
+  const login = await fetch(base + '/api/login', {
+    method: 'POST', headers: { 'Content-Type': 'application/json', Origin: base },
+    body: JSON.stringify({ username: 'webrtc-test', password: 'fixture-webrtc-password!' }),
+  });
+  assert.equal(login.status, 200);
+  const cookie = login.headers.get('Set-Cookie').match(/^root_session=([^;]+)/)[1];
   const chrome = launch(process.env.CHROME_BIN || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', [
     '--headless=new', '--no-first-run', '--disable-background-networking', '--disable-extensions',
     '--no-proxy-server', '--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1',
@@ -194,7 +210,7 @@ workbench.serve('fixture-key', 0, runs)
     disabled: document.querySelector('#generate')?.disabled,
     config: document.querySelector('#config')?.textContent,
     storageWarning: document.querySelector('#storage-warning')?.textContent,
-    savedTool: localStorage.getItem('root:latest-tool'),
+    savedTool: session?.latest,
     observation: window.previewProbe ?? null,
   })`);
 
@@ -231,13 +247,8 @@ workbench.serve('fixture-key', 0, runs)
   assert.equal(preview.packets.length,0);
   if (nested) assert.equal(nested.packets.length, 0);
   stage = 'submit controlled output through formal workbench';
-  if (withoutAllowlist) {
-    await cdp('Page.addScriptToEvaluateOnNewDocument', { source: `
-      if (location.origin === ${JSON.stringify(base)}) {
-        localStorage.setItem('root:latest-tool', 'run-existing');
-      }
-    ` });
-  }
+  await cdp('Network.setCookie', { name: 'root_session', value: cookie, url: base,
+    httpOnly: true, sameSite: 'Strict' });
   await cdp('Page.navigate',{url:base});
   await until(()=>evaluate('document.documentElement.dataset.ready === "true"'));
   await type('#requirement',requirement);
@@ -247,7 +258,7 @@ workbench.serve('fixture-key', 0, runs)
     evidence.observations.unsupported = await evaluate(`({
       generateDisabled: document.querySelector('#generate').disabled,
       frameCount: document.querySelectorAll('#preview iframe').length,
-      savedTool: localStorage.getItem('root:latest-tool'),
+      savedTool: session?.latest,
       warning: document.querySelector('#config').textContent,
     })`);
     assert.equal(evidence.observations.unsupported.generateDisabled, true);

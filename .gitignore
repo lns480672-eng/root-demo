@@ -26,3 +26,6 @@
 !/tests/verify-workbench.mjs
 !/tests/test_generation.py
 !/tests/verify-webrtc-isolation.mjs
+!/账号与工具设计.md
+!/accounts.py
+!/tests/test_accounts.py
