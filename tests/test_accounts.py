@@ -614,7 +614,7 @@ class AccountHTTP(unittest.TestCase):
             "revision": current["revision"], "runId": competing["runId"], "entries": updated,
         }, owner, marker)[1]["code"], "version_conflict")
         listed = self.request("/api/tools", cookie=owner, marker=marker)[1]["items"]
-        self.assertEqual([(item["id"], item["version"]) for item in listed], [(tool_id, 2)])
+        self.assertEqual([(item["id"], item["version"]) for item in listed], [(tool["id"], 2)])
         history = self.request(versions, cookie=owner, marker=marker)[1]
         self.assertEqual(history["current"], 2)
         self.assertEqual([item["version"] for item in history["items"]], [2, 1])

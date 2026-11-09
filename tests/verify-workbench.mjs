@@ -760,6 +760,8 @@ try {
     stage = 'release history navigation retains the current preview';
     const beforeUpdates = restored.loader;
     await evaluate('document.querySelector("#requirement").value = "返回后保留的草稿"');
+    await openGuide();
+    assert.equal(await visible('#saved-tools'), false);
     await click('#account-name');
     await click('#updates-link');
     await until(() => evaluate('location.pathname === "/updates" && !document.querySelector("#updates").hidden'));

@@ -739,6 +739,7 @@ function renderRoute(focus = false) {
   byId('account').hidden = workspace.hidden = updates || !session;
   document.title = updates ? '工作台更新记录 · ROOT' : 'ROOT 工具工作台';
   if (updates) loadReleases();
+  if (session) render();
   if (focus) byId(updates ? 'updates-title' : session ? 'account-name' : 'auth-title').focus();
 }
 

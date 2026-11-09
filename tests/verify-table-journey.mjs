@@ -49,6 +49,8 @@ export async function verifyTableJourney({
 
   async function revise(requirement, expectedVersion) {
     await click('#revise-tool');
+    const reopenGuide = !live && expectedVersion === 2;
+    if (reopenGuide) await evaluate('window.holdTableTaskList = true');
     const loader = tool.loader;
     await generate(requirement);
     const task = await until(async () => {
@@ -59,6 +61,13 @@ export async function verifyTableJourney({
     });
     assert.equal(task?.baseToolId, id, '修改任务绑定导入的同一工具');
     taskIds.push(task.id);
+    if (reopenGuide) {
+      await until(() => evaluate('window.tableTaskListHeld && phase === "idle"'));
+      await click('#account-name');
+      await click('#guide-start');
+      assert.equal(await visible('#workspace-guide'), true);
+      await evaluate('window.holdTableTaskList = false; window.resumeTableTaskList()');
+    }
     const taskPath = '/api/staged/' + task.id;
     await until(async () => {
       const current = (await appRequest(taskPath)).body.task;
@@ -74,13 +83,19 @@ export async function verifyTableJourney({
         return current?.id === id && current.loader !== loader && current;
       });
       assert.equal((await appRequest(toolPath + '/versions')).body.items[0].note, requirement);
+      if (reopenGuide) assert.equal(await visible('#workspace-guide'), false);
     }
   }
 
   await evaluate(`(() => {
     const original = window.fetch;
+    const taskListGate = new Promise(resolve => { window.resumeTableTaskList = resolve; });
     window.fetch = async (url, options) => {
       const response = await original(url, options);
+      if (url === '/api/staged' && window.holdTableTaskList) {
+        window.tableTaskListHeld = true;
+        await taskListGate;
+      }
       if (String(url).endsWith('/revise') && response.ok) {
         window.tableJourneyTask = (await response.clone().json()).task;
       }
