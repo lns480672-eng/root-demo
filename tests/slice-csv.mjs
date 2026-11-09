@@ -48,6 +48,7 @@ export async function verifyCsv({ evaluate, click, until, cdp, activeTool, libra
   })()`);
 
   stage('AC-010 malformed CSV preserves the current preview and tool library');
+  await click('#new-tool');
   await click('#table-entry');
   await chooseCsv('错误列数.csv', '事项,地点\n只有一列\n');
   await until(() => visible('#table-error'));
@@ -76,6 +77,7 @@ export async function verifyCsv({ evaluate, click, until, cdp, activeTool, libra
   assert.equal(await evaluate('window.testCsvGeneratePosts.length'), 1);
 
   stage('AC-010 edited CSV metadata preserves quoted and zero-prefixed original values');
+  await click('#new-tool');
   await click('#table-entry');
   const filename = '活动分工.csv';
   const uploadedRows = [
@@ -134,6 +136,7 @@ export async function verifyCsv({ evaluate, click, until, cdp, activeTool, libra
   const xlsx = execFileSync('python3', ['-B', '-c',
     'import sys; sys.path.insert(0, "tests"); from test_table_import import sample_xlsx; print(sample_xlsx())'],
   {encoding: 'utf8'}).trim();
+  await click('#new-tool');
   await click('#table-entry');
   await until(() => evaluate('document.querySelector("#table-file-help").textContent.includes("500 条记录")'));
   await chooseXlsx('第一工作表.xlsx', xlsx);
@@ -158,6 +161,7 @@ export async function verifyCsv({ evaluate, click, until, cdp, activeTool, libra
   await screenshot('xlsx-excluded-column-tool');
 
   stage('AC-010 large CSV preview is capped but all 500 rows are saved and restored');
+  await click('#new-tool');
   await click('#table-entry');
   const largeColumns = Array.from({length: 20}, (_, index) => '字段' + (index + 1));
   const longValue = 'x'.repeat(94);

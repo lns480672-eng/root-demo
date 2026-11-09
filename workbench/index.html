@@ -127,15 +127,17 @@
       </section>
       <section class="elys-composer" aria-labelledby="composer-title">
         <h2 id="composer-title">你想做什么工具？</h2>
-        <p class="elys-intro">描述工具的用途、操作和要保存的数据。</p>
-        <nav class="entry-actions" aria-label="开始方式">
-          <button id="quick-entry" type="button" aria-pressed="false" aria-controls="quick-panel">快速体验</button>
-          <button id="direct-entry" type="button" aria-pressed="true">直接开发</button>
-          <button id="idea-entry" type="button">需求助手</button>
-          <button id="table-entry" type="button" aria-pressed="false" aria-controls="table-panel">从表格生成</button>
-        </nav>
-        <div class="entry-actions">
-          <button id="guide-start" type="button">新手引导</button>
+        <div id="new-tool-options">
+          <p class="elys-intro">描述工具的用途、操作和要保存的数据。</p>
+          <nav class="entry-actions" aria-label="开始方式">
+            <button id="quick-entry" type="button" aria-pressed="false" aria-controls="quick-panel">快速体验</button>
+            <button id="direct-entry" type="button" aria-pressed="true">直接开发</button>
+            <button id="idea-entry" type="button">需求助手</button>
+            <button id="table-entry" type="button" aria-pressed="false" aria-controls="table-panel">从表格生成</button>
+          </nav>
+          <div class="entry-actions">
+            <button id="guide-start" type="button">新手引导</button>
+          </div>
         </div>
         <aside id="workspace-guide" class="workspace-guide" aria-label="新手引导" hidden>
           <p id="guide-copy" role="status"></p>
@@ -197,6 +199,9 @@
           </ol>
         </div>
         <p id="config" class="elys-config" role="status" hidden></p>
+        <div class="entry-actions">
+          <button id="return-to-library" type="button" hidden>返回我的工具</button>
+        </div>
       </section>
     </div>
   </main>

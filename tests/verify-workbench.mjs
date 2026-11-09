@@ -665,6 +665,7 @@ try {
   let restored = await activeTool();
   assert.equal(restored.id, first.id);
   assert.notEqual(restored.loader, operatedTool.loader);
+  assert.equal(await visible('.elys-composer'), false, '刷新恢复已有工具后隐藏新建区');
   assert.match(await evaluate('document.querySelector("#list").innerText', restored.context), /星际旅行手记/);
   if (entryFlow) {
     assert.equal(await visible('#workspace-guide'), false, '完成引导后重新进入不应自动打开');
@@ -920,6 +921,7 @@ try {
         reloadedDocument: true, records: ['星际旅行手记', '失败后新增的书'] });
 
       stage = 'candidate initialization failure';
+      await click('#new-tool');
       await generate(requirements[1]);
       await assertFailure(/预览初始化失败/);
 
@@ -1021,23 +1023,62 @@ try {
     await screenshot('budget-result');
 
     if (!live) {
-      stage = 'narrow viewport';
-      await cdp('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
-      const layout = await evaluate(`({
-        singleColumn: document.querySelector('.elys-preview').getBoundingClientRect().top >
-          document.querySelector('.tool-library').getBoundingClientRect().bottom,
-        composerBelow: document.querySelector('.elys-composer').getBoundingClientRect().top >
-          document.querySelector('.elys-preview').getBoundingClientRect().bottom,
-        overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
-      })`);
-      assert.deepEqual(layout, { singleColumn: true, composerBelow: true, overflow: false });
-      await screenshot('narrow-budget');
-      await click('#new-tool');
-      assert.equal(await evaluate(`document.querySelector('.elys-composer').getBoundingClientRect().bottom <
-        document.querySelector('.elys-preview').getBoundingClientRect().top`), true);
-      assert.equal((await activeTool()).loader, second.loader);
-      await screenshot('narrow-create');
-      evidence.tests.push({ id: 'narrow-viewport', result: 'passed', width: 390 });
+      stage = 'TEST-006-02 separates library, creation and revision';
+      for (const width of [1360, 390]) {
+        await cdp('Emulation.setDeviceMetricsOverride', { width, height: 844, deviceScaleFactor: 1, mobile: width === 390 });
+        assert.equal(await visible('.elys-composer'), false, '浏览已保存工具时隐藏整个新建区');
+        assert.equal(await visible('#new-tool'), true);
+        assert.equal(await visible('#tool-history'), true);
+        await evaluate('document.querySelector("#new-tool").focus(); document.querySelector("#requirement").focus()');
+        assert.equal(await evaluate('document.activeElement.id'), 'new-tool', '隐藏表单不能获取焦点');
+        await cdp('Input.dispatchKeyEvent', { type: 'rawKeyDown', key: 'Tab', code: 'Tab', windowsVirtualKeyCode: 9 });
+        await cdp('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Tab', code: 'Tab', windowsVirtualKeyCode: 9 });
+        assert.equal(await evaluate('document.activeElement.closest("#tool-list")?.id'), 'tool-list');
+        assert.equal(await evaluate('document.documentElement.scrollWidth > document.documentElement.clientWidth'), false);
+        if (width === 390) {
+          assert.equal(await evaluate(`document.querySelector('.elys-preview').getBoundingClientRect().top >
+            document.querySelector('.tool-library').getBoundingClientRect().bottom`), true);
+        }
+        await screenshot('library-' + width);
+
+        await click('#new-tool');
+        assert.equal(await visible('#table-entry'), true);
+        assert.equal(await visible('#idea-entry'), true);
+        assert.equal(await evaluate('document.activeElement.id'), 'requirement');
+        assert.equal((await activeTool()).loader, second.loader);
+        await click('#return-to-library');
+        assert.equal(await visible('.elys-composer'), false);
+        assert.equal(await evaluate('document.activeElement.id'), 'new-tool');
+
+        await click('#revise-tool');
+        assert.equal(await visible('#requirement'), true);
+        assert.equal(await evaluate('document.activeElement.id'), 'requirement');
+        assert.match(await evaluate('document.querySelector("#composer-title").textContent'), /修改/);
+        for (const id of ['quick-entry', 'direct-entry', 'idea-entry', 'table-entry', 'guide-start', 'staged-task-list']) {
+          assert.equal(await visible('#' + id), false, '修改时隐藏 ' + id);
+        }
+        await screenshot('revision-' + width);
+        await click('#return-to-library');
+        assert.equal(await visible('.elys-composer'), false);
+        assert.equal(await evaluate('document.activeElement.id'), 'revise-tool');
+        await click('#new-tool');
+        await evaluate(`document.querySelector('#tool-list button[data-id="${first.id}"]').focus()`);
+        await selectHistory(first.id);
+        assert.equal(await visible('.elys-composer'), false);
+        assert.equal(await evaluate('document.activeElement.dataset.id'), first.id);
+        await selectHistory(second.id);
+        const previousNavigation = await evaluate('performance.timeOrigin');
+        await cdp('Page.reload', { ignoreCache: true });
+        await until(() => evaluate(`performance.timeOrigin !== ${previousNavigation} &&
+          document.documentElement.dataset.ready === "true"`));
+        const reopened = await activeTool();
+        assert.equal(reopened.id, second.id);
+        second.loader = reopened.loader;
+        second.context = reopened.context;
+        assert.equal(await visible('.elys-composer'), false);
+      }
+      evidence.tests.push({ id: 'TEST-006-02', result: 'passed', widths: [1360, 390],
+        libraryFocus: true, scopedRevisionForm: true, returnedAndSwitched: true });
 
       stage = 'preview self-navigation isolation';
       await evaluate('location.href = ' + JSON.stringify(probeUrl + '/self-navigation'), second.context);
@@ -1183,6 +1224,7 @@ try {
     const before = (await library()).items;
     const previous = await evaluate('document.querySelector("#preview iframe[data-tool]")?.dataset.tool || ""');
     await monitorGeneration();
+    await click('#new-tool');
     await click('#direct-entry');
     assert.equal(await visible('#requirement'), true);
     await evaluate('document.querySelector("#requirement").value = ""');
@@ -1202,6 +1244,7 @@ try {
   if (live && process.argv.includes('--analysis-live')) {
     const initialBalance = (await appRequest('/api/trial')).body;
     assert.equal(initialBalance.analysisMode, 'deepseek');
+    await click('#new-tool');
     await click('#idea-entry');
     const idea = '#assistant-idea-text';
     async function analyzeIdea(value, result) {

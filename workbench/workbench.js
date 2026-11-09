@@ -79,6 +79,10 @@ function render() {
     tableMode || returning || !requirement.value.trim();
   requirement.readOnly = blocked;
   byId('new-tool').disabled = blocked;
+  byId('new-tool-options').hidden = editing;
+  const returnToLibrary = byId('return-to-library');
+  returnToLibrary.hidden = !active;
+  returnToLibrary.disabled = blocked;
   let currentTitle = '工具预览';
   for (const button of byId('tool-list').querySelectorAll('button')) {
     button.disabled = blocked || !networkIsolated;
@@ -253,11 +257,12 @@ function stagedReason(task) {
 
 function renderStagedTasks(blocked) {
   const panel = byId('staged-panel');
-  panel.hidden = !session || !stagedEnabled;
-  if (panel.hidden) return;
   const task = selectedStagedTask();
+  panel.hidden = !session || !stagedEnabled || (editing && !task && !stagedPendingId);
+  if (panel.hidden) return;
   const canAct = phase === 'idle' && networkIsolated && !pendingPublication;
   const list = byId('staged-task-list');
+  list.hidden = byId('staged-list-status').hidden = editing;
   const signature = JSON.stringify(stagedTasks.map(({id, requirement, state}) => [id, requirement, state]));
   if (list.dataset.signature !== signature) {
     list.dataset.signature = signature;
@@ -442,7 +447,7 @@ async function loadLibrary() {
     button.type = 'button';
     button.dataset.id = tool.id;
     button.textContent = tool.title;
-    button.addEventListener('click', () => selectTool(tool.id));
+    button.addEventListener('click', () => selectTool(tool.id, button));
     li.append(button);
     return li;
   });
@@ -453,7 +458,10 @@ async function loadLibrary() {
 }
 
 function compose(enabled) {
-  workspace.dataset.mode = enabled ? 'compose' : 'browse';
+  const mode = enabled ? 'compose' : 'browse';
+  if (workspace.dataset.mode === mode) return;
+  workspace.dataset.mode = mode;
+  composer.hidden = !enabled;
   if (enabled) {
     workspace.prepend(composer);
     workspace.append(library);
@@ -473,7 +481,8 @@ const guideSteps = [
 function renderGuide() {
   const panel = byId('workspace-guide');
   const step = guideSteps[guideStep];
-  const visible = Boolean(step) && !pendingPublication &&
+  const visible = Boolean(step) && !pendingPublication && !editing &&
+    (guideStep >= 2 || !composer.hidden) &&
     (guideStep !== 1 || entryMode === 'fast') && (guideStep !== 2 || !sampleTemplate);
   panel.hidden = !visible;
   const nextTarget = visible ? byId(step[0]) : null;
@@ -1359,8 +1368,9 @@ byId('sync-tool').addEventListener('click', async () => {
   refreshTrial();
 });
 
-async function selectTool(id) {
+async function selectTool(id, source) {
   if (!networkIsolated || pendingPublication || stagedPendingId || phase !== 'idle' || !validToolId(id)) return;
+  const returnFocus = document.activeElement === source || composer.contains(document.activeElement);
   clearStagedSelection();
   hideSample();
   if (entryMode === 'table') tableImport.close();
@@ -1374,12 +1384,13 @@ async function selectTool(id) {
     editing = false;
     entryMode = 'direct';
     compose(false);
-    if (guideStep === 3 && guideTool === id) dismissGuide();
+    if (guideStep < 2 || (guideStep === 3 && guideTool === id)) dismissGuide();
   } catch (error) {
     warnStorage(error.message);
   } finally {
     phase = 'idle';
     render();
+    if (returnFocus && document.activeElement === document.body) source?.focus();
   }
 }
 
@@ -1392,11 +1403,22 @@ function beginComposition(revise, value = '') {
   compose(true);
   requirement.value = value;
   failure = '';
-  requirement.focus();
   render();
+  requirement.focus();
 }
 byId('new-tool').addEventListener('click', () => beginComposition(false));
 byId('revise-tool').addEventListener('click', () => beginComposition(true));
+byId('return-to-library').addEventListener('click', () => {
+  const trigger = byId(editing ? 'revise-tool' : 'new-tool');
+  clearStagedSelection();
+  hideSample();
+  if (entryMode === 'table') tableImport.close();
+  if (guideStep < 2) dismissGuide();
+  failure = '';
+  finishComposition();
+  render();
+  trigger.focus();
+});
 
 function authMode(next) {
   registering = next;
@@ -1554,6 +1576,7 @@ async function start(registration = null) {
         if (previousStagePublication) {
           rememberStagedPublication(previousStagePublication.id, previousStagePublication.nonce);
           selectedStagedId = previousStagePublication.id;
+          compose(true);
           phase = 'sync';
           stagedActivity = '正在核对保存';
           render();

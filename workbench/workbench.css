@@ -64,8 +64,7 @@ button:enabled { cursor: pointer; }
   .elys-workspace {
     display: grid;
     grid-template-columns: minmax(0, .76fr) minmax(0, 1.24fr);
-    grid-template-areas: "library preview" "composer preview";
-    grid-template-rows: auto 1fr;
+    grid-template-areas: "library preview";
     gap: clamp(20px, 3.4vw, 34px);
     margin-block-start: clamp(21px, 3.6vw, 37px);
   }
@@ -359,6 +358,7 @@ button:enabled { cursor: pointer; }
 .elys-preview-header h2 { flex-basis: 100%; margin-top: 6px; overflow-wrap: anywhere; }
 .elys-workspace[data-mode="compose"] {
   grid-template-areas: "composer preview" "library preview";
+  grid-template-rows: auto 1fr;
 }
 .elys-workspace[data-mode="compose"] .elys-composer { border-top: 0; padding-top: 9px; }
 .elys-masthead { flex-wrap: wrap; }
@@ -386,7 +386,7 @@ button:enabled { cursor: pointer; }
   background: var(--elys-white);
 }
 .elys-workspace:has(.tool-version-panel:not([hidden])) {
-  grid-template-areas: "library preview" "composer history";
+  grid-template-areas: "library preview" "library history";
   align-items: start;
 }
 .elys-workspace[data-mode="compose"]:has(.tool-version-panel:not([hidden])) {
@@ -396,7 +396,7 @@ button:enabled { cursor: pointer; }
 @media (min-width: 1050px) {
   .elys-workspace:has(.tool-version-panel:not([hidden])) {
     grid-template-columns: minmax(0, .7fr) minmax(0, 1.3fr) minmax(240px, .8fr);
-    grid-template-areas: "library preview history" "composer preview history";
+    grid-template-areas: "library preview history";
   }
   .elys-workspace[data-mode="compose"]:has(.tool-version-panel:not([hidden])) {
     grid-template-areas: "composer preview history" "library preview history";
@@ -419,10 +419,10 @@ button:enabled { cursor: pointer; }
   .auth-layout { grid-template-columns: minmax(0, 1fr); gap: 17px; padding: 23px 0 0; }
   .auth-intro h1 { margin: 8px 0; }
   .auth-illustration { display: none; }
-  .elys-workspace { grid-template-areas: "library" "preview" "composer"; grid-template-rows: auto; gap: 17px; }
-  .elys-workspace[data-mode="compose"] { grid-template-areas: "composer" "preview" "library"; }
+  .elys-workspace { grid-template-areas: "library" "preview"; grid-template-rows: auto; gap: 17px; }
+  .elys-workspace[data-mode="compose"] { grid-template-areas: "composer" "preview" "library"; grid-template-rows: auto; }
   .elys-workspace:has(.tool-version-panel:not([hidden])) {
-    grid-template-areas: "library" "preview" "history" "composer";
+    grid-template-areas: "library" "preview" "history";
   }
   .elys-workspace[data-mode="compose"]:has(.tool-version-panel:not([hidden])) {
     grid-template-areas: "composer" "preview" "history" "library";

@@ -41,7 +41,15 @@ export async function verifyStagedFlow(ctx) {
     await cdp('Page.reload');
     await until(() => evaluate('document.documentElement.dataset.ready === "true"'));
     assert.equal((await activeTool()).id, old.id);
-    assert.equal(await evaluate('document.querySelectorAll("#staged-task-list button[data-task-id]").length'), 2);
+    for (const width of [1440, 390]) {
+      await cdp('Emulation.setDeviceMetricsOverride', {width,height:844,deviceScaleFactor:1,mobile:width===390});
+      assert.equal(await visible('#staged-panel'), false);
+      await click('#new-tool');
+      assert.equal(await visible(selected), true);
+      assert.equal(await evaluate('document.querySelectorAll("#staged-task-list button[data-task-id]").length'), 2);
+      if (width === 1440) await click('#return-to-library');
+    }
+    await cdp('Emulation.setDeviceMetricsOverride', {width:1440,height:1000,deviceScaleFactor:1,mobile:false});
     await click(selected);
     assert.equal(await evaluate('document.querySelector("#requirement").value'), requirement);
     assert.ok(await visible('#staged-issue'));

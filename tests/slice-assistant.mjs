@@ -29,6 +29,7 @@ export async function verifyAssistant({
   const initialLibrary = await library();
 
   stage('assistant retains input after an error and ignores a late analysis response');
+  await click('#new-tool');
   await click('#idea-entry');
   await until(() => visible(idea));
   assert.match(await text('#assistant-panel'), /本地模拟分析/);
@@ -175,6 +176,7 @@ export async function verifyAssistant({
   stage('saved drafts survive login and stay private to their account');
   await logout();
   await login(accountA);
+  await click('#new-tool');
   await click('#idea-entry');
   await click('#assistant-drafts');
   await until(() => visible(`#assistant-draft-list [data-draft-id="${id}"]`));
