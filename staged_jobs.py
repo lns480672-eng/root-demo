@@ -164,6 +164,7 @@ class StagedJobs:
                         or (revision and (revision["tool_id"], revision["base_version"]) != (tool_id, version))):
                     raise ApiError(409, "staged_request_changed", "同一请求编号的需求或版本不能变更。")
                 return self.view(existing, db)
+            self.budget.require_dispatch_enabled(db)
             identifier = uuid.uuid4().hex
             repo_id, head = None, ZERO
             if tool_id:
@@ -386,6 +387,10 @@ class StagedJobs:
             row = self.owned(db, token, marker, identifier)
             if self.view(row)["state"] != "complete" or identity["commit"] != row["head"]:
                 raise ApiError(409, "staged_not_ready", "此任务尚未生成可预览的候选，或已发布。")
+            revision = self.revision_record(db, identifier)
+            if revision:
+                current = self.store.owned_tool(db, {"id":row["owner"]}, revision["tool_id"])
+                self.store.require_version(revision["base_version"], current["version"])
             candidate = self.candidate_record(db, identifier)
             if candidate is None:
                 tool_id = Path(tempfile.mkdtemp(prefix="run-", dir=self.runs)).name
@@ -396,10 +401,7 @@ class StagedJobs:
                 raise ApiError(409, "staged_candidate_changed", "候选已变化，请重新准备预览。")
             result = {"id":candidate["tool_id"], "html":html.decode(), "entries":[], "revision":0, "version":1,
                       "staged":{**identity, "nonce":candidate["nonce"]}}
-            revision = self.revision_record(db, identifier)
             if revision:
-                current = self.store.owned_tool(db, {"id":row["owner"]}, revision["tool_id"])
-                self.store.require_version(revision["base_version"], current["version"])
                 result.update(id=current["id"], runId=candidate["tool_id"], entries=json.loads(current["entries"]),
                               revision=current["revision"], version=current["version"] + 1)
             if self.permits_backup(row):
@@ -421,6 +423,21 @@ class StagedJobs:
             return self.permits_backup(row)
         except (ValueError, OSError, subprocess.SubprocessError):
             return False
+
+    def resolve_publication(self, token, marker, identifier, nonce):
+        if nonce is not None and (not isinstance(nonce, str) or not IDENTIFIER.fullmatch(nonce)):
+            raise ApiError(400, "staged_input", "保存核对标识无效。")
+        with self.store.connection(write=True) as db:
+            row = self.owned(db, token, marker, identifier)
+            state = self.view(row, db)
+            if state["state"] == "published":
+                return self.store.owned_tool(db, {"id":row["owner"]}, state["toolId"])
+            # The same write lock as publish makes this decision final for the old preview.
+            if state["state"] == "complete":
+                db.execute("""
+                    UPDATE staged_candidates SET nonce=? WHERE task=? AND (? IS NULL OR nonce=?)
+                """, (uuid.uuid4().hex, identifier, nonce, nonce))
+            return None
 
     def publish(self, token, marker, identifier, data):
         identity, html = self.artifact(token, marker, identifier)

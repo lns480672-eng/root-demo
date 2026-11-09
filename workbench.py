@@ -51,7 +51,7 @@ TRIAL = "/api/trial"
 TRIAL_ADMIN = "/api/trial/admin"
 STAGED = "/api/staged"
 STAGED_TASK = re.compile(STAGED + r"/([a-f0-9]{32})")
-STAGED_ACTION = re.compile(STAGED + r"/([a-f0-9]{32})/(resume|candidate|publish)")
+STAGED_ACTION = re.compile(STAGED + r"/([a-f0-9]{32})/(resume|candidate|publish|resolve-publish)")
 ADMIN_INVITES = "/api/admin/invites"
 TABLE_INSPECT = "/api/table/inspect"
 TABLE_GENERATE = "/api/table/generate"
@@ -354,7 +354,7 @@ def serve(key, port, runs=generate.RUNS, *, generation_limits=(5, 30), analysis_
                 if not isinstance(data, dict):
                     raise ValueError
                 json.dumps(data, ensure_ascii=False).encode("utf-8")
-            except (ValueError, TypeError, OSError):
+            except (ValueError, TypeError, OSError, RecursionError):
                 self.error(400, "invalid_body", "请求内容无效。")
                 return
             try:
@@ -399,6 +399,12 @@ def serve(key, port, runs=generate.RUNS, *, generation_limits=(5, 30), analysis_
                     self.send_json(202, {"task":start_staged(token, marker, match[1], resume=True)})
                 elif match[2] == "candidate":
                     self.send_json(200, staged.candidate(token, marker, match[1]))
+                elif match[2] == "resolve-publish":
+                    row = staged.resolve_publication(token, marker, match[1], data.get("nonce"))
+                    if row is None:
+                        self.send_json(200, {"applied": False})
+                    else:
+                        self.send_tool(row, applied=True)
                 else:
                     self.send_tool(staged.publish(token, marker, match[1], data), applied=True)
                 return

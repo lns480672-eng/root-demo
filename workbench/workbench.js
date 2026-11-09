@@ -58,6 +58,7 @@ let stagedMessage = '';
 let stagedActivity = '';
 let stagedLoadError = '';
 let stagedPendingId = null;
+let stagedPendingNonce = null;
 let stagedSubmission = null;
 let stagedGuide = null;
 
@@ -196,10 +197,11 @@ function stagedPendingKey() {
   return 'root:pending-staged:' + session.user;
 }
 
-function rememberStagedPublication(id) {
+function rememberStagedPublication(id, nonce = null) {
   stagedPendingId = id;
+  stagedPendingNonce = nonce;
   try {
-    if (id) sessionStorage.setItem(stagedPendingKey(), id);
+    if (id) sessionStorage.setItem(stagedPendingKey(), nonce ? id + ':' + nonce : id);
     else sessionStorage.removeItem(stagedPendingKey());
   } catch {
     // The server's task list can still recover the candidate without local storage.
@@ -208,8 +210,8 @@ function rememberStagedPublication(id) {
 
 function restoredStagedPublication() {
   try {
-    const id = sessionStorage.getItem(stagedPendingKey());
-    return validStagedId(id) ? id : null;
+    const [id, nonce] = (sessionStorage.getItem(stagedPendingKey()) || '').split(':');
+    return validStagedId(id) && (!nonce || validStagedId(nonce)) ? { id, nonce } : null;
   } catch {
     return null;
   }
@@ -1031,9 +1033,17 @@ async function readStagedPublication(id) {
   return null;
 }
 
+async function resolveStagedPublication(id) {
+  const result = await workspaceApi('/api/staged/' + id + '/resolve-publish',
+    { nonce: stagedPendingNonce }, publicationTimeout);
+  if (result.applied === true) return result;
+  if (result.applied === false) return null;
+  throw new Error('无法确认保存结果。');
+}
+
 async function commitStaged(frame, tool) {
   const { taskId, commit, sha256, nonce } = tool.staged;
-  rememberStagedPublication(taskId);
+  rememberStagedPublication(taskId, nonce);
   stagedActivity = '正在保存';
   render();
   try {
@@ -1051,7 +1061,7 @@ async function commitStaged(frame, tool) {
   }
   let saved;
   try {
-    saved = await readStagedPublication(taskId);
+    saved = await resolveStagedPublication(taskId);
   } catch {
     throw new Error('暂时无法确认保存结果，请核对同一任务。');
   }
@@ -1076,7 +1086,7 @@ async function synchronizeStagedPublication() {
   const id = stagedPendingId;
   if (!id) return;
   try {
-    const saved = await readStagedPublication(id);
+    const saved = await resolveStagedPublication(id);
     if (saved) {
       if (active?.id !== saved.id || active.revision !== saved.revision || active.version !== saved.version) {
         await openTool(saved, true);
@@ -1086,8 +1096,12 @@ async function synchronizeStagedPublication() {
     } else {
       rememberStagedPublication(null);
       if (active?.iframe.inert) resumeStorage(active);
-      const task = stagedTasks.find(item => item.id === id);
-      if (task) requirement.value = task.requirement;
+      const snapshot = await workspaceApi('/api/staged/' + id, undefined, publicationTimeout).catch(() => null);
+      const task = snapshot?.task || stagedTasks.find(item => item.id === id);
+      if (task) {
+        rememberStagedTask(task);
+        requirement.value = task.requirement;
+      }
       selectedStagedId = id;
       compose(true);
       stagedMessage = '未查到已保存的工具。';
@@ -1538,8 +1552,8 @@ async function start(registration = null) {
           await selectTool(latest);
         }
         if (previousStagePublication) {
-          stagedPendingId = previousStagePublication;
-          selectedStagedId = previousStagePublication;
+          rememberStagedPublication(previousStagePublication.id, previousStagePublication.nonce);
+          selectedStagedId = previousStagePublication.id;
           phase = 'sync';
           stagedActivity = '正在核对保存';
           render();

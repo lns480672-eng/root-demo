@@ -19,9 +19,22 @@ PROGRAM = """
 from pathlib import Path
 import json
 import sys
+import time
 import generate
+from staged_jobs import StagedJobs
 import workbench
 from accounts import ApiError, Store
+
+publish = StagedJobs.publish
+def delayed_publish(self, token, marker, task, data):
+    if data.get("entries") == [["late", "test"]]:
+        (self.runs / "publish-waiting").touch()
+        deadline = time.monotonic() + 4
+        while not (self.runs / "publish-go").exists() and time.monotonic() < deadline:
+            time.sleep(.01)
+    return publish(self, token, marker, task, data)
+
+StagedJobs.publish = delayed_publish
 
 def ordinary(requirement, key):
     return 200, json.dumps({"choices":[{"finish_reason":"stop",
@@ -310,5 +323,66 @@ class StagedHTTP(unittest.TestCase):
                          (candidate["id"], 2, changes))
         self.assertEqual(self.request(rev_path + "/publish", payload, owner)[1], published[1])
         self.assertEqual(self.request(tool + "/revise", data, owner)[1]["task"]["id"], revision)
-        self.assertEqual(self.request("/api/staged/" + competing + "/candidate", {}, owner)[1]["code"], "version_conflict")
+        runs_before = set(self.runs.glob("run-*"))
+        for _ in range(3):
+            self.assertEqual(self.request("/api/staged/" + competing + "/candidate", {}, owner)[1]["code"],
+                             "version_conflict")
+        self.assertEqual(set(self.runs.glob("run-*")), runs_before)
         self.assertEqual(self.request("/api/trial", auth=owner)[1]["generation"]["used"], 2)
+
+    def test_resolve_fences_a_late_publish_without_revoking_the_new_preview(self):
+        owner = self.account("staged-resolve")
+        other = self.account("staged-resolve-other")
+        status, response, _ = self.gen(owner, "计算两个数字，验证保存超时")
+        self.assertEqual(status, 202)
+        task = response["task"]["id"]
+        self.wait_task(owner, task, "complete")
+        path = "/api/staged/" + task
+        first = self.request(path + "/candidate", {}, owner)[1]
+        nonce = first["staged"]["nonce"]
+        self.assertEqual(self.request(path + "/resolve-publish", {"nonce":nonce}, other)[0], 404)
+        payload = {**first["staged"], "toolId":first["id"], "entries":[["late", "test"]]}
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            late = pool.submit(self.request, path + "/publish", payload, owner)
+            try:
+                deadline = time.monotonic() + 3
+                while not (self.runs / "publish-waiting").exists() and time.monotonic() < deadline:
+                    time.sleep(.01)
+                self.assertTrue((self.runs / "publish-waiting").exists())
+                self.assertEqual(self.request(path + "/resolve-publish", {"nonce":nonce}, owner)[:2],
+                                 (200, {"applied":False}))
+                self.assertEqual(self.request("/api/tools", auth=owner)[1]["items"], [])
+            finally:
+                (self.runs / "publish-go").touch()
+            self.assertEqual(late.result()[1]["code"], "staged_candidate_changed")
+        self.assertEqual(self.request("/api/trial", auth=owner)[1]["generation"]["used"], 0)
+        current = self.request(path + "/candidate", {}, owner)[1]
+        self.assertNotEqual(current["staged"]["nonce"], nonce)
+        self.assertEqual(self.request(path + "/resolve-publish", {"nonce":nonce}, owner)[1], {"applied":False})
+        self.assertEqual(self.request(path + "/candidate", {}, owner)[1], current)
+        status, saved, _ = self.request(path + "/publish",
+                                       {**current["staged"], "toolId":current["id"], "entries":[]}, owner)
+        self.assertEqual(status, 200)
+        self.assertEqual(self.request(path + "/resolve-publish", {"nonce":current["staged"]["nonce"]}, owner)[1],
+                         saved)
+        self.assertEqual(self.request("/api/trial", auth=owner)[1]["generation"]["used"], 1)
+
+    def test_paused_generation_cannot_create_jobs_or_repositories(self):
+        owner = self.account("staged-paused-owner")
+        status, _, cookie = self.request("/api/login", {"username":"staged-operator", "password":"test-only-password"})
+        self.assertEqual(status, 200)
+        cookie = cookie.split(";")[0]
+        session = self.request("/api/session", auth=(cookie, ""))[1]
+        admin = (cookie, session["marker"])
+        self.assertEqual(self.request("/api/trial/admin", {"action":"pause"}, admin)[0], 200)
+        try:
+            before = set(self.runs.glob("**/*.git"))
+            balance = self.request("/api/trial", auth=owner)[1]["generation"]
+            for index in range(32):
+                status, body, _ = self.gen(owner, f"计算暂停时的提交 {index}")
+                self.assertEqual((status, body.get("code")), (503, "model_paused"))
+            self.assertEqual(self.request("/api/staged", auth=owner)[1]["tasks"], [])
+            self.assertEqual(set(self.runs.glob("**/*.git")), before)
+            self.assertEqual(self.request("/api/trial", auth=owner)[1]["generation"], balance)
+        finally:
+            self.assertEqual(self.request("/api/trial/admin", {"action":"resume"}, admin)[0], 200)

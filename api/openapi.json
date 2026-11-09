@@ -1745,7 +1745,7 @@
           "生成任务"
         ],
         "summary": "保存通过预览检查的候选",
-        "description": "工作台在隔离预览通过后提交绑定及存储快照。修订须同时提交 runId 和候选对应的 revision，且保留现有存储；最新数据发生变动时返回 revision_conflict，重新取候选并复验。其他任务已更新基准版本时返回 version_conflict。同一已发布候选重放返回同一工具，个人成功额度只扣一次。回执丢失时先查任务；published 时按 toolId 打开，complete 时重新检查同一候选。",
+        "description": "工作台在隔离预览通过后提交绑定及存储快照。修订须同时提交 runId 和候选对应的 revision，且保留现有存储；最新数据发生变动时返回 revision_conflict，重新取候选并复验。其他任务已更新基准版本时返回 version_conflict。同一已发布候选重放返回同一工具，个人成功额度只扣一次。回执丢失时先调用同一任务的 resolve-publish。",
         "responses": {
           "200": {
             "description": "保存通过预览检查的候选",
@@ -1794,6 +1794,94 @@
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/PublishStagedCandidate"
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/TaskId"
+          },
+          {
+            "$ref": "#/components/parameters/Origin"
+          }
+        ]
+      }
+    },
+    "/api/staged/{taskId}/resolve-publish": {
+      "post": {
+        "operationId": "resolveGenerationPublication",
+        "tags": [
+          "生成任务"
+        ],
+        "summary": "核对生成任务的保存结果",
+        "description": "返回已发布的工具，或在同一写事务内撤销原预览的保存凭据并返回 applied=false。缺少 nonce 时兼容旧版保存记录。",
+        "responses": {
+          "200": {
+            "description": "保存结果已核对",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/PublishedStagedTool"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "applied": {
+                          "const": false
+                        }
+                      },
+                      "required": [
+                        "applied"
+                      ]
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Http401"
+          },
+          "404": {
+            "$ref": "#/components/responses/Http404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Http409"
+          },
+          "403": {
+            "$ref": "#/components/responses/Http403"
+          },
+          "400": {
+            "$ref": "#/components/responses/Http400"
+          },
+          "415": {
+            "$ref": "#/components/responses/Http415"
+          },
+          "503": {
+            "$ref": "#/components/responses/Http503"
+          },
+          "default": {
+            "$ref": "#/components/responses/UnexpectedError"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "nonce": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "pattern": "^[a-f0-9]{32}$"
+                  }
+                }
               }
             }
           }

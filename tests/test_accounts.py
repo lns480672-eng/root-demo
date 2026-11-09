@@ -63,6 +63,16 @@ class AccountHTTP(unittest.TestCase):
         with response:
             return response.status, json.load(response), response.headers.get("Set-Cookie")
 
+    def test_deeply_nested_json_returns_a_structured_error(self):
+        body = b'{"value":' + b"[" * 1200 + b"0" + b"]" * 1200 + b"}"
+        request = Request(self.base + "/api/generate", body,
+                          {"Origin":self.base, "Content-Type":"application/json"})
+        with self.assertRaises(HTTPError) as failure:
+            urlopen(request, timeout=5)
+        with failure.exception as response:
+            self.assertEqual(response.code, 400)
+            self.assertEqual(json.load(response)["code"], "invalid_body")
+
     def test_unauthenticated_generation_is_rejected(self):
         status, body, _ = self.request("/api/generate", {"requirement": "待授权"})
         self.assertEqual((status, body.get("code")), (401, "login_required"))

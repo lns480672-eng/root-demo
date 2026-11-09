@@ -200,7 +200,27 @@ export async function verifyStagedRegistration(ctx) {
   }, 105000);
   assert.deepEqual(task.steps, ['spec','entry','assemble']);
   assert.deepEqual(task.completed, task.steps);
+  if (process.env.ROOT_STAGED_LIVE !== '1') {
+    await evaluate(`(() => {
+      const original = window.fetch;
+      window.fetch = (path, options) => {
+        if (!String(path).endsWith('/publish')) return original(path, options);
+        window.fetch = original;
+        window.releaseLateStagedPublish = () => original(path, {...options, signal: undefined})
+          .then(async response => ({status:response.status, code:(await response.json()).code}));
+        return Promise.reject(new TypeError('fixture: publish response missing'));
+      };
+    })()`);
+  }
   await evaluate('window.releaseFixturePreview()');
+  if (process.env.ROOT_STAGED_LIVE !== '1') {
+    await until(async () => (await evaluate('document.querySelector("#staged-reason").textContent'))
+      .includes('未查到已保存的工具'));
+    assert.deepEqual(await evaluate('window.releaseLateStagedPublish()'),
+      {status:409, code:'staged_candidate_changed'});
+    assert.equal((await appRequest('/api/tools')).body.items.length, 0);
+    await click('#staged-preview');
+  }
   const tool = await activeTool();
   const frame = expression => evaluate(expression, tool.context);
   assert.deepEqual(await frame('["filters","summary","export"].map(id => document.getElementById(id).hidden)'),
