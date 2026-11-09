@@ -828,6 +828,70 @@
         ]
       }
     },
+    "/api/tools/{toolId}/restore": {
+      "post": {
+        "operationId": "prepareToolHistoryRestore",
+        "tags": [
+          "工具"
+        ],
+        "summary": "准备恢复导表工具的较早版本",
+        "description": "校验账号、当前版本和存储修订，验证历史版本能读取当前业务记录。成功后返回同工具的隔离预览候选，通过 /publish 提交为新历史记录。恢复不调用模型，也不消耗额度。版本或记录有冲突时返回 409；无法验证兼容性时返回 409 incompatible_restore。",
+        "responses": {
+          "200": {
+            "description": "可安全预览的恢复候选。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Tool"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Http400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Http401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Http403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Http404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Http409"
+          },
+          "415": {
+            "$ref": "#/components/responses/Http415"
+          },
+          "503": {
+            "$ref": "#/components/responses/Http503"
+          },
+          "default": {
+            "$ref": "#/components/responses/UnexpectedError"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RestoreToolVersion"
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ToolId"
+          },
+          {
+            "$ref": "#/components/parameters/Origin"
+          }
+        ]
+      }
+    },
     "/api/tools/{toolId}/publish": {
       "post": {
         "operationId": "publishLegacyRevision",
@@ -835,7 +899,7 @@
           "工具"
         ],
         "summary": "发布既有修订候选",
-        "description": "旧修订协议的本机兼容与测试接口。统一修订使用 /api/staged/{taskId}/publish。 绑定运行 ID 和最新存储修订号。新版必须保留既有数据。回执不确定时先 resolve-publish。",
+        "description": "发布已校验的本机历史恢复候选，亦兼容旧修订协议。统一模型修订使用 /api/staged/{taskId}/publish。绑定运行 ID 和最新存储修订号。新版必须保留既有数据。回执不确定时先 resolve-publish。",
         "responses": {
           "200": {
             "description": "发布既有修订候选",
@@ -2663,6 +2727,28 @@
         "required": [
           "revision",
           "version"
+        ]
+      },
+      "RestoreToolVersion": {
+        "type": "object",
+        "properties": {
+          "version": {
+            "type": "integer",
+            "minimum": 2
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "restoreVersion": {
+            "type": "integer",
+            "minimum": 1
+          }
+        },
+        "required": [
+          "version",
+          "revision",
+          "restoreVersion"
         ]
       },
       "LegacyRevisionPublish": {

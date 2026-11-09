@@ -12,6 +12,7 @@ const composer = form.closest('section');
 const library = byId('saved-tools');
 const welcome = byId('workspace-guide');
 const toolHistory = byId('tool-version-panel');
+const restoreDialog = byId('restore-version-dialog');
 const maxStorageBytes = 256 * 1024;
 const tableStorageBytes = 8 * 1024 * 1024;
 const publicationKey = 'root:pending-publication';
@@ -699,12 +700,27 @@ async function loadToolHistory() {
     if (request !== historyRequest || active?.id !== id) return;
     list.replaceChildren(...items.map(item => {
       const date = item.effectiveAt && new Date(item.effectiveAt * 1000);
-      return versionRecord({
+      const row = versionRecord({
         version: 'v' + item.version, note: item.note,
         current: item.version === current ? '当前' : '',
         date: date && date.toISOString(),
         label: date ? date.toLocaleString('zh-CN') + (item.approximate ? '（文件时间）' : '') : '时间未记录',
       });
+      if (item.version !== current && active.storageLimit === tableStorageBytes) {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.dataset.restoreVersion = item.version;
+        button.textContent = '恢复 v' + item.version;
+        button.addEventListener('click', () => {
+          if (phase !== 'idle' || pendingPublication || stagedPendingId) return;
+          restoreDialog.returnValue = '';
+          restoreDialog.dataset.version = item.version;
+          byId('restore-version-title').textContent = '恢复 v' + item.version;
+          restoreDialog.showModal();
+        });
+        row.append(button);
+      }
+      return row;
     }));
     status.textContent = '';
   } catch (error) {
@@ -1074,7 +1090,7 @@ async function synchronizePublication() {
     clearPublication();
     if (current.applied) {
       finishComposition(true);
-      if (!runId) await loadLibrary().catch(error => warnStorage(error.message));
+      await loadLibrary().catch(error => warnStorage(error.message));
     }
     else if (editing) failure = '本次修改未发布，已同步当前工具。你可以重试。';
     else warnStorage('本次修改未发布，已恢复当前工具。');
@@ -1288,6 +1304,36 @@ async function openTool(tool, restore = false) {
     candidate = null;
   }
 }
+
+restoreDialog.addEventListener('close', async () => {
+  if (restoreDialog.returnValue !== 'restore' || !active || phase !== 'idle'
+      || pendingPublication || stagedPendingId) return;
+  const source = active;
+  const status = byId('tool-version-status');
+  phase = 'restore';
+  status.textContent = '正在准备恢复…';
+  render();
+  try {
+    await source.saveTail;
+    if (source.saveFailed) throw new Error('当前还有未保存的记录，请重新打开后再恢复。');
+    const tool = await workspaceApi('/api/tools/' + source.id + '/restore', {
+      version: source.version, revision: source.revision, restoreVersion: Number(restoreDialog.dataset.version),
+    }, publicationTimeout);
+    await openTool(tool);
+    finishComposition();
+    await loadLibrary().catch(error => warnStorage(error.message));
+  } catch (error) {
+    if (pendingPublication) await synchronizePublication();
+    else {
+      status.textContent = error.message;
+      warnStorage(error.message);
+    }
+  } finally {
+    phase = 'idle';
+    render();
+    if (!pendingPublication && toolHistory.hidden) byId('tool-history').focus();
+  }
+});
 
 async function openRevision(tool) {
   try {

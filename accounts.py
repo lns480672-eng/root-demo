@@ -93,6 +93,10 @@ class Store:
                     run_id TEXT PRIMARY KEY, tool_id TEXT NOT NULL REFERENCES tools(id),
                     base_version INTEGER NOT NULL, note TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS table_restore_drafts (
+                    run_id TEXT PRIMARY KEY REFERENCES revision_drafts(run_id) ON DELETE CASCADE,
+                    title TEXT NOT NULL, revision INTEGER NOT NULL
+                );
                 CREATE TABLE IF NOT EXISTS requirement_drafts (
                     id TEXT PRIMARY KEY, owner INTEGER NOT NULL REFERENCES accounts(id),
                     text TEXT NOT NULL, revision INTEGER NOT NULL, updated_at INTEGER NOT NULL
@@ -317,6 +321,26 @@ class Store:
             self.insert_revision_draft(db, row, run_id, note, model=model)
             return dict(row)
 
+    def prepare_restore(self, token, marker, tool_id, data, prepare):
+        with self.connection(write=True) as db:
+            user = self.session(db, token, marker)
+            row = self.owned_tool(db, user, tool_id)
+            self.require_version(data.get("version"), row["version"])
+            if type(data.get("revision")) is not int or data["revision"] != row["revision"]:
+                raise ApiError(409, "revision_conflict", "此工具已在别处更新，请重新打开后再恢复。")
+            target = data.get("restoreVersion")
+            if type(target) is not int or not 1 <= target < row["version"]:
+                raise ApiError(400, "invalid_restore", "请选择此工具的较早版本。")
+            history = db.execute(
+                "SELECT run_id FROM tool_versions WHERE tool_id=? AND version=?", (tool_id, target),
+            ).fetchone()
+            if not row["table_tool"] or history is None:
+                raise ApiError(409, "incompatible_restore", "无法验证此旧版与当前记录兼容，当前版本仍可用。")
+            run_id, title = prepare(row, history["run_id"])
+            self.insert_revision_draft(db, row, run_id, f"恢复自 v{target}")
+            db.execute("INSERT INTO table_restore_drafts VALUES (?,?,?)", (run_id, title, row["revision"]))
+            return row, run_id
+
     @staticmethod
     def insert_revision_draft(db, row, run_id, note, *, model=False):
         db.execute("INSERT INTO revision_drafts VALUES (?,?,?,?)", (run_id, row["id"], row["version"], note))
@@ -371,9 +395,15 @@ class Store:
         self.require_version(draft["base_version"], row["version"])
         if type(revision) is not int or revision != row["revision"]:
             raise ApiError(409, "revision_conflict", "已有更新的数据，请用最新记录重新准备预览。")
+        restore = db.execute("SELECT title, revision FROM table_restore_drafts WHERE run_id=?", (run_id,)).fetchone()
+        if restore is not None and restore["revision"] != revision:
+            raise ApiError(409, "revision_conflict", "已有更新的数据，请用最新记录重新准备恢复。")
         limit = TABLE_STORAGE_BYTES if row["table_tool"] else TOOL_STORAGE_BYTES
         packed = pack_entries(data.get("entries"), limit=limit)
-        if not dict(json.loads(row["entries"])).items() <= dict(data["entries"]).items():
+        current_entries = dict(json.loads(row["entries"]))
+        candidate_entries = dict(data["entries"])
+        if (not current_entries.items() <= candidate_entries.items()
+                or (restore is not None and current_entries != candidate_entries)):
             raise ApiError(409, "incompatible_data", "新版无法原样保留已有数据，旧版仍可用。")
         db.execute("INSERT OR IGNORE INTO tool_versions VALUES (?,1,?,'首次生成',NULL)",
                    (row["id"], row["id"]))
@@ -382,7 +412,8 @@ class Store:
                    (row["id"], version, run_id, draft["note"], int(time.time())))
         self.record_candidate_success(db, row, run_id, record)
         db.execute("DELETE FROM revision_drafts WHERE run_id=?", (run_id,))
-        db.execute("UPDATE tools SET entries=?,revision=? WHERE id=?", (packed, revision + 1, row["id"]))
+        title = restore["title"] if restore is not None else row["title"]
+        db.execute("UPDATE tools SET entries=?,revision=?,title=? WHERE id=?", (packed, revision + 1, title, row["id"]))
         db.execute("UPDATE accounts SET latest_tool=? WHERE id=?", (row["id"], row["owner"]))
         return {"revision": revision + 1, "version": version}
 

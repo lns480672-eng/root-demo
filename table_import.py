@@ -13,7 +13,8 @@ import zlib
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
-from html import escape
+from hashlib import sha256
+from html import escape, unescape
 from urllib.parse import unquote, urlsplit
 from xml.etree import ElementTree
 
@@ -502,6 +503,51 @@ def build_table_tool(table, limits=TableLimits()):
             raise
         raise ApiError(413, "csv_size", "确认后的表格超过工具存储空间，请减少行列后重试。") from None
     return SUGGESTION, render_tool(), entries
+
+
+# Initial table template shipped before column-filter revisions (root.table.v1).
+LEGACY_TOOL_DIGEST = "c22c4557b1a65d58e6332cc73cac304b925d797e96792c384158813d48f9009a"
+
+
+def tool_configuration(html):
+    """Recognize server-rendered table markup and recover only its display configuration."""
+    if sha256(html.encode("utf-8")).hexdigest() == LEGACY_TOOL_DIGEST:
+        return {"title": SUGGESTION, "filters": []}
+    title = re.search(r"<title>([^<>]*)</title>", html)
+    filters = re.search(r"const columnFilters = (\[[0-9, ]*\]);", html)
+    if title and filters:
+        configuration = {"title": unescape(title[1]), "filters": json.loads(filters[1])}
+        if render_tool(**configuration) == html:
+            return configuration
+    raise ValueError("unrecognized table renderer")
+
+
+def read_saved_table(entries):
+    """Check the data contract shared by all recognized table renderers."""
+    storage = json.loads(entries)
+    if not isinstance(storage, list) or len(storage) != 1:
+        raise ValueError("invalid saved table storage")
+    key, value = storage[0]
+    if key != TABLE_KEY:
+        raise ValueError("invalid saved table key")
+    table = json.loads(value)
+    if not isinstance(table, dict) or not isinstance(table.get("filename"), str):
+        raise ValueError("invalid saved table")
+    columns, rows, done = table.get("columns"), table.get("rows"), table.get("done")
+    if not isinstance(columns, list) or not 1 <= len(columns) <= MAX_TABLE_COLUMNS or any(
+        not isinstance(column, dict) or not valid_label(column.get("name"), MAX_HEADER_LENGTH)
+        or not isinstance(column.get("type"), str) or column["type"] not in COLUMN_TYPES
+        for column in columns
+    ):
+        raise ValueError("invalid saved table columns")
+    if not isinstance(rows, list) or any(
+        not isinstance(row, list) or len(row) != len(columns) or not all(isinstance(cell, str) for cell in row)
+        for row in rows
+    ):
+        raise ValueError("invalid saved table rows")
+    if not isinstance(done, list) or len(done) != len(rows) or not all(type(status) is bool for status in done):
+        raise ValueError("invalid saved table statuses")
+    return table
 
 
 def render_tool(title=SUGGESTION, filters=()):

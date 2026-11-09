@@ -12,6 +12,7 @@ from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 from uuid import uuid4
 from accounts import Store, digest
+from table_import import TABLE_KEY, render_tool
 
 
 class AccountHTTP(unittest.TestCase):
@@ -327,6 +328,77 @@ class AccountHTTP(unittest.TestCase):
         self.assertEqual(self.request(path + "/commit", {"entries": tool["entries"]}, owner, marker)[0], 200)
         self.assertEqual(self.request(path, cookie=owner, marker=marker)[1]["entries"], tool["entries"])
         self.assertEqual(self.request(path, cookie=other, marker=other_marker)[0], 404)
+
+    def test_table_history_restore_preserves_current_records(self):
+        # TEST-008 / CHG-026: prepare, publish, reload, reject stale/unsafe input.
+        for username in ("history-owner", "history-other"):
+            self.assertEqual(self.register(username, self.store.create_invite())[0], 201)
+        owner = self.login("history-owner")
+        other = self.login("history-other")
+        status, imported, _ = self.request("/api/table/inspect", {
+            "source": "upload", "filename": "交付.csv", "csv": "事项,负责人\n原记录,甲\n",
+        }, *owner)
+        self.assertEqual(status, 200)
+        status, initial, _ = self.request("/api/table/generate", {"table": imported}, *owner)
+        self.assertEqual(status, 200)
+        path = "/api/tools/" + initial["id"]
+        self.assertEqual(self.request(path + "/commit", {"entries": initial["entries"]}, *owner)[0], 200)
+
+        # Install a deterministic v2 artifact without depending on the model provider.
+        directory = Path(tempfile.mkdtemp(prefix="run-", dir=self.runs))
+        (directory / "app.html").write_text(render_tool("交付看板", [1]), encoding="utf-8")
+        with self.store.connection(write=True) as db:
+            db.execute("INSERT INTO tool_versions VALUES (?,2,?,'新增筛选',?)",
+                       (initial["id"], directory.name, int(time.time())))
+            db.execute("UPDATE tools SET title='交付看板',revision=2 WHERE id=?", (initial["id"],))
+
+        table = json.loads(dict(initial["entries"])[TABLE_KEY])
+        table["rows"].append(["后续记录", "乙"])
+        table["done"].append(True)
+        entries = [[TABLE_KEY, json.dumps(table, ensure_ascii=False)]]
+        self.assertEqual(self.request(path + "/data", {"version": 2, "revision": 2, "entries": entries}, *owner)[0], 200)
+        payload = {"version": 2, "revision": 3, "restoreVersion": 1}
+        budget = self.request("/api/trial", cookie=owner[0], marker=owner[1])[1]["generation"]
+        self.assertEqual(self.request(path + "/restore", payload, *other)[0], 404)
+        self.assertEqual(self.request(path + "/restore", {**payload, "revision": 2}, *owner)[1]["code"],
+                         "revision_conflict")
+        status, obsolete, _ = self.request(path + "/restore", payload, *owner)
+        self.assertEqual(status, 200)
+        table["rows"].append(["并发记录", "甲"])
+        table["done"].append(False)
+        entries = [[TABLE_KEY, json.dumps(table, ensure_ascii=False)]]
+        self.assertEqual(self.request(path + "/data", {"version": 2, "revision": 3, "entries": entries}, *owner)[0], 200)
+        obsolete_publish = {"runId": obsolete["runId"], "revision": 4, "entries": entries}
+        self.assertEqual(self.request(path + "/publish", obsolete_publish, *owner)[1]["code"], "revision_conflict")
+        status, resolved, _ = self.request(path + "/resolve-publish", {"runId": obsolete["runId"]}, *owner)
+        self.assertEqual((status, resolved["version"], resolved["applied"], resolved["entries"]),
+                         (200, 2, False, entries))
+        self.assertEqual(self.request(path + "/publish", obsolete_publish, *owner)[0], 404)
+        payload["revision"] = 4
+        status, candidate, _ = self.request(path + "/restore", payload, *owner)
+        self.assertEqual(status, 200)
+        self.assertEqual((candidate["id"], candidate["version"], candidate["entries"]),
+                         (initial["id"], 3, entries))
+        self.assertEqual(candidate["html"], initial["html"])
+        self.assertEqual(self.request(path + "/versions", cookie=owner[0], marker=owner[1])[1]["current"], 2)
+        publish = {"runId": candidate["runId"], "revision": 4, "entries": entries}
+        self.assertEqual(self.request(path + "/publish", publish, *owner)[0], 200)
+        self.assertEqual(self.request(path + "/publish", publish, *owner)[0], 200)
+        status, confirmed, _ = self.request(path + "/resolve-publish", {"runId": candidate["runId"]}, *owner)
+        self.assertEqual((status, confirmed["applied"], confirmed["version"]), (200, True, 3))
+        status, current, _ = self.request(path, cookie=owner[0], marker=owner[1])
+        self.assertEqual((status, current["version"], current["entries"], current["html"]),
+                         (200, 3, entries, initial["html"]))
+        self.assertEqual(self.request(path + "/versions", cookie=owner[0], marker=owner[1])[1]["items"][0]["note"],
+                         "恢复自 v1")
+        self.assertEqual(self.request("/api/tools", cookie=owner[0], marker=owner[1])[1]["items"][0]["title"],
+                         "交付跟进板")
+        self.assertEqual(self.request("/api/trial", cookie=owner[0], marker=owner[1])[1]["generation"], budget)
+        self.assertEqual(self.request(path + "/restore", payload, *owner)[1]["code"], "version_conflict")
+        (directory / "app.html").write_text(render_tool("交付看板", [1]) + "<script>unsafe()</script>", encoding="utf-8")
+        self.assertEqual(self.request(path + "/restore", {"version": 3, "revision": 5, "restoreVersion": 2}, *owner)[1]["code"],
+                         "incompatible_restore")
+        self.assertEqual(self.request(path, cookie=owner[0], marker=owner[1])[1], current)
 
     def test_large_table_uses_only_its_trusted_storage_limit(self):
         self.assertEqual(self.register("large-table", self.store.create_invite())[0], 201)

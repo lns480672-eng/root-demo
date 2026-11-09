@@ -41,7 +41,7 @@ STATIC = {
     "/workbench.js": ("workbench.js", "text/javascript; charset=utf-8"),
 }
 TOOL_PATH = re.compile(r"/api/tools/(run-[a-z0-9_]{8})")
-TOOL_ACTION = re.compile(r"/api/tools/(run-[a-z0-9_]{8})/(commit|open|data|publish|revise|resolve-publish|resolve-commit)")
+TOOL_ACTION = re.compile(r"/api/tools/(run-[a-z0-9_]{8})/(commit|open|data|publish|revise|restore|resolve-publish|resolve-commit)")
 TOOL_VERSIONS = re.compile(r"/api/tools/(run-[a-z0-9_]{8})/versions")
 DRAFTS = "/api/requirement-drafts"
 UUID = r"[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}"
@@ -433,6 +433,9 @@ def serve(key, port, runs=generate.RUNS, *, generation_limits=(5, 30), analysis_
             if match := TOOL_ACTION.fullmatch(self.path):
                 if match[2] == "revise":
                     self.handle_generation(data, match[1])
+                elif match[2] == "restore":
+                    row, run_id = store.prepare_restore(token, self.marker(), match[1], data, self.prepare_table_restore)
+                    self.send_tool(row, draft=run_id)
                 elif match[2] == "resolve-publish":
                     row, applied = store.resolve_publication(token, self.marker(), match[1], data.get("runId"))
                     self.send_tool(row, applied=applied)
@@ -449,6 +452,22 @@ def serve(key, port, runs=generate.RUNS, *, generation_limits=(5, 30), analysis_
             if self.path != "/api/generate":
                 raise ApiError(404, "not_found", "页面不存在。")
             self.handle_generation(data)
+
+        def prepare_table_restore(self, row, historical_run):
+            try:
+                table = table_import.read_saved_table(row["entries"])
+                current = table_import.tool_configuration(self.read_tool_html(row["run_id"]))
+                target = table_import.tool_configuration(self.read_tool_html(historical_run))
+                if any(index >= len(table["columns"]) for config in (current, target) for index in config["filters"]):
+                    raise ValueError("invalid filter column")
+            except (ApiError, TypeError, ValueError, RecursionError):
+                raise ApiError(409, "incompatible_restore", "无法验证此旧版与当前记录兼容，当前版本仍可用。") from None
+            try:
+                run = Path(tempfile.mkdtemp(prefix="run-", dir=runs))
+                (run / "app.html").write_text(table_import.render_tool(**target), encoding="utf-8")
+            except OSError:
+                raise ApiError(503, "save_failed", "本机无法准备旧版本，请重试。") from None
+            return run.name, target["title"]
 
         def handle_analysis(self, data, token):
             marker = self.marker()
