@@ -73,10 +73,12 @@ generation_category 不是 auto 时按该类别生成，landing 和 brand 对应
 "edit_choice":{"field":"field_id","initial":"选项原文"}}。
 字段引用必须逐字复制 entry_fields.ids 中的 ID，不使用字段标签、序号、自拟别名或内置记录 ID。
 sort.field 只可使用 entry_fields.sortable_ids，edit_choice.field 和 board 只可使用 entry_fields.choice_ids。
-board 是字符串，必须与 edit_choice.field 完全相同；initial 使用该字段 options 中的原文。
-form 按录入顺序列出字段，默认状态由 edit_choice 设置，不要把该字段列入 form。columns 为实际显示的完整明细。
-sort 只可用日期或整数，edit_choice 只能用 choice。不需要排序或状态编辑的需求用 null。
-可选键 board 为 edit_choice 的 field，明确要求看板分栏、点按钮切换时必须返回，分栏顺序取字段选项。
+sort 只可用日期或整数，edit_choice 只能用 choice。不需要排序或状态编辑时将对应键设为 null。
+用户要求新增后可以更新某个状态时，用 edit_choice 表示该状态。它在新增时自动填初值，在明细中提供更新操作。
+从 accepted_spec.fields 对应字段的 options 逐字复制 initial。form 不得包含该状态字段，columns 必须包含该状态字段。
+form 按录入顺序列出其余所有字段；edit_choice 为 null 时 form 列出全部字段。columns 按显示顺序列出明细字段。
+返回前核对 initial 在原选项中、状态字段在 form 外且在 columns 内。可选键 board 为 edit_choice 的 field，
+明确要求看板分栏、点按钮切换时必须返回，分栏顺序取字段选项。
 可选布尔键 allow_edit、allow_delete、backup 分别启用编辑、删除和完整记录的 JSON 文件导出及导入。
 明确要求这些功能时必须将对应键设为 true。没有要求时省略。""",
     "filters": """{"search":["text_field_id"],"exact":["text_or_choice_field_id"],"date":"date_field_id"}。
@@ -202,8 +204,9 @@ def validate_module(stage, value, spec):
         if choice is not None:
             keys(choice, "field", "initial")
             field = ref(choice["field"], {"choice"}, slot="edit_choice.field")
-            require(choice["initial"] in field["options"] and choice["field"] not in value["form"]
-                    and choice["field"] in value["columns"], "bad_choice_default")
+            require(choice["initial"] in field["options"], "bad_choice_initial")
+            require(choice["field"] not in value["form"], "bad_choice_in_form")
+            require(choice["field"] in value["columns"], "bad_choice_missing_column")
         if "board" in value:
             board = value["board"]
             ref(board, {"choice"}, slot="board")

@@ -251,6 +251,9 @@ class StageProviderTests(unittest.TestCase):
                 "sortable_ids": ["date", "delay"],
                 "choice_ids": ["status"],
             })
+            system = body["messages"][0]["content"]
+            self.assertIn("从 accepted_spec.fields 对应字段的 options 逐字复制 initial", system)
+            self.assertIn("form 不得包含该状态字段，columns 必须包含该状态字段", system)
             admit()
             return envelope(json.dumps(next(results)))
 
@@ -265,6 +268,32 @@ class StageProviderTests(unittest.TestCase):
         self.assertNotIn("private-invalid-alias", json.dumps(receipts))
         self.assertEqual(admitted.call_count, 2)
         self.assertEqual(json.loads(result), valid)
+
+    def test_entry_reports_each_state_constraint_and_rejects_the_result(self):
+        files = artifacts()
+        valid = json.loads(files["entry.json"])
+        for updates, code in (
+            ({"edit_choice": {"field": "status", "initial": "private-option"}}, "bad_choice_initial"),
+            ({"form": [*valid["form"], "status"]}, "bad_choice_in_form"),
+            ({"columns": [field for field in valid["columns"] if field != "status"]}, "bad_choice_missing_column"),
+        ):
+            with self.subTest(code=code):
+                bad = json.dumps({**valid, **updates})
+                receipts = []
+                admit, accept = Mock(), Mock()
+
+                def exchange(payload, before_dispatch, **_):
+                    before_dispatch()
+                    return envelope(bad)
+
+                with patch.object(assistant_model, "_exchange", exchange), self.assertRaises(ApiError) as failure:
+                    blueprint.provide("entry", "新增后可修改状态", files, "fixture-key", admit,
+                                      receipts.append, accept=accept)
+                self.assertEqual(failure.exception.code, "invalid_staged_result")
+                self.assertEqual(receipts[0]["validation"], code)
+                self.assertNotIn("private-option", json.dumps(receipts))
+                admit.assert_called_once_with()
+                accept.assert_not_called()
 
     def test_new_ledger_spec_cannot_fall_back_to_a_legacy_plan(self):
         legacy = artifacts()["spec.json"]
