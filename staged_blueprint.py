@@ -35,8 +35,11 @@ IMPLEMENTATION_SYSTEM = """实现已通过规格所描述的浏览器工具。�
 输出且只输出 JSON 对象 {"markup":"...","script":"..."}，各项均为非空字符串。
 将 HTML 和 JavaScript 分别序列化成 JSON 字符串。内容中的双引号、反斜杠及换行必须按 JSON 规则转义。
 优先使用单引号编写 HTML 属性和 JavaScript 字符串，并在回复前检查 JSON 字符串没有意外结束。
-markup 只能是工具根节点内的 HTML 片段：表单、按钮、标签、数字输入、列表、表格等。
-所有非空元素显式写结束标签；禁止 html、head、body、script、style、iframe、SVG、外部资源、事件属性或表单 action。
+markup 只能是工具根节点内的 HTML 片段。元素和属性严格使用宿主白名单，省略名单以外的写法。
+可用元素：""" + "、".join(sorted(staged_program.ELEMENTS)) + """。
+可用属性：""" + "、".join(sorted(staged_program.ATTRIBUTES)) + """，另可使用小写的 aria-* 和 data-*（后缀以字母开头，只用小写字母、数字、连字符或下划线，最多 60 字符）。
+同一元素不可重复属性，禁止 style、on* 事件属性、action 和 formaction。href 仅用于 a 元素且必须以 # 开头；input 不可用 file 或 image 类型。
+空元素 """ + "、".join(sorted(staged_program.VOID_ELEMENTS)) + """ 不写结束标签，其余元素显式闭合。
 script 是普通 JavaScript 源码，勿含 script 标签、HTML 注释或 Markdown 围栏。用 DOM API 添加事件并阻止表单默认提交。
 使用 #root-program 内的节点，文字用 textContent 渲染，按需使用 localStorage。无网络、页面跳转或模块导入。
 宿主已创建 #root-program 容器并提供标题与基础样式，markup 不要重复创建容器。正文中的小于号用 &lt;。优先实现可操作功能。"""

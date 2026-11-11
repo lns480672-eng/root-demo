@@ -326,6 +326,10 @@ class StageProviderTests(unittest.TestCase):
                 return envelope(spec.decode())
             self.assertEqual(request["accepted_spec"], json.loads(spec))
             self.assertEqual(body["max_tokens"], 3200)
+            system = body["messages"][0]["content"]
+            self.assertIn("、".join(sorted(blueprint.staged_program.ELEMENTS)), system)
+            self.assertIn("、".join(sorted(blueprint.staged_program.ATTRIBUTES)), system)
+            self.assertIn("style", system)
             return envelope(implementation)
 
         with patch.object(assistant_model, "_exchange", exchange):
@@ -335,6 +339,30 @@ class StageProviderTests(unittest.TestCase):
             with self.assertRaises(ApiError):
                 blueprint.provide("entry", "加法计算", {"spec.json":accepted}, "secret", lambda: None)
         self.assertEqual(seen, ["spec", "implementation"])
+
+    def test_program_provider_rejects_attributes_outside_the_markup_contract(self):
+        previous = {"spec.json": b'{"kind":"program","title":"Split","goal":"Split a total"}'}
+        for attribute in ("style='color:red'", "onclick='calculate()'", "formaction='/other'"):
+            with self.subTest(attribute=attribute):
+                implementation = {
+                    "markup": f"<button {attribute}>Calculate</button>",
+                    "script": "document.querySelector('button').addEventListener('click', calculate);",
+                }
+                receipts = []
+                accept = Mock()
+
+                def exchange(payload, admit, **_):
+                    admit()
+                    return envelope(json.dumps(implementation))
+
+                admit = Mock()
+                with patch.object(assistant_model, "_exchange", exchange), self.assertRaises(ApiError) as rejected:
+                    blueprint.provide("implementation", "费用分摊", previous, "fixture-key", admit,
+                                      receipts.append, accept=accept)
+                self.assertEqual(rejected.exception.code, "invalid_staged_result")
+                self.assertEqual(receipts[0]["validation"], "bad_program_attribute")
+                admit.assert_called_once_with()
+                accept.assert_not_called()
 
     def test_invalid_and_unsupported_results_are_not_reported_as_success(self):
         for result, finish, error in (
