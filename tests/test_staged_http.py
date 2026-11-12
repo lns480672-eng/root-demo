@@ -207,10 +207,11 @@ def revise(stage, requirement, prior, key, admit, record, *, base):
 def verify_runtime(html, entries, *, backup, storage_limit, website):
     if b'throw new Error("synthetic startup failure");' in html:
         raise ApiError(422, "staged_runtime_failed", "固定替身检测到启动失败")
-    if entries == [["result", "verify-late"]]:
-        (runs / "verify-waiting").touch()
+    gate = dict(entries).get("result")
+    if gate in ("verify-late", "verify-revision-late"):
+        (runs / (gate + "-waiting")).touch()
         deadline = time.monotonic() + 4
-        while not (runs / "verify-go").exists() and time.monotonic() < deadline:
+        while not (runs / (gate + "-go")).exists() and time.monotonic() < deadline:
             time.sleep(.01)
 
 workbench.serve("fixture-key", 0, runs, staged_enabled=True, staged_provider=stages,
@@ -465,7 +466,7 @@ class StagedHTTP(StagedHTTPFixture):
         late = {**payload, "entries":[["result", "verify-late"]]}
         with ThreadPoolExecutor(max_workers=1) as pool:
             verification = pool.submit(self.request, path + "/verify-preview", late, owner)
-            waiting = self.runs / "verify-waiting"
+            waiting = self.runs / "verify-late-waiting"
             deadline = time.monotonic() + 3
             try:
                 while not waiting.exists() and time.monotonic() < deadline:
@@ -474,7 +475,7 @@ class StagedHTTP(StagedHTTPFixture):
                 self.assertEqual(self.request(path + "/resolve-publish", {"nonce":payload["nonce"]}, owner)[:2],
                                  (200, {"applied":False}))
             finally:
-                (self.runs / "verify-go").touch()
+                (self.runs / "verify-late-go").touch()
             status, body, _ = verification.result()
             self.assertEqual((status, body.get("code")), (409, "staged_candidate_changed"))
         current = self.request(path + "/candidate", {}, owner)[1]
@@ -1075,6 +1076,69 @@ if (fields.result.textContent !== '40.0') process.exit(1);
                              "version_conflict")
         self.assertEqual(set(self.runs.glob("run-*")), runs_before)
         self.assertEqual(self.request("/api/trial", auth=owner)[1]["generation"]["used"], 2)
+
+    def test_revision_runtime_check_rejects_concurrent_data_write(self):
+        owner = self.account("revision-runtime-race")
+        _, generated, _ = self.gen(owner, "计算两个数字")
+        task = generated["task"]["id"]
+        self.wait_task(owner, task, "complete")
+        initial_path = "/api/staged/" + task
+        initial = self.request(initial_path + "/candidate", {}, owner)[1]
+        entries = [["result", "5"]]
+        publication = {**initial["staged"], "toolId":initial["id"], "entries":entries}
+        self.assert_preview_verified(initial_path, publication, owner)
+        status, saved, _ = self.request(initial_path + "/publish", publication, owner)
+        self.assertEqual(status, 200)
+        tool = "/api/tools/" + saved["id"]
+        used = self.request("/api/trial", auth=owner)[1]["generation"]["used"]
+
+        gate_entries = [["result", "verify-revision-late"]]
+        status, saved_data, _ = self.request(tool + "/data", {
+            "version":1, "revision":saved["revision"], "entries":gate_entries,
+        }, owner)
+        self.assertEqual(status, 200)
+        status, generated, _ = self.request(tool + "/revise", {
+            "version":1, "requirement":"用户先看明白输出的数字是两数之和", "requestId":uuid4().hex,
+        }, owner)
+        self.assertEqual(status, 202)
+        task = generated["task"]["id"]
+        self.wait_task(owner, task, "complete")
+        path = "/api/staged/" + task
+        proposal = self.request(path + "/candidate", {}, owner)[1]
+        payload = {**proposal["staged"], "toolId":proposal["id"], "runId":proposal["runId"],
+                   "entries":proposal["entries"], "revision":proposal["revision"],
+                   "confirmation":proposal["revisionPlan"]["confirmation"]}
+        self.confirm_revision(path, payload, owner)
+
+        status, _, cookie = self.request("/api/login", {
+            "username":"revision-runtime-race", "password":"test-only-password",
+        })
+        self.assertEqual(status, 200)
+        second_cookie = cookie.split(";")[0]
+        status, session, _ = self.request("/api/session", auth=(second_cookie, ""))
+        self.assertEqual(status, 200)
+        second_session = (second_cookie, session["marker"])
+        concurrent_entries = [["result", "6"], ["new", "written during verification"]]
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            verification = pool.submit(self.request, path + "/verify-preview", payload, owner)
+            waiting = self.runs / "verify-revision-late-waiting"
+            deadline = time.monotonic() + 3
+            try:
+                while not waiting.exists() and time.monotonic() < deadline:
+                    time.sleep(.01)
+                self.assertTrue(waiting.exists())
+                status, _, _ = self.request(tool + "/data", {
+                    "version":1, "revision":saved_data["revision"], "entries":concurrent_entries,
+                }, second_session)
+                self.assertEqual(status, 200)
+            finally:
+                (self.runs / "verify-revision-late-go").touch()
+            status, body, _ = verification.result()
+        self.assertEqual((status, body.get("code")), (409, "revision_conflict"))
+        self.assertEqual(self.request(path + "/publish", payload, owner)[1]["code"], "revision_conflict")
+        current = self.request(tool, auth=owner)[1]
+        self.assertEqual((current["version"], current["entries"]), (1, concurrent_entries))
+        self.assertEqual(self.request("/api/trial", auth=owner)[1]["generation"]["used"], used)
 
     def test_imported_table_revisions_add_filter_and_preserve_rows_across_versions(self):
         # CHG-029 / TEST-010 / TEST-007 / TEST-018-C through the real account and staged routes.
