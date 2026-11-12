@@ -123,67 +123,65 @@ if len(sys.argv) == 2 or sys.argv[2] == "bootstrap":
     store.register({"username":"staged-operator","password":"test-only-password","invite":store.create_invite()})
 def revise(stage, requirement, prior, key, admit, record, *, base):
     assert "persisted-marker" not in json.dumps(base, ensure_ascii=False)
-    if stage == "revision-plan":
-        def exchange(payload, dispatch, **kwargs):
-            request = json.loads(json.loads(payload)["body"]["messages"][1]["content"])
-            assert request["requirement"] == requirement
-            assert "persisted-marker" not in json.dumps(request, ensure_ascii=False)
-            dispatch()
-            if "垂直居中" in requirement:
-                plan = {"status":"unsupported","reason":"目前支持整个内容区水平居中。"}
-            elif "水平居中" in requirement and "工具内容区" in requirement or "左右居中" in requirement:
-                plan = {"status":"proposed","alignment":"center"}
-            elif "居中" in requirement:
-                plan = {"status":"clarify","question":"要把工具内容区水平居中，还是移动某个控件？"}
-            else:
-                plan = {"status":"proposed","edits":[{"part":"markup","before":">相加<","after":">两数之和<"}]}
-            return {"status": 200, "body": json.dumps({"choices": [
-                {"finish_reason": "stop", "message": {"content": json.dumps(plan, ensure_ascii=False)}}
-            ]})}
-        with patch.object(assistant_model, "_exchange", exchange):
-            return staged_revision.provide(stage, requirement, prior, key, admit, record, base=base)
-    if base["kind"] == "table":
-        def exchange(payload, dispatch, **kwargs):
-            message = json.loads(payload)["body"]["messages"][-1]["content"]
-            assert "private-table.csv" not in message and "private-row" not in message
-            context = json.loads(message)["revision_source"]
-            assert context["kind"] == "table"
-            if "负责人" in requirement:
-                assert context["columns"] == [{"index": 1, "name": "负责人", "type": "text"}]
-            dispatch()
-            if "超出范围" in requirement:
-                result = {"addFilter": 999}
+    if stage != "revision-plan":
+        return staged_revision.provide(stage, requirement, prior, key, admit, record, base=base)
+
+    def exchange(payload, dispatch, **kwargs):
+        request = json.loads(json.loads(payload)["body"]["messages"][1]["content"])
+        assert request["requirement"] == requirement
+        serialized = json.dumps(request, ensure_ascii=False)
+        assert "persisted-marker" not in serialized and "private-table.csv" not in serialized and "private-row" not in serialized
+        dispatch()
+        plan = {"status":"proposed"}
+        if base["kind"] == "table":
+            assert request["revision_source"]["columns"][1] == {"name":"负责人", "type":"text"}
+            if requirement.startswith("不要"):
+                plan = {"status":"unsupported","reason":"没有需要增加的操作。"}
+            elif "超出范围" in requirement:
+                plan["operation"] = {"kind":"table_filter","column":999}
             elif "误给标题" in requirement:
-                result = {"title": "误给标题"}
+                plan["operation"] = {"kind":"title","label":"未指定的标题"}
             elif "标题" in requirement:
-                result = {"title": "每周交付台账"}
+                plan["operation"] = {"kind":"title","label":"每周交付台账"}
             else:
-                result = {"addFilter": 1}
-            return {"status": 200, "body": json.dumps({"choices": [
-                {"finish_reason": "stop", "message": {"content": json.dumps(result)}}
-            ]})}
-        with patch.object(assistant_model, "_exchange", exchange):
-            return staged_revision.provide(stage, requirement, prior, key, admit, record, base=base)
-    if base["kind"] == "ledger":
-        def exchange(payload, dispatch, **kwargs):
-            dispatch()
-            if stage == "filters":
-                old = base["source"]["filters"]
-                result = {**old, "exact":[*old["exact"], "count"]}
-            elif "错删功能台账" in requirement:
-                result = {**base["source"]["spec"], "kind":"ledger", "title":"错删功能台账", "modules":[]}
+                plan["operation"] = {"kind":"table_filter","column":1}
+        elif base["kind"] == "ledger":
+            if "验收改为白色" in requirement:
+                plan = {"status":"clarify","question":"要改分栏背景还是字段显示名？"}
+            elif "时分" in requirement or "可空时间字段" in requirement:
+                plan = {"status":"unsupported","reason":"当前字段类型不支持具体时分。"}
+            elif "阅读时间" in requirement:
+                plan = {"status":"clarify","question":"要记录阅读日期、阅读时长，还是具体时分？"}
+            elif "删除项目" in requirement:
+                plan = {"status":"unsupported","reason":"不能删除字段或已有记录。"}
+            elif "错删功能" in requirement:
+                plan["operation"] = {"kind":"title","label":"错删功能台账","modules":[]}
             elif "标题" in requirement:
-                result = {"title":"新版设备台账"}
+                plan["operation"] = {"kind":"title","label":"新版设备台账"}
             elif "CSV" in requirement:
-                result = {"removeCsv":True}
+                plan["operation"] = {"kind":"remove_csv"}
+            elif "精确筛选" in requirement:
+                plan["operation"] = {"kind":"ledger_filter","field":"count","mode":"exact"}
+            elif "设备名称" in requirement:
+                plan["operation"] = {"kind":"rename_field","field":"name","label":"设备名称"}
+            elif "阅读时长" in requirement:
+                plan["operation"] = {"kind":"add_field","label":"阅读时长（分钟）","type":"integer"}
             else:
-                result = {"addFilter":True}
-            return {"status": 200, "body": json.dumps({"choices": [
-                {"finish_reason":"stop", "message":{"content":json.dumps(result, ensure_ascii=False)}}
-            ]})}
-        with patch.object(assistant_model, "_exchange", exchange):
-            return staged_revision.provide(stage, requirement, prior, key, admit, record, base=base)
-    return staged_revision.provide(stage, requirement, prior, key, admit, record, base=base)
+                plan["operation"] = {"kind":"add_field","label":"项目","type":"text"}
+        elif "垂直居中" in requirement:
+            plan = {"status":"unsupported","reason":"目前支持整个内容区水平居中。"}
+        elif ("水平居中" in requirement and "工具内容区" in requirement) or "左右居中" in requirement:
+            plan["alignment"] = "center"
+        elif "居中" in requirement:
+            plan = {"status":"clarify","question":"要把工具内容区水平居中，还是移动某个控件？"}
+        else:
+            plan["edits"] = [{"part":"markup","before":">相加<","after":">两数之和<"}]
+        return {"status": 200, "body": json.dumps({"choices": [
+            {"finish_reason": "stop", "message": {"content": json.dumps(plan, ensure_ascii=False)}}
+        ]})}
+
+    with patch.object(assistant_model, "_exchange", exchange):
+        return staged_revision.provide(stage, requirement, prior, key, admit, record, base=base)
 
 def verify_runtime(html, entries, *, backup, storage_limit):
     if b'throw new Error("synthetic startup failure");' in html:
@@ -526,13 +524,15 @@ class StagedHTTP(StagedHTTPFixture):
         self.assertEqual(self.request(clarification + "/candidate", {}, owner)[0], 409)
         current = self.request(tool, auth=owner)[1]
         self.assertEqual((current["version"], current["entries"]), (1, entries))
-        self.assertEqual(self.request("/api/trial", auth=owner)[1]["generation"], quota_before_clarification)
+        after_clarification = self.request("/api/trial", auth=owner)[1]["generation"]
+        self.assertEqual(after_clarification["used"], quota_before_clarification["used"])
+        self.assertEqual(after_clarification["totalUsed"], quota_before_clarification["totalUsed"] + 1)
         original_config = config(original)
         self.assertEqual(original_config["filters"]["search"], ["name"])
         self.assertEqual(original_config["summary"]["sum"]["field"], "count")
         self.assertEqual(original_config["export"]["columns"], ["name", "count", "status"])
         before = self.request("/api/trial", auth=owner)[1]["generation"]["used"]
-        failed = revision_path("只把标题改成错删功能台账，保留筛选、统计和 CSV 导出", 1, "unsupported")
+        failed = revision_path("只把标题改成错删功能台账，保留筛选、统计和 CSV 导出", 1, "failed")
         self.assertEqual(self.request(failed + "/candidate", {}, owner)[0], 409)
         self.assertEqual(self.request(tool, auth=owner)[1]["html"], original["html"])
         self.assertEqual(self.request(tool, auth=owner)[1]["version"], 1)
@@ -588,7 +588,7 @@ class StagedHTTP(StagedHTTPFixture):
         self.assertIn(field["id"], with_project["entry"]["columns"])
         self.assertEqual(self.request(tool, auth=owner)[1]["entries"], entries)
         risky = revision_path("删除项目字段和已有记录", 6, "unsupported")
-        self.assertEqual(self.request(risky, auth=owner)[1]["task"]["reason"], "revision_risky")
+        self.assertEqual(self.request(risky, auth=owner)[1]["task"]["reason"], "staged_unsupported")
         self.assertEqual(self.request(tool, auth=owner)[1]["version"], 6)
         self.assertEqual(self.request("/api/trial", auth=owner)[1]["generation"]["used"], before + 5)
 
@@ -745,9 +745,9 @@ class StagedHTTP(StagedHTTPFixture):
 
     def test_online_revision_requests_clarify_then_apply_only_after_confirmation(self):
         cases = (
-            ("登记读书清单", "增加一个阅读时间", "revision_field_clarification_required",
+            ("登记读书清单", "增加一个阅读时间", "revision_clarification_required",
              "新增可空整数型字段「阅读时长（分钟）」", "可空整数", "新增可空时间字段「阅读时间」",
-             "revision_field_type_unsupported", "时分"),
+             "staged_unsupported", "时分"),
             ("计算分账", "那个页面居中", "revision_clarification_required",
              "把工具内容区水平居中", "水平居中", "把工具内容区垂直居中",
              "staged_unsupported", "水平居中"),
@@ -787,7 +787,7 @@ class StagedHTTP(StagedHTTPFixture):
                 self.assertIn(limit_copy, outside["guidance"])
                 after_questions = self.request("/api/trial", auth=owner)[1]["generation"]
                 self.assertEqual(after_questions["used"], quota["used"])
-                self.assertEqual(after_questions["totalUsed"] - quota["totalUsed"], 0 if index == 0 else 5)
+                self.assertEqual(after_questions["totalUsed"] - quota["totalUsed"], 5)
                 self.assertEqual(self.request(tool, auth=owner)[1]["entries"], entries)
                 explicit = (clarified,) if index == 0 else (
                     clarified, "我想把工具内容区水平居中", "把页面内容区左右居中",
@@ -807,7 +807,7 @@ class StagedHTTP(StagedHTTPFixture):
                 self.assertEqual((unchanged["version"], unchanged["entries"]), (1, entries))
                 before_confirm = self.request("/api/trial", auth=owner)[1]["generation"]
                 self.assertEqual(before_confirm["used"], quota["used"])
-                self.assertEqual(before_confirm["totalUsed"] - after_questions["totalUsed"], 0 if index == 0 else len(explicit))
+                self.assertEqual(before_confirm["totalUsed"] - after_questions["totalUsed"], len(explicit))
                 self.confirm_revision(path, payload, owner)
                 self.assert_preview_verified(path, payload, owner)
                 status, saved, _ = self.request(path + "/publish", payload, owner)
@@ -943,7 +943,7 @@ if (fields.result.textContent !== '40.00') process.exit(1);
 
         def publish(task, version, title):
             complete = self.wait_task(owner, task, "complete")
-            self.assertEqual(complete["steps"], ["spec", "assemble"])
+            self.assertEqual(complete["steps"], ["revision-plan", "spec", "assemble"])
             path = "/api/staged/" + task
             code, candidate, _ = self.request(path + "/candidate", {}, owner)
             self.assertEqual(code, 200)

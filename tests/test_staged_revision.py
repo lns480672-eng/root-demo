@@ -61,6 +61,26 @@ class RevisionContextTests(unittest.TestCase):
         self.assertEqual(request["requirement"], requirement)
         self.assertEqual(request["revision_source"]["source"]["implementation"], code)
 
+    def test_model_adds_nullable_field_using_host_identity_and_impact(self):
+        base = revision.prepare(artifacts())
+        plan = {"status": "proposed", "operation": {
+            "kind": "add_field", "label": "下次检查日", "type": "date",
+        }}
+        output = revision.plan_artifacts(encode(plan), base)
+        spec = json.loads(output["spec"])
+        new = spec["fields"][-1]
+        self.assertEqual(new, {"id": "field_1", "label": "下次检查日", "type": "date",
+                               "required": False, "options": []})
+        self.assertEqual(spec["fields"][:-1], base["source"]["spec"]["fields"])
+        self.assertIn(new["id"], json.loads(output["entry"])["form"])
+        changes = revision.describe(base, {"revision-plan.json": encode(plan)}, "",
+                                    [["root-structured-records-v1", '[{"id":1},{"id":2}]']])
+        self.assertIn("已有记录 2 条", " ".join(changes))
+        self.assertIn("显示为空", " ".join(changes))
+        plan["operation"]["required"] = True
+        with self.assertRaises(ValueError):
+            revision.plan_artifacts(encode(plan), base)
+
     def test_title_and_csv_patches_reuse_unmodified_checkpoint_artifacts(self):
         original = artifacts()
         base = revision.prepare(original)

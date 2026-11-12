@@ -112,24 +112,29 @@ if not key:
 runs = Path(sys.argv[3])
 Store(runs / "workspace.sqlite3").create_invite("fixture-invite", uses=2)
 def revise(stage, requirement, prior, key, admit, record, *, base):
-    if live or (base["kind"] != "table" and not theme_check):
+    if live or stage != "revision-plan":
         return staged_revision.provide(stage, requirement, prior, key, admit, record, base=base)
 
     def exchange(payload, reserve, **_):
         reserve()
+        content = {"status":"unsupported","reason":"当前工具不支持此操作。"}
         if theme_check:
-            if requirement == "把颜色改成黄色":
-                content = {"theme":"yellow"}
-            elif requirement == "把颜色改成黑色":
-                content = {"theme":"gray"}
-            else:
-                content = base["source"][stage]
-        elif requirement.startswith("增加一个"):
-            content = {"addFilter": 1}
-        elif requirement.startswith("只把标题"):
-            content = {"title": "交付行动看板"}
-        else:
-            content = {"addFilter": 999}
+            if requirement == "验收改为白色":
+                content = {"status":"clarify","question":"请明确分栏的颜色还是字段显示名？"}
+            operations = {
+                "把颜色改成黄色": {"kind":"theme","theme":"yellow"},
+                "公司名称改为雇主": {"kind":"rename_field","field":"company","label":"雇主"},
+                "新增一个可空文本字段「项目」": {"kind":"add_field","label":"项目","type":"text"},
+                "把「面试中」分栏背景改为浅蓝": {"kind":"column_theme","option":"面试中","theme":"blue"},
+            }
+            if requirement in operations:
+                content = {"status":"proposed","operation":operations[requirement]}
+        elif base["kind"] == "program" and "不存在" not in requirement and "加入书单" in requirement:
+            content = {"status":"proposed","edits":[{"part":"markup","before":">添加<","after":">加入书单<"}]}
+        elif base["kind"] == "table" and requirement.startswith("增加一个"):
+            content = {"status":"proposed","operation":{"kind":"table_filter","column":1}}
+        elif base["kind"] == "table" and requirement.startswith("只把标题"):
+            content = {"status":"proposed","operation":{"kind":"title","label":"交付行动看板"}}
         return {"status": 200, "body": json.dumps({"choices": [{
             "finish_reason": "stop", "message": {"content": json.dumps(content, ensure_ascii=False)},
         }]})}

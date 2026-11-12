@@ -435,7 +435,8 @@ export async function verifyLedgerTheme(ctx) {
   assert.equal(await visible('#revision-confirm'), false);
   assert.equal((await versions()).current, 1);
   assert.deepEqual((await stored(old.id)).entries, before.entries);
-  assert.deepEqual(await balance(), beforeBalance);
+  assert.equal((await balance()).used, beforeBalance.used);
+  assert.equal((await balance()).totalUsed, beforeBalance.totalUsed + 1);
   await screenshot('ambiguous-color-asks-target');
   await generate('把颜色改成黄色');
   await until(() => visible('#revision-confirm'));
@@ -451,7 +452,7 @@ export async function verifyLedgerTheme(ctx) {
   assert.notEqual(history.items[0].commit, history.items[1].commit);
   assert.deepEqual((await stored(old.id)).entries, before.entries);
   assert.equal((await balance()).used, beforeBalance.used + 1);
-  assert.equal((await balance()).totalUsed, beforeBalance.totalUsed + 1);
+  assert.equal((await balance()).totalUsed, beforeBalance.totalUsed + 2);
   await cdp('Page.reload');
   await until(() => evaluate('document.documentElement.dataset.ready === "true"'));
   await click('#library-entry');
@@ -487,7 +488,8 @@ export async function verifyLedgerTheme(ctx) {
     await until(async () => !await visible('#revision-confirm') && !await visible('#requirement'));
     assert.equal((await versions()).current, 2);
     assert.deepEqual((await stored(old.id)).entries, before.entries);
-    assert.deepEqual(await balance(), beforeLocal);
+    assert.equal((await balance()).used, beforeLocal.used);
+    assert.equal((await balance()).totalUsed, beforeLocal.totalUsed + 1);
     for (const [request, version] of [[localChange, 3], ['新增一个可空文本字段「项目」', 4],
       ['把「面试中」分栏背景改为浅蓝', 5]]) {
       await click('#revise-tool');
@@ -501,7 +503,7 @@ export async function verifyLedgerTheme(ctx) {
     }
     assert.deepEqual((await stored(old.id)).entries, before.entries);
     assert.equal((await balance()).used, beforeLocal.used + 3);
-    assert.equal((await balance()).totalUsed, beforeLocal.totalUsed);
+    assert.equal((await balance()).totalUsed, beforeLocal.totalUsed + 4);
     await cdp('Page.reload');
     await until(() => evaluate('document.documentElement.dataset.ready === "true"'));
     await click('#library-entry');
@@ -607,7 +609,8 @@ export async function verifyStagedRevision(ctx) {
   await until(async () => /重新查看并确认/.test(await evaluate('document.querySelector("#staged-reason").textContent')));
   assert.equal(await currentVersion(), 1);
   assert.equal((await activeTool()).loader, old.loader);
-  assert.deepEqual(await trial(), before);
+  assert.equal((await trial()).used, before.used);
+  assert.equal((await trial()).totalUsed, before.totalUsed + 1);
   await screenshot('program-concurrent-confirmation-rejected');
   await click('#staged-preview');
   await until(() => visible('#revision-confirm'));
@@ -799,7 +802,7 @@ with sqlite3.connect(sys.argv[1]) as db:
   assert.equal((await balance()).used, beforeRevise.used + 1);
   const receipts = (await readFile(join(root, 'runs', 'staged-usage.jsonl'), 'utf8')).trim().split('\n').map(JSON.parse);
   assert.deepEqual(receipts.filter(item => item.task === failed.id).map(item => item.stage), ['spec','implementation']);
-  assert.equal(receipts.filter(item => item.task === current.id).length, 0, '定点文案在宿主执行');
+  assert.deepEqual(receipts.filter(item => item.task === current.id).map(item => item.stage), ['revision-plan']);
   assert.notEqual(tool.id, old.id);
   evidence.tests.push({id:'TEST-018-09', historyLimitSeparate:true, failedPersonalCharge:0,
     newTool:tool.id, revisedTool:old.id, originalRepository:originalRepo, savedOperation:current.id});

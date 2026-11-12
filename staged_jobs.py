@@ -139,7 +139,10 @@ class StagedJobs:
             result["guidance"] = guidance
         if state == "unsupported" and steps == ("revision-plan",) and done:
             decision = json.loads(self.read(row, row["head"], "revision-plan.json"))
-            result["guidance"] = decision.get("question") or decision["reason"]
+            if decision["status"] == "clarify":
+                result["guidance"] = decision["question"]
+            else:
+                result["guidance"] = decision["reason"] + " 旧版仍可用，未扣除个人生成次数。"
         if row["category"] != "auto":
             result["category"] = row["category"]
         if db is not None:
@@ -192,7 +195,7 @@ class StagedJobs:
                 row = self.store.owned_tool(db, {"id":owner}, tool_id)
                 self.store.require_version(version, row["version"])
                 repo_id, head, source_digest, context = self.revision_source(db, row)
-            steps = json.dumps(["revision-plan"]) if tool_id and context["kind"] in ("program", "website") else None
+            steps = json.dumps(["revision-plan"]) if tool_id else None
             db.execute("""
                 INSERT INTO staged_jobs(id,owner,request_id,requirement,head,expires,updated_at,repo_id,category,plan)
                 VALUES (?,?,?,?,?,?,?,?,?,?)
@@ -361,7 +364,7 @@ class StagedJobs:
         if stage == "revision-plan":
             decision = json.loads(content)["status"]
             if decision == "proposed":
-                steps = ("revision-plan", "spec", "implementation", "assemble")
+                steps = ("revision-plan", "spec")
             else:
                 state = "unsupported"
                 failure = "revision_clarification_required" if decision == "clarify" else "staged_unsupported"
@@ -377,9 +380,9 @@ class StagedJobs:
         if revision:
             context = json.loads(revision["context"])
             if stage == "revision-plan":
-                self.revision.check_code_plan(content, context)
+                self.revision.check_plan(content, context, row["requirement"])
             elif "revision-plan.json" in prior:
-                self.revision.check_planned_code(stage, content, context, prior)
+                self.revision.check_planned_stage(stage, content, context, prior)
             else:
                 self.revision.check(stage, content, context, row["requirement"], previous=prior)
         elif stage == "spec" and self.revision is not None:
@@ -598,7 +601,7 @@ class StagedJobs:
         context = json.loads(revision["context"])
         files = self.files(row)
         if "revision-plan.json" in files:
-            self.revision.check_planned_code("assemble", html, context, files)
+            self.revision.check_planned_stage("assemble", html, context, files)
             return
         local = self.revision.planned_local_revision(context, row["requirement"])
         if local or context["kind"] == "ledger":
