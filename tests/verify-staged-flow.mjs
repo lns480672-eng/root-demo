@@ -558,6 +558,7 @@ export async function verifyStagedRevision(ctx) {
   const { cdp, evaluate, until, base, click, pointerClick, type, visible, appRequest, login, generate,
     activeTool, accountA, evidence, screenshot, stored, anotherBrowser } = ctx;
   const change = '把页面文案「添加」改为「加入书单」';
+  await cdp('Emulation.setDeviceMetricsOverride', {width:1360,height:980,deviceScaleFactor:1,mobile:false});
   await cdp('Page.navigate', {url:base});
   await login(accountA, true);
   if (await visible('#workspace-guide')) await click('#guide-skip');
@@ -570,7 +571,8 @@ export async function verifyStagedRevision(ctx) {
     await evaluate('document.querySelector("#book").value=""', context);
     await type('#book', title, context);
     await pointerClick('#add', context);
-    await until(async () => JSON.stringify((await stored(old.id)).entries).includes(title));
+    await until(async () => JSON.stringify((await stored(old.id)).entries).includes(title))
+      .catch(error => { throw new Error('旧工具添加后未保存：' + title, {cause:error}); });
   }
   await add('甲 旧版已有');
   const before = await trial();
@@ -583,7 +585,8 @@ export async function verifyStagedRevision(ctx) {
   assert.equal(await evaluate('document.querySelector("#add").textContent', old.context), '添加');
   await screenshot('program-plan-before-concurrent-write');
   await anotherBrowser('staged-revision-second', async () => {
-    await cdp('Page.navigate', {url:base});
+    await cdp('Emulation.setDeviceMetricsOverride', {width:1360,height:980,deviceScaleFactor:1,mobile:false});
+  await cdp('Page.navigate', {url:base});
     await login(accountA);
     if (await visible('.elys-composer')) await click('#library-entry');
     const other = await activeTool();

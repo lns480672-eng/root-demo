@@ -238,6 +238,7 @@ try {
   }
 
   async function pointerClick(selector, context) {
+    if (context) await evaluate('document.querySelector("#preview iframe[data-tool]").scrollIntoView({block:"nearest",inline:"nearest"})');
     const button = await evaluate(`(() => {
       const target = document.querySelector(${JSON.stringify(selector)});
       target.scrollIntoView({ block: 'nearest', inline: 'nearest' });
