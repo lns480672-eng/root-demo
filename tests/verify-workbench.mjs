@@ -371,7 +371,8 @@ try {
     await until(() => visible('#entry-coachmark'));
   }
 
-  async function assertCenteredNonWorkspaceShell() {
+  async function assertCenteredNonWorkspaceShell(route) {
+    assert.equal(await visible(route), true);
     assert.equal(await evaluate(`(() => {
       const product = document.querySelector('.elys-product');
       const shell = product.getBoundingClientRect();
@@ -528,7 +529,7 @@ try {
   }
   if (!live) {
     stage = 'account visual layout and registration feedback';
-    if (entryFlow) await assertCenteredNonWorkspaceShell();
+    if (entryFlow) await assertCenteredNonWorkspaceShell('#auth');
     await screenshot('account-login');
     await click('#auth-mode');
     assert.deepEqual(await evaluate(
@@ -879,7 +880,7 @@ try {
     assert.equal(await evaluate('document.querySelector("#release-list li[aria-current=true] code").textContent'),
       config.body.build);
     assert.equal(await evaluate('document.querySelector("#workspace").hidden'), true);
-    if (entryFlow) await assertCenteredNonWorkspaceShell();
+    if (entryFlow) await assertCenteredNonWorkspaceShell('#updates');
     await screenshot('release-history');
     await click('#updates-back');
     await until(() => evaluate('location.pathname === "/" && !document.querySelector("#workspace").hidden'));
@@ -1422,20 +1423,29 @@ try {
           const shell = document.querySelector('.elys-product').getBoundingClientRect();
           const nav = document.querySelector('.workspace-sidebar');
           const composer = document.querySelector('.elys-composer');
+          const preview = document.querySelector('.elys-preview');
           const viewport = document.documentElement;
           const style = getComputedStyle(workspace);
+          const columns = style.gridTemplateColumns.split(' ').map(parseFloat).filter(Number.isFinite);
           return {
             mode: workspace.dataset.mode,
-            columns: style.gridTemplateColumns.split(' ').length,
+            columns: columns.length,
+            positiveWidths: columns.every(width => width > 0),
+            composerArea: getComputedStyle(composer).gridArea,
+            previewArea: getComputedStyle(preview).gridArea,
             areas: style.gridTemplateAreas,
             navigation: nav.checkVisibility(),
             progress: document.querySelector('#loading').checkVisibility(),
             fits: shell.left === 0 && shell.right === viewport.clientWidth &&
-              composer.getBoundingClientRect().right <= shell.right && viewport.scrollWidth === viewport.clientWidth,
+              composer.getBoundingClientRect().right <= shell.right &&
+              composer.getBoundingClientRect().left >= nav.getBoundingClientRect().right &&
+              composer.scrollWidth <= composer.clientWidth && workspace.scrollWidth <= workspace.clientWidth &&
+              viewport.scrollWidth === viewport.clientWidth,
           };
         })()`);
         assert.deepEqual(layout, {
           mode:'compose', columns:width === 390 ? 2 : 3,
+          positiveWidths:true, composerArea:'composer', previewArea:'content',
           areas:width === 390 ? '"sidebar composer" "sidebar content"' : '"sidebar composer content"',
           navigation:true, progress:true, fits:true,
         });
