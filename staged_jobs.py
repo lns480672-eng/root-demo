@@ -135,7 +135,8 @@ class StagedJobs:
         result = {"id":row["id"], "requirement":row["requirement"], "state":state,
                   "steps":list(steps), "completed":list(steps[:done]), "stage":steps[done] if done < len(steps) else None,
                   "issue":row["issue"], "reason":row["failure"],
-                  "resumable":done < len(steps) and state in ("queued", "failed", "interrupted")}
+                  "resumable":state in ("queued", "failed", "interrupted")
+                  and row["failure"] != "staged_runtime_failed"}
         guidance = REVISION_GUIDANCE.get(row["failure"])
         if state == "unsupported" and guidance:
             result["guidance"] = guidance
@@ -678,7 +679,8 @@ class StagedJobs:
         except RuntimeVerificationError as error:
             logging.getLogger(__name__).warning("staged runtime rejected task=%s candidate=%s reason=%s",
                                                 identifier, identity["sha256"], error.diagnostic)
-            if not revision and error.diagnostic == "website_tabs" and not data["entries"]:
+            if (revision is None and spec.get("kind") == "website"
+                    and error.diagnostic == "website_tabs" and not data["entries"]):
                 with self.store.connection(write=True) as db:
                     db.execute("""
                         UPDATE staged_jobs SET state='failed',failure=?,issue=?,updated_at=?
