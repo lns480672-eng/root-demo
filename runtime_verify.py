@@ -28,6 +28,34 @@ def _failed():
     return ApiError(422, "staged_runtime_failed", "候选未通过服务端运行检查，原工具仍可用。")
 
 
+def check_script(source):
+    """Parse a classic browser script without executing the generated code."""
+    node = shutil.which(os.environ.get("ROOT_VERIFY_NODE", "node"))
+    if node is None:
+        raise _unavailable()
+    parser = """
+const {readFileSync} = require('node:fs');
+const {Script} = require('node:vm');
+const source = readFileSync(0, 'utf8');
+try {
+    new Script(source);
+} catch (error) {
+    if (!(error instanceof SyntaxError)) throw error;
+    process.exitCode = 2;
+}
+"""
+    try:
+        result = subprocess.run([node, "-e", parser], input=source.encode("utf-8"),
+                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                env={"PATH": os.defpath}, timeout=3)
+    except (OSError, subprocess.TimeoutExpired):
+        raise _unavailable() from None
+    if result.returncode == 2:
+        raise ApiError(502, "invalid_staged_result", "生成的脚本语法有误，请重新生成。")
+    if result.returncode != 0:
+        raise _unavailable()
+
+
 def _command():
     node = shutil.which(os.environ.get("ROOT_VERIFY_NODE", "node"))
     configured = os.environ.get("ROOT_VERIFY_CHROME")
