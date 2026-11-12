@@ -183,7 +183,9 @@ class RevisionContextTests(unittest.TestCase):
 
     def test_risky_actions_require_more_than_a_field_label(self):
         base = revision.prepare(artifacts())
-        for request in ("删掉「设备」列", "把「设备」改成数字", "新增字段项目并把所有记录清空"):
+        for request in ("删掉「设备」列", "把「设备」改成数字", "新增字段项目并把所有记录清空",
+                        "「删除」备注字段", "把所有记录「清空」", "清除所有记录", "去掉备注列",
+                        "重置数据", "删记录", "delete all records", "clear data", "把状态改成单选"):
             with self.subTest(request=request), self.assertRaises(ApiError) as raised:
                 revision.provide("spec", request, {}, "", Mock(), None, base=base)
             self.assertEqual(raised.exception.code, "revision_risky")
@@ -224,36 +226,15 @@ class RevisionContextTests(unittest.TestCase):
         with self.assertRaises(ApiError):
             revision.check("spec", b'{"kind":"program","title":"Different","goal":"Migrate"}', base)
 
-    def test_model_receives_only_prior_stage_and_rejection_is_recorded_before_success(self):
+    def test_program_revision_outside_supported_scope_never_calls_model(self):
         base = revision.prepare({}, LEGACY)
-        spec = encode(base["source"]["spec"])
-        prior = {"spec.json":spec}
-        bad = {"markup":"<p>新版</p>","script":"localStorage.getItem('renamed-key');"}
-        good = {"markup":"<p>新版</p>","script":"localStorage.getItem('book-records');"}
-        responses = iter((bad, good))
-        receipts = []
-        admit = Mock()
-
-        def exchange(payload, admit, **_):
-            body = json.loads(payload)["body"]
-            message = json.loads(body["messages"][1]["content"])
-            self.assertEqual(set(message["revision_source"]), {"kind", "storageKeys", "prior_stage"})
-            self.assertEqual(message["revision_source"]["prior_stage"], base["source"]["implementation"])
-            self.assertNotIn("entries", message)
-            self.assertEqual(message["requirement"], "增加已读筛选")
-            admit()
-            return envelope(json.dumps(next(responses)))
-
-        with patch.object(assistant_model, "_exchange", exchange):
-            with self.assertRaises(ApiError) as raised:
-                revision.provide("implementation", "增加已读筛选", prior, "fixture-key", admit, receipts.append,
-                                 base=base)
-            self.assertEqual(raised.exception.code, "incompatible_revision")
-            result = revision.provide("implementation", "增加已读筛选", prior, "fixture-key", admit, receipts.append,
-                                      base=base)
-        self.assertEqual(json.loads(result), good)
-        self.assertEqual([row["status"] for row in receipts], ["incompatible_revision", "ok"])
-        self.assertEqual(admit.call_count, 2)
+        with patch.object(assistant_model, "_exchange") as exchange:
+            for requirement, code in (("增加已读筛选", "staged_unsupported"),
+                                      ("把所有记录「清空」", "revision_risky")):
+                with self.subTest(requirement=requirement), self.assertRaises(ApiError) as raised:
+                    revision.provide("spec", requirement, {}, "fixture-key", Mock(), None, base=base)
+                self.assertEqual(raised.exception.code, code)
+        exchange.assert_not_called()
 
 
 if __name__ == "__main__":

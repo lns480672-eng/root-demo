@@ -429,7 +429,7 @@ function renderStagedTasks(blocked, restriction) {
   const resume = byId('staged-resume');
   resume.hidden = !['queued', 'interrupted'].includes(task?.state) || Boolean(stagedPendingId);
   resume.disabled = !canAct || !configured || quotaBlocked;
-  const proposal = pendingRevision?.revisionPlan;
+  const proposal = pendingRevision?.staged.taskId === task?.id ? pendingRevision?.revisionPlan : null;
   const confirmation = byId('revision-confirmation');
   confirmation.hidden = !proposal;
   if (proposal && confirmation.dataset.plan !== proposal.confirmation) {
@@ -1388,6 +1388,11 @@ async function openStagedCandidate(task, approvedTool = null) {
       if (tool.revisionPlan && !approvedTool) {
         pendingRevision = tool;
         return;
+      }
+      if (approvedTool) {
+        const { confirmed } = await workspaceApi('/api/staged/' + task.id + '/confirm-revision',
+          { nonce:tool.staged.nonce, confirmation:tool.revisionPlan.confirmation }, publicationTimeout);
+        if (!confirmed) throw new Error('未能确认当前修改方案。');
       }
       await openTool(tool);
     }

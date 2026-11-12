@@ -314,8 +314,9 @@ def _ledger_patch(payload, base, active_modules, requirement):
 def _effective_ledger(source):
     config = blueprint.ledger_config(source)
     spec, entry = config["spec"], config["entry"]
-    config["spec"] = {"title": spec["title"], "fields": spec["fields"], "theme": _theme(spec),
-                      "columnThemes":spec.get("columnThemes")}
+    config["spec"] = {"title": spec["title"], "fields": spec["fields"], "theme": _theme(spec)}
+    if "columnThemes" in spec:
+        config["spec"]["columnThemes"] = spec["columnThemes"]
     config["entry"] = {**entry, **{flag: entry.get(flag, False) for flag in ("allow_edit", "allow_delete", "backup")}}
     return config
 
@@ -395,13 +396,14 @@ ADD_FIELD = re.compile(r"^(?:请)?(?:新增|添加|增加|加)(?:一个|个)?(?:
 COLUMN_STYLE = re.compile(r"^(?:请)?(?:把|将)?[「“]?([^「」“”，,]+?)[」”]?分栏(?:背景|颜色)?改(?:为|成)([^，,。]+)$")
 WEBSITE_HEADING = re.compile(r"^(?:请)?(?:把|将)?首页主标题改(?:为|成)[「“]([^」”]+)[」”]$")
 PROGRAM_TEXT = re.compile(r"^(?:请)?(?:把|将)(?:页面)?文案[「“]([^」”]+)[」”]改(?:为|成)[「“]([^」”]+)[」”]$")
-QUOTED_TEXT = re.compile(r"「[^」]*」|“[^”]*”")
-DATA_TARGET = r"(?:字段|数据|记录|事项|列)"
-DESTRUCTIVE_ACTION = r"(?:删除|删掉|清空|移除|覆盖|回填)"
+DATA_TARGET = r"(?:字段|数据|记录|事项|表格|列)"
+DESTRUCTIVE_ACTION = r"(?:删除|删掉|删|清除|清空|移除|去掉|去除|覆盖|重置|抹掉|合并|拆分|回填)"
 RISKY_REVISION = re.compile(
     rf"{DESTRUCTIVE_ACTION}.*{DATA_TARGET}|{DATA_TARGET}.*{DESTRUCTIVE_ACTION}|"
-    r"批量(?:修改|回填|更新)|回填|必填|改(?:成|为)(?:数字|日期|数值|整数|布尔)|"
-    r"(?:改|修改|更改|转换)(?:字段)?类型|数据库|\b(?:ALTER|DROP|TRUNCATE)\s+TABLE\b",
+    r"批量(?:修改|回填|更新)|回填|必填|改(?:成|为)(?:数字|日期|数值|整数|布尔|单选|多选|下拉)|"
+    r"(?:改|修改|更改|转换)(?:字段)?类型|数据库|"
+    r"\b(?:ALTER|DROP|TRUNCATE)\s+TABLE\b|"
+    r"\b(?:delete|remove|clear|reset|overwrite)\b.*\b(?:records?|data|columns?|fields?)\b",
     re.I,
 )
 
@@ -461,7 +463,7 @@ def local_revision(base, requirement):
         field = next((field for field in base["source"]["spec"]["fields"] if field["label"] == before), None)
         if field is None:
             return None
-        if not blueprint.label(after) or any(item["label"] == after for item in base["source"]["spec"]["fields"]):
+        if not blueprint.label(after) or after in field["options"] or any(item["label"] == after for item in base["source"]["spec"]["fields"]):
             raise _out_of_scope()
         source = deepcopy(base["source"])
         for item in source["spec"]["fields"]:
@@ -491,10 +493,20 @@ def describe(base, files, requirement, entries):
         operation, _ = _ledger_operation(requirement)
         if operation == "remove_csv":
             changes.append("移除 CSV 导出。")
-        if operation == "add_filter" or (base["kind"] == "table" and spec.get("filters") != old.get("filters")):
-            changes.append("添加已指定字段的筛选。")
+        if base["kind"] == "ledger" and operation == "add_filter":
+            old_filters = base["source"].get("filters", {})
+            new_filters = blueprint.read_artifact(files["filters.json"])
+            names = {field["id"]: field["label"] for field in old["fields"]}
+            for group, label in (("search", "关键词"), ("exact", "精确")):
+                changes.extend(f"添加「{names[field]}」{label}筛选。"
+                               for field in new_filters[group] if field not in old_filters.get(group, []))
+            if new_filters["date"] != old_filters.get("date"):
+                changes.append(f"添加「{names[new_filters['date']]}」日期筛选。")
+        if base["kind"] == "table" and spec["filters"] != old["filters"]:
+            column = base["columns"][spec["filters"][-1]]["name"]
+            changes.append(f"添加「{column}」精确筛选。")
         if not changes:
-            changes.append(f"本次请求「{requirement}」。")
+            raise _out_of_scope()
     changes.append("保留已有记录和未要求修改的内容。")
     if local and base["kind"] == "ledger":
         try:
@@ -502,6 +514,12 @@ def describe(base, files, requirement, entries):
         except (TypeError, ValueError, RecursionError):
             raise _incompatible() from None
         if not isinstance(records, list):
+            raise _incompatible()
+        if not all(isinstance(record, dict) for record in records):
+            raise _incompatible()
+        previous_ids = {field["id"] for field in base["source"]["spec"]["fields"]}
+        new_ids = {field["id"] for field in local[0]["spec"]["fields"]} - previous_ids
+        if any(new_ids.intersection(record) for record in records):
             raise _incompatible()
         changes.append(f"已有记录 {len(records)} 条。")
     return changes
@@ -512,7 +530,10 @@ def check(stage, payload, base, requirement="", *, previous=None):
     local = local_revision(base, requirement)
     if local:
         source, _ = local
-        if stage in source:
+        if stage == "assemble":
+            for name in blueprint.stage_plan(previous["spec.json"])[:-1]:
+                check(name, previous[name + ".json"], base, requirement)
+        elif stage in source:
             limit = staged_program.MAX_ARTIFACT_BYTES if stage == "implementation" else blueprint.MAX_ARTIFACT_BYTES
             if blueprint.read_artifact(payload, limit=limit) != source[stage]:
                 raise _out_of_scope()
@@ -563,13 +584,22 @@ def check(stage, payload, base, requirement="", *, previous=None):
             raise _no_change()
 
 
+def planned_local_revision(base, requirement):
+    if RISKY_REVISION.search(requirement):
+        raise ApiError(422, "revision_risky", "这项操作可能删除、转换或改写已有数据，当前版本不执行。")
+    local = local_revision(base, requirement)
+    if local or base["kind"] == "table":
+        return local
+    if base["kind"] != "ledger" or not _ledger_operation(requirement)[0]:
+        raise _out_of_scope()
+    return None
+
+
 def provide(stage, requirement, previous, key, admit, record, *, base):
     """Generate one revision stage from source-only context and check before success."""
-    if RISKY_REVISION.search(QUOTED_TEXT.sub("字段", requirement)):
-        raise ApiError(422, "revision_risky", "这项操作可能删除、转换或改写已有数据，当前版本不执行。")
     if re.fullmatch(r"(?:我想|请|帮我)?(?:改一下|换一下|调整)(?:颜色|配色)[。！？]?", requirement.strip()):
         raise ApiError(422, "revision_clarification_required", "要改整体背景还是某个分栏？请写明位置和颜色。")
-    local = local_revision(base, requirement)
+    local = planned_local_revision(base, requirement)
     if local:
         return json.dumps(local[0][stage], ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
     if base["kind"] == "table":

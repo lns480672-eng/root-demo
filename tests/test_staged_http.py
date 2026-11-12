@@ -69,7 +69,7 @@ def stages(stage, requirement, prior, key, admit, record):
         raise ApiError(422, "staged_unsupported", "固定替身表示不支持")
     if requirement.startswith("计算"):
         content = {"kind":"program","title":"加法计算器","goal":"计算两数和"} if stage == "spec" else {
-            "markup":'<p id="answer"></p>', "script":'document.querySelector("#answer").textContent="5";'}
+            "markup":'<p id="answer"></p><p id="caption">相加</p>', "script":'document.querySelector("#answer").textContent="5";'}
         if stage == "implementation" and requirement.endswith("启动失败探针"):
             content["script"] = 'throw new Error("synthetic startup failure");'
         record({"stage":stage,"status":"ok","dispatched":True})
@@ -147,7 +147,7 @@ def revise(stage, requirement, prior, key, admit, record, *, base):
             ]})}
         with patch.object(assistant_model, "_exchange", exchange):
             return staged_revision.provide(stage, requirement, prior, key, admit, record, base=base)
-    return stages(stage, requirement, prior, key, admit, record)
+    return staged_revision.provide(stage, requirement, prior, key, admit, record, base=base)
 
 def verify_runtime(html, entries, *, backup, storage_limit):
     if b'throw new Error("synthetic startup failure");' in html:
@@ -218,6 +218,10 @@ class StagedHTTPFixture(unittest.TestCase):
 
     def gen(self, auth, requirement, request=None):
         return self.request("/api/generate", {"requirement":requirement, "requestId":request or uuid4().hex}, auth)
+
+    def confirm_revision(self, path, payload, auth):
+        data = {name: payload[name] for name in ("nonce", "confirmation")}
+        self.assertEqual(self.request(path + "/confirm-revision", data, auth)[:2], (200, {"confirmed":True}))
 
     def assert_preview_verified(self, path, payload, auth):
         self.assertEqual(self.request(path + "/verify-preview", payload, auth)[:2], (200, {"verified":True}))
@@ -395,6 +399,7 @@ class StagedHTTP(StagedHTTPFixture):
             if "runId" in candidate:
                 payload.update(runId=candidate["runId"], revision=candidate["revision"],
                                confirmation=candidate["revisionPlan"]["confirmation"])
+                self.confirm_revision(candidate_path, payload, owner)
             self.assert_preview_verified(candidate_path, payload, owner)
             status, saved, _ = self.request(candidate_path + "/publish", payload, owner)
             self.assertEqual(status, 200)
@@ -418,8 +423,11 @@ class StagedHTTP(StagedHTTPFixture):
             self.assertEqual((proposal["baseVersion"], proposal["toolId"]), (current_version, initial["id"]))
             payload = {**candidate["staged"], "toolId":candidate["id"], "runId":candidate["runId"],
                        "revision":candidate["revision"], "entries":entries}
-            self.assertEqual(self.request(candidate_path + "/verify-preview", payload, owner)[1]["code"],
-                             "revision_confirmation_required")
+            denied = self.request(candidate_path + "/verify-preview", payload, owner)
+            self.assertEqual((denied[0], denied[1]["code"]), (409, "revision_confirmation_required"))
+            payload["confirmation"] = proposal["confirmation"]
+            denied = self.request(candidate_path + "/verify-preview", payload, owner)
+            self.assertEqual((denied[0], denied[1]["code"]), (409, "revision_confirmation_required"))
             saved = publish(candidate_path, candidate)
             self.assertEqual(saved["version"], current_version + 1)
             return config(saved)
@@ -464,9 +472,15 @@ class StagedHTTP(StagedHTTPFixture):
         cancelled = self.request(cancelled_path + "/candidate", {}, owner)[1]
         self.assertIn("已有记录 1 条", " ".join(cancelled["revisionPlan"]["changes"]))
         cancel = {"nonce": cancelled["staged"]["nonce"]}
+        cancelled_payload = {**cancelled["staged"], "toolId":cancelled["id"], "runId":cancelled["runId"],
+                             "revision":cancelled["revision"], "entries":entries,
+                             "confirmation":cancelled["revisionPlan"]["confirmation"]}
+        self.confirm_revision(cancelled_path, cancelled_payload, owner)
+        self.assert_preview_verified(cancelled_path, cancelled_payload, owner)
         self.assertEqual(self.request(cancelled_path + "/cancel-revision", cancel, owner)[1]["task"]["state"],
                          "cancelled")
-        self.assertEqual(self.request(cancelled_path + "/candidate", {}, owner)[0], 409)
+        for action in ("candidate", "confirm-revision", "verify-preview", "publish", "resume"):
+            self.assertEqual(self.request(cancelled_path + "/" + action, cancelled_payload, owner)[0], 409)
         self.assertEqual(self.request(tool, auth=owner)[1]["version"], 4)
         self.assertEqual(self.request("/api/trial", auth=owner)[1]["generation"]["used"], before + 3)
 
@@ -647,7 +661,7 @@ class StagedHTTP(StagedHTTPFixture):
         self.assert_preview_verified(path, initial, owner)
         self.assertEqual(self.request(path + "/publish", initial, owner)[0], 200)
         tool = "/api/tools/" + candidate["id"]
-        data = {"requirement":"计算两个数并展示结果的运算历史", "version":1, "requestId":uuid4().hex}
+        data = {"requirement":"把页面文案「相加」改为「两数之和」", "version":1, "requestId":uuid4().hex}
         code, result, _ = self.request(tool + "/revise", data, owner)
         self.assertEqual(code, 202)
         revision = result["task"]["id"]
@@ -661,11 +675,14 @@ class StagedHTTP(StagedHTTPFixture):
         revised = self.request(rev_path + "/candidate", {}, owner)[1]
         self.assertEqual((revised["id"], revised["version"], revised["revision"]), (candidate["id"], 2, 1))
         self.assertEqual(revised["entries"], [["history","persisted-marker"]])
+        self.assertIn('<p id="caption">两数之和</p>', revised["html"])
+        self.assertIn('document.querySelector("#answer").textContent="5";', revised["html"])
         self.assertNotEqual(revised["runId"], revised["id"])
         self.assertEqual(self.request(tool + "/versions", auth=owner)[1]["current"], 1)
         payload = {**revised["staged"], "toolId":revised["id"], "runId":revised["runId"],
                    "entries":revised["entries"], "revision":revised["revision"],
                    "confirmation":revised["revisionPlan"]["confirmation"]}
+        self.confirm_revision(rev_path, payload, owner)
         self.assert_preview_verified(rev_path, payload, owner)
         changes = [["history","persisted-marker"],["new","written while generating"]]
         self.assertEqual(self.request(tool + "/data", {"entries":changes,"revision":1,"version":1}, owner)[0], 200)
@@ -676,7 +693,12 @@ class StagedHTTP(StagedHTTPFixture):
         payload.update(revision=newest["revision"], entries=newest["entries"])
         self.assertEqual(self.request(rev_path + "/publish", payload, owner)[1]["code"],
                          "revision_confirmation_required")
+        stale = {"nonce":payload["nonce"], "confirmation":payload["confirmation"]}
+        self.assertEqual(self.request(rev_path + "/confirm-revision", stale, owner)[0], 409)
         payload["confirmation"] = newest["revisionPlan"]["confirmation"]
+        self.confirm_revision(rev_path, payload, owner)
+        altered = {**payload, "entries":[*payload["entries"], ["unapproved", "new data"]]}
+        self.assertEqual(self.request(rev_path + "/verify-preview", altered, owner)[1]["code"], "incompatible_data")
         status, body, _ = self.request(rev_path + "/publish", payload, owner)
         self.assertEqual((status, body.get("code")), (409, "staged_runtime_required"))
         self.assert_preview_verified(rev_path, payload, owner)
@@ -748,6 +770,7 @@ class StagedHTTP(StagedHTTPFixture):
             data = {**candidate["staged"], "toolId": candidate["id"], "runId": candidate["runId"],
                     "entries": candidate["entries"], "revision": candidate["revision"],
                     "confirmation": candidate["revisionPlan"]["confirmation"]}
+            self.confirm_revision(path, data, owner)
             self.assert_preview_verified(path, data, owner)
             status, saved, _ = self.request(path + "/publish", data, owner)
             self.assertEqual(status, 200)

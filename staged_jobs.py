@@ -87,6 +87,8 @@ class StagedJobs:
             candidate_columns = {row["name"] for row in db.execute("PRAGMA table_info(staged_candidates)")}
             if "runtime_proof" not in candidate_columns:
                 db.execute("ALTER TABLE staged_candidates ADD COLUMN runtime_proof TEXT")
+            if "confirmation" not in candidate_columns:
+                db.execute("ALTER TABLE staged_candidates ADD COLUMN confirmation TEXT")
 
     @staticmethod
     def unavailable():
@@ -121,7 +123,7 @@ class StagedJobs:
 
     def view(self, row, db=None):
         state = row["state"]
-        if row["expires"] <= self.clock() and state != "published":
+        if row["expires"] <= self.clock() and state not in ("published", "cancelled"):
             state = "expired"
         elif state == "running" and row["lease_until"] <= self.clock():
             state = "interrupted"
@@ -468,7 +470,7 @@ class StagedJobs:
             code = error.code if isinstance(error, ApiError) else ""
             state = {"staged_exhausted":"exhausted", "staged_unsupported":"unsupported",
                      "revision_no_change":"unsupported", "revision_risky":"unsupported",
-                     "revision_clarification_required":"failed"}.get(code, "failed")
+                     "revision_clarification_required":"unsupported"}.get(code, "failed")
             with self.store.connection(write=True) as db:
                 db.execute("""UPDATE staged_jobs SET state=?,lease_until=0,issue=?,failure=?,updated_at=?
                               WHERE id=? AND fence=? AND state='running' AND lease_until>?""",
@@ -517,39 +519,58 @@ class StagedJobs:
             if revision:
                 result.update(id=current["id"], runId=candidate["tool_id"], entries=json.loads(current["entries"]),
                               revision=current["revision"], version=current["version"] + 1)
-                result["revisionPlan"] = {
-                    "toolId":current["id"], "title":current["title"], "baseVersion":current["version"],
-                    "dataRevision":current["revision"],
-                    "changes":self.revision.describe(json.loads(revision["context"]), self.files(row),
-                                                     row["requirement"], json.loads(current["entries"])),
-                    "confirmation":self.revision_confirmation(candidate, current),
-                }
+                result["revisionPlan"] = self.revision_plan(row, revision, current, candidate)
                 if current["table_tool"]:
                     result["storageLimit"] = TABLE_STORAGE_BYTES
             if self.permits_backup(row):
                 result["stagedBackup"] = True
             return result
 
-    @staticmethod
-    def revision_confirmation(candidate, current):
-        return digest(encoded({"nonce":candidate["nonce"], "sha256":candidate["digest"],
-                               "tool":current["id"], "version":current["version"], "revision":current["revision"]}))
+    def revision_plan(self, row, revision, current, candidate):
+        plan = {
+            "toolId":current["id"], "title":current["title"], "baseVersion":current["version"],
+            "dataRevision":current["revision"],
+            "changes":self.revision.describe(json.loads(revision["context"]), self.files(row),
+                                             row["requirement"], json.loads(current["entries"])),
+        }
+        plan["confirmation"] = digest(encoded({**plan, "nonce":candidate["nonce"], "sha256":candidate["digest"]}))
+        return plan
+
+    def confirm_revision(self, token, marker, identifier, data):
+        with self.store.connection(write=True) as db:
+            row = self.owned(db, token, marker, identifier)
+            candidate = self.candidate_record(db, identifier)
+            revision = self.revision_record(db, identifier)
+            if (not revision or not candidate or self.view(row)["state"] != "complete"
+                    or data.get("nonce") != candidate["nonce"]):
+                raise ApiError(409, "staged_candidate_changed", "修改方案已变化，请重新查看。")
+            current = self.store.owned_tool(db, {"id":row["owner"]}, revision["tool_id"])
+            self.store.require_version(revision["base_version"], current["version"])
+            self.check_table_schema(revision, current)
+            if data.get("confirmation") != self.revision_plan(row, revision, current, candidate)["confirmation"]:
+                raise ApiError(409, "revision_conflict", "已有更新的数据或方案，请重新查看并确认。")
+            db.execute("UPDATE staged_candidates SET confirmation=? WHERE task=?", (data["confirmation"], identifier))
 
     def cancel_revision(self, token, marker, identifier, nonce):
         with self.store.connection(write=True) as db:
             row = self.owned(db, token, marker, identifier)
             candidate = self.candidate_record(db, identifier)
             if (not self.revision_record(db, identifier) or candidate is None or candidate["nonce"] != nonce
-                    or row["state"] not in ("complete", "cancelled")):
+                    or self.view(row)["state"] != "complete"):
                 raise ApiError(409, "revision_cannot_cancel", "此修改方案已变化或无法取消。")
+            db.execute("UPDATE staged_candidates SET nonce=?,runtime_proof=NULL,confirmation=NULL WHERE task=?",
+                       (uuid.uuid4().hex, identifier))
             db.execute("UPDATE staged_jobs SET state='cancelled',updated_at=? WHERE id=?",
                        (self.clock(), identifier))
             return self.view(self.row(db, identifier), db)
 
     def check_revision_candidate(self, row, revision, html):
         context = json.loads(revision["context"])
-        if context["kind"] in ("ledger", "website"):
+        local = self.revision.planned_local_revision(context, row["requirement"])
+        if local or context["kind"] == "ledger":
             self.revision.check("assemble", html, context, row["requirement"], previous=self.files(row))
+        elif context["kind"] == "table":
+            self.revision.check("spec", self.files(row)["spec.json"], context, row["requirement"])
 
     def check_table_schema(self, revision, tool):
         if tool["table_tool"]:
@@ -584,7 +605,7 @@ class StagedJobs:
             # The same write lock as publish makes this decision final for the old preview.
             if state["state"] == "complete":
                 db.execute("""
-                    UPDATE staged_candidates SET nonce=?,runtime_proof=NULL WHERE task=? AND (? IS NULL OR nonce=?)
+                    UPDATE staged_candidates SET nonce=?,runtime_proof=NULL,confirmation=NULL WHERE task=? AND (? IS NULL OR nonce=?)
                 """, (uuid.uuid4().hex, identifier, nonce, nonce))
             return None
 
@@ -612,10 +633,14 @@ class StagedJobs:
             if type(data.get("revision")) is not int or data["revision"] != current["revision"]:
                 raise ApiError(409, "revision_conflict", "已有更新的数据，请重新查看并确认修改方案。")
             candidate = self.candidate_record(db, row["id"])
-            if data.get("confirmation") != self.revision_confirmation(candidate, current):
+            confirmation = data.get("confirmation")
+            if (not confirmation or candidate["confirmation"] != confirmation
+                    or confirmation != self.revision_plan(row, revision, current, candidate)["confirmation"]):
                 raise ApiError(409, "revision_confirmation_required", "请先确认当前工具的修改方案。")
         limit = TABLE_STORAGE_BYTES if current and current["table_tool"] else TOOL_STORAGE_BYTES
         packed = pack_entries(data.get("entries"), limit=limit)
+        if current and dict(json.loads(packed)) != dict(json.loads(current["entries"])):
+            raise ApiError(409, "incompatible_data", "此修改无法原样保留已有记录。")
         proof = digest(encoded({**identity, "policy":RUNTIME_PROOF_VERSION, "owner":row["owner"], "nonce":data["nonce"],
                                "revision":current["revision"] if current else None, "entries":packed}))
         return current, limit, proof

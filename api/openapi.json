@@ -1986,6 +1986,92 @@
         ]
       }
     },
+    "/api/staged/{taskId}/confirm-revision": {
+      "post": {
+        "operationId": "confirmGenerationRevision",
+        "tags": [
+          "生成任务"
+        ],
+        "summary": "记录用户对当前修改方案的确认",
+        "description": "校验方案、工具版本、数据修订及候选绑定。客户端在用户明确确认后调用，之后才可验证运行和发布。",
+        "responses": {
+          "200": {
+            "description": "确认已记录",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "confirmed"
+                  ],
+                  "properties": {
+                    "confirmed": {
+                      "const": true
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Http401"
+          },
+          "404": {
+            "$ref": "#/components/responses/Http404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Http409"
+          },
+          "403": {
+            "$ref": "#/components/responses/Http403"
+          },
+          "400": {
+            "$ref": "#/components/responses/Http400"
+          },
+          "415": {
+            "$ref": "#/components/responses/Http415"
+          },
+          "503": {
+            "$ref": "#/components/responses/Http503"
+          },
+          "default": {
+            "$ref": "#/components/responses/UnexpectedError"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "nonce",
+                  "confirmation"
+                ],
+                "properties": {
+                  "nonce": {
+                    "type": "string",
+                    "pattern": "^[a-f0-9]{32}$"
+                  },
+                  "confirmation": {
+                    "type": "string",
+                    "pattern": "^[a-f0-9]{64}$"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/TaskId"
+          },
+          {
+            "$ref": "#/components/parameters/Origin"
+          }
+        ]
+      }
+    },
     "/api/staged/{taskId}/verify-preview": {
       "post": {
         "operationId": "verifyGenerationPreview",

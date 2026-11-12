@@ -7,7 +7,7 @@
 1. 使用工作台实际启动的来源，例如 `http://127.0.0.1:8765`。该文档中的服务器地址是示例，端口以启动参数为准。
 2. 登录后保留服务端设置的 `root_session` Cookie。向 `GET /api/session` 读取当前会话的 `marker`，之后把它作为 `X-Root-Session` 请求头，连同 Cookie 发送。会话变更时重新读取 marker。
 3. 所有 POST 都使用 `Content-Type: application/json` 与工作台同源的 `Origin`。浏览器自动设置 Origin，命令行联调需要自行传入。带身份的请求应在同源环境或本机运行，不把 Cookie、marker、邀请码或模型凭据放入共享请求示例。
-4. 默认新工具生成向 `POST /api/generate` 提交需求和稳定的 `requestId`。修订则向 `POST /api/tools/{toolId}/revise` 另外提交当前版本。收到 202 后跟踪任务状态与阶段。完成后取绑定候选。用计划提交的完整快照调用 `POST /api/staged/{taskId}/verify-preview`，服务端运行检查通过后，用同一载荷调用 `publish`。修订先向用户展示 `revisionPlan`。确认后附上候选的 `runId`、`revision` 和 `revisionPlan.confirmation`。取消时用候选 nonce 调用 `cancel-revision`。数据发生冲突时重新获取方案并请用户确认。发布回执丢失时用原 nonce 调用 `resolve-publish`，已发布时返回工具，未发布时撤销原凭据并重新取得候选。旧单轮路径供本地对照使用。
+4. 默认新工具生成向 `POST /api/generate` 提交需求和稳定的 `requestId`。修订则向 `POST /api/tools/{toolId}/revise` 另外提交当前版本。收到 202 后跟踪任务状态与阶段。完成后取绑定候选。用计划提交的完整快照调用 `POST /api/staged/{taskId}/verify-preview`，服务端运行检查通过后，用同一载荷调用 `publish`。修订先向用户展示 `revisionPlan`。用户确认后先调用 `confirm-revision` 登记，再附上候选的 `runId`、`revision` 和 `revisionPlan.confirmation`。取消时用候选 nonce 调用 `cancel-revision`。数据发生冲突时重新获取方案并请用户确认。发布回执丢失时用原 nonce 调用 `resolve-publish`，已发布时返回工具，未发布时撤销原凭据并重新取得候选。旧单轮路径供本地对照使用。
 
 管理员发码使用 `POST /api/admin/invites`，发送 UUID v4 请求编号。明文邀请码只在 201 响应中返回一次。重放同一请求编号会返回 `invite_already_issued`，也不会创建第二枚码。
 
