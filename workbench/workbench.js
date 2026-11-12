@@ -206,7 +206,7 @@ function render() {
     button.disabled = blocked;
   }
   byId('template-generate').disabled = blocked || !configured || !networkIsolated;
-  byId('guide-start').disabled = blocked;
+  byId('guide-start').disabled = blocked || editing;
   renderStagedTasks(blocked, restriction);
 }
 
@@ -666,13 +666,18 @@ function markNavigation(current) {
 function dismissCoachmark() {
   coachmark.hidden = true;
   form.removeAttribute('data-guided');
-  requirement.removeAttribute('aria-describedby');
+  const descriptions = (requirement.getAttribute('aria-describedby') || '').split(/\s+/)
+    .filter(id => id && id !== coachmark.id);
+  if (descriptions.length) requirement.setAttribute('aria-describedby', descriptions.join(' '));
+  else requirement.removeAttribute('aria-describedby');
 }
 
 function showCoachmark() {
   coachmark.hidden = false;
   form.setAttribute('data-guided', '');
-  requirement.setAttribute('aria-describedby', coachmark.id);
+  const descriptions = new Set((requirement.getAttribute('aria-describedby') || '').split(/\s+/).filter(Boolean));
+  descriptions.add(coachmark.id);
+  requirement.setAttribute('aria-describedby', [...descriptions].join(' '));
 }
 
 requirement.addEventListener('focus', dismissCoachmark);
@@ -714,8 +719,9 @@ const requirementAssistant = setupRequirementAssistant({
   },
   onBuild: text => beginComposition(false, text),
   onExit: () => {
-    beginComposition(false, requirement.value, byId('generation-category').value, false);
-    byId('new-tool').focus();
+    requirementAssistant.close();
+    render();
+    byId(assistantDestination).focus();
   },
 });
 
@@ -743,7 +749,7 @@ byId('idea-entry').addEventListener('click', () => openAssistant());
 byId('assistant-entry').addEventListener('click', () => openAssistant());
 byId('drafts-entry').addEventListener('click', () => openAssistant('drafts'));
 byId('guide-start').addEventListener('click', () => {
-  if (phase !== 'idle' || pendingPublication || stagedPendingId) return;
+  if (phase !== 'idle' || pendingPublication || stagedPendingId || editing) return;
   byId('account').open = false;
   beginComposition(false, requirement.value, byId('generation-category').value, false);
   byId('new-tool').focus();
@@ -1522,7 +1528,7 @@ example.addEventListener('click', () => {
   render();
 });
 function finishComposition(saved = false) {
-  if (saved) byId('first-tool-saved').hidden = false;
+  if (saved && !latestToolId) byId('first-tool-saved').hidden = false;
   editing = false;
   entryMode = 'direct';
   requirement.value = '';

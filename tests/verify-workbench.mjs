@@ -361,7 +361,7 @@ try {
   async function escapeCoachmark() {
     await cdp('Input.dispatchKeyEvent', {type:'rawKeyDown',key:'Escape',code:'Escape',windowsVirtualKeyCode:27});
     await cdp('Input.dispatchKeyEvent', {type:'keyUp',key:'Escape',code:'Escape',windowsVirtualKeyCode:27});
-    assert.equal(await visible('#entry-coachmark'), false);
+    assert.equal(await evaluate('document.querySelector("#entry-coachmark").hidden'), true);
   }
 
   async function openGuide() {
@@ -627,7 +627,7 @@ try {
     await escapeCoachmark();
     await openGuide();
     await type('#requirement', '引导关闭后保留输入');
-    assert.equal(await visible('#entry-coachmark'), false);
+    assert.equal(await evaluate('document.querySelector("#entry-coachmark").hidden'), true);
     assert.equal(await evaluate('document.querySelector("#requirement").value'), '引导关闭后保留输入');
     await cdp('Emulation.setEmulatedMedia', {features:[]});
     await cdp('Emulation.setDeviceMetricsOverride', {width:1360,height:980,deviceScaleFactor:1,mobile:false});
@@ -770,7 +770,7 @@ try {
     assert.equal(await visible('#entry-coachmark'), false, '回访不再自动引导');
     evidence.tests.push({ id: 'TEST-016-03/04', result: 'passed', autoShownOncePerAccountAcrossBrowsers: true,
       secondFreshAccountShown: true, skippedAndReopened: true, sampleUncounted: true, firstSavedEndsGuide: true,
-      reducedMotionAndNarrowScreen: true, keyboardPaths: true, skipRetainsInput: true, foundSameTool: true, dismissedAfterReload: true });
+      reducedMotionAndNarrowScreen: true, escapeAndFocusDismiss: true, dismissalRetainsInput: true, foundSameTool: true, dismissedAfterReload: true });
   }
   evidence.tests.push({ id: 'TEST-002', result: 'passed', tool: first.id, record: sample,
     reloadedDocument: true, isolationFixtureChecked: !live });
@@ -861,6 +861,7 @@ try {
   async function assertFailure(message) {
     const observed = await until(() => evaluate('document.querySelector("#error").textContent'));
     assert.match(observed, message);
+    assert.equal(await visible('#error'), true);
     assert.equal(await evaluate('document.querySelector("#generate").textContent'), '重试');
     await assertOldTool();
     assert.equal(await evaluate('document.querySelectorAll("#preview iframe").length'), 1);
@@ -1046,6 +1047,7 @@ try {
       await click('#generate');
       await until(() => evaluate('document.querySelector("#phase").textContent === "正在等待 DeepSeek 响应"'));
       assert.equal(await evaluate('document.querySelector("#generate").disabled'), true);
+      assert.equal(await visible('#phase'), true);
       await assertOldTool();
       stage = 'add during model wait';
       await until(() => readFile(join(root, 'model-started')).then(() => true, () => false));
@@ -1057,6 +1059,7 @@ try {
       stage = 'wait for candidate preview phase';
       await until(() => evaluate('document.querySelector("#phase").textContent === "正在准备预览"'));
       assert.equal(await evaluate('document.querySelector("#generate").disabled'), true);
+      assert.equal(await visible('#phase'), true);
       await assertOldTool();
       assert.equal(await evaluate('document.querySelectorAll("#preview iframe").length'), 2);
       stage = 'reject storage messages from the hidden preview';
@@ -1161,6 +1164,15 @@ try {
         for (const id of ['quick-entry', 'direct-entry', 'table-entry', 'staged-task-list']) {
           assert.equal(await visible('#' + id), false, '修改时隐藏 ' + id);
         }
+        await type('#requirement', '保持这条修改草稿');
+        await click('#idea-entry');
+        assert.equal(await visible('#assistant-panel'), true);
+        assert.equal(await visible('.elys-composer'), false);
+        await click('#assistant-exit');
+        assert.equal(await visible('.elys-preview'), true);
+        assert.equal(await evaluate('document.querySelector("#requirement").value'), '保持这条修改草稿');
+        assert.equal(await evaluate('editing'), true);
+        assert.equal(await evaluate('document.querySelector("#guide-start").disabled'), true);
         await screenshot('revision-' + width);
         await click('#return-to-library');
         assert.equal(await visible('.elys-composer'), false);

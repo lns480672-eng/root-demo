@@ -395,6 +395,7 @@ button:enabled { cursor: pointer; }
   border-color: transparent;
   border-radius: 8px;
 }
+.workspace-navigation nav button:focus-visible { outline-offset: -2px; }
 .workspace-navigation nav button[aria-current="page"] {
   color: #38539c;
   background: #e4e8fc;
