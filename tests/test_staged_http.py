@@ -237,7 +237,7 @@ def verify_runtime(html, entries, *, backup, storage_limit, website):
 
 workbench.serve("fixture-key", 0, runs, staged_enabled=True, staged_provider=stages,
                 staged_revision_provider=revise, staged_runtime_verifier=verify_runtime,
-                generation_limits=(5, 100), admin_usernames=("staged-operator",))
+                generation_limits=(5, 200), admin_usernames=("staged-operator",))
 """
 
 
