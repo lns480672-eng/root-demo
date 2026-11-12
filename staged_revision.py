@@ -406,12 +406,14 @@ ADD_FIELD = re.compile(
     r"(?:(文本|整数|日期)型?)?字段[\s，,：:]*[「“]?([^「」“”，,]+)[」”]?$"
 )
 UNTYPED_TIME_FIELD = re.compile(
-    r"(?:请)?(?:新增|添加|增加|加)(?:一个|个)?(?:字段[\s，,：:]*)?[「“]?[^「」“”，,]*(?:时间|时长)[」”]?(?:字段)?"
+    r"(?:我想\s*)?(?:请)?(?:新增|添加|增加|加)(?:一个|个)?(?:字段[\s，,：:]*)?[「“]?[^「」“”，,]*(?:时间|时长)[」”]?(?:字段)?"
 )
 UNSUPPORTED_TIME_FIELD = re.compile(
     r"(?:新增|添加|增加|加)(?:一个|个)?(?:可空(?:的)?)?(?:时间|时分|时刻|小数)型?字段"
 )
-PROGRAM_CENTER = re.compile(r"(?:请)?(?:把|将)?(?:工具|计算器|页面)?内容(?:区)?(?:整体)?(?:水平|横向)居中")
+PROGRAM_CENTER = re.compile(
+    r"(?:我想\s*)?(?:请)?(?:把|将)?(?:工具|计算器|页面)?内容(?:区)?(?:整体)?(?:水平|横向|左右)居中"
+)
 REVISION_GUIDANCE = {
     "revision_field_clarification_required": "这个时间字段要记录日期、时长还是具体时分？请写明含义和类型，可以写「新增可空整数型字段『阅读时长（分钟）』」。",
     "revision_field_type_unsupported": "台账可新增可空文本、整数或日期字段。时分和小数暂无专用类型。记录时分可改用文本，记录时长可用整数并注明单位。",
@@ -434,7 +436,7 @@ RISKY_REVISION = re.compile(
 
 
 def local_revision(base, requirement):
-    text = requirement.strip().rstrip("。！？").strip()
+    text = requirement.strip().rstrip("。！？?!").strip()
     kind = base["kind"]
     if kind == "program" and PROGRAM_CENTER.fullmatch(text):
         source = deepcopy(base["source"])
@@ -626,7 +628,7 @@ def check(stage, payload, base, requirement="", *, previous=None):
 
 
 def planned_local_revision(base, requirement):
-    requirement = requirement.strip().rstrip("。！？").strip()
+    requirement = requirement.strip().rstrip("。！？?!").strip()
     if RISKY_REVISION.search(requirement):
         raise ApiError(422, "revision_risky", "这项操作可能删除、转换或改写已有数据，当前版本不执行。")
     local = local_revision(base, requirement)
@@ -640,7 +642,7 @@ def planned_local_revision(base, requirement):
             reason = "revision_field_clarification_required"
             raise ApiError(422, reason, REVISION_GUIDANCE[reason])
     if base["kind"] == "program" and "居中" in requirement:
-        explicit = re.search(r"垂直|纵向|按钮|输入框|结果|工作台|整页|横向|水平", requirement)
+        explicit = re.search(r"垂直|纵向|按钮|输入框|结果|工作台|整页|横向|水平|左右", requirement)
         reason = "revision_alignment_unsupported" if explicit else "revision_alignment_clarification_required"
         raise ApiError(422, reason, REVISION_GUIDANCE[reason])
     if base["kind"] != "ledger" or not _ledger_operation(requirement)[0]:

@@ -719,7 +719,8 @@ class StagedHTTP(StagedHTTPFixture):
                     task = response["task"]["id"]
                     return "/api/staged/" + task, self.wait_task(owner, task, state)
 
-                for ambiguous in (original, f"  {original} ！ "):
+                variants = ("我想加一个阅读时间", "增加一个阅读时间?") if index == 0 else ()
+                for ambiguous in (original, f"  {original} ！ ", *variants):
                     rejected, question = revise(ambiguous, "unsupported")
                     self.assertEqual(question["reason"], reason)
                     self.assertIn("？", question["guidance"])
@@ -730,16 +731,23 @@ class StagedHTTP(StagedHTTPFixture):
                 self.assertIn(limit_copy, outside["guidance"])
                 self.assertEqual(self.request("/api/trial", auth=owner)[1]["generation"], quota)
                 self.assertEqual(self.request(tool, auth=owner)[1]["entries"], entries)
-                path, _ = revise(clarified, "complete")
-                status, proposal, _ = self.request(path + "/candidate", {}, owner)
-                self.assertEqual(status, 200)
-                self.assertIn(change, " ".join(proposal["revisionPlan"]["changes"]))
+                explicit = (clarified,) if index == 0 else (
+                    clarified, "我想把工具内容区水平居中", "把页面内容区左右居中",
+                )
+                for wording in explicit:
+                    path, _ = revise(wording, "complete")
+                    status, proposal, _ = self.request(path + "/candidate", {}, owner)
+                    self.assertEqual(status, 200)
+                    self.assertIn(change, " ".join(proposal["revisionPlan"]["changes"]))
+                    self.assertEqual(proposal["entries"], entries)
                 payload = {**proposal["staged"], "toolId":initial["id"], "runId":proposal["runId"],
                            "entries":entries, "revision":proposal["revision"],
                            "confirmation":proposal["revisionPlan"]["confirmation"]}
                 status, denied, _ = self.request(path + "/publish", payload, owner)
                 self.assertEqual((status, denied["code"]), (409, "revision_confirmation_required"))
-                self.assertEqual(self.request(tool, auth=owner)[1]["version"], 1)
+                unchanged = self.request(tool, auth=owner)[1]
+                self.assertEqual((unchanged["version"], unchanged["entries"]), (1, entries))
+                self.assertEqual(self.request("/api/trial", auth=owner)[1]["generation"], quota)
                 self.confirm_revision(path, payload, owner)
                 self.assert_preview_verified(path, payload, owner)
                 status, saved, _ = self.request(path + "/publish", payload, owner)
