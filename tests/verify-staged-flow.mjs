@@ -555,7 +555,7 @@ export async function verifyStagedCalculator(ctx) {
 }
 
 export async function verifyStagedRevision(ctx) {
-  const { cdp, evaluate, until, base, click, type, visible, appRequest, login, generate,
+  const { cdp, evaluate, until, base, click, pointerClick, type, visible, appRequest, login, generate,
     activeTool, accountA, evidence, screenshot, stored, anotherBrowser } = ctx;
   const change = '把页面文案「添加」改为「加入书单」';
   await cdp('Page.navigate', {url:base});
@@ -569,7 +569,7 @@ export async function verifyStagedRevision(ctx) {
   async function add(title, context = old.context) {
     await evaluate('document.querySelector("#book").value=""', context);
     await type('#book', title, context);
-    await click('#add', context);
+    await pointerClick('#add', context);
     await until(async () => JSON.stringify((await stored(old.id)).entries).includes(title));
   }
   await add('甲 旧版已有');
@@ -577,6 +577,8 @@ export async function verifyStagedRevision(ctx) {
   await click('#revise-tool');
   await generate(change);
   await until(() => visible('#revision-confirm'));
+  assert.equal(await visible('.elys-preview'), true);
+  await add('甲二 确认面板打开时写入');
   assert.equal(await currentVersion(), 1);
   assert.equal(await evaluate('document.querySelector("#add").textContent', old.context), '添加');
   await screenshot('program-plan-before-concurrent-write');
@@ -605,7 +607,7 @@ export async function verifyStagedRevision(ctx) {
   assert.equal(await currentVersion(), 2);
   assert.equal(await evaluate('document.querySelector("#add").textContent', revised.context), '加入书单');
   const text = await evaluate('document.querySelector("#list").textContent', revised.context);
-  assert.match(text, /甲 旧版已有.*乙 方案展示后写入/s);
+  assert.match(text, /甲 旧版已有.*甲二 确认面板打开时写入.*乙 方案展示后写入/s);
   await add('丙 修改后继续新增', revised.context);
   assert.equal((await trial()).used, before.used + 1);
   await cdp('Page.reload');
