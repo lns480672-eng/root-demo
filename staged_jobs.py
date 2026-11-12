@@ -1,6 +1,7 @@
 """Account-owned staged generation with fenced Git checkpoints."""
 import hashlib
 import json
+import logging
 import os
 from pathlib import Path
 import re
@@ -11,7 +12,7 @@ import time
 import uuid
 
 from accounts import ApiError, TABLE_STORAGE_BYTES, TOOL_STORAGE_BYTES, pack_entries
-from runtime_verify import check_script
+from runtime_verify import RuntimeVerificationError, check_script
 from staged_revision import REVISION_GUIDANCE
 
 MAX_ATTEMPTS = 8
@@ -671,8 +672,13 @@ class StagedJobs:
                 raise ValueError("invalid candidate specification")
         except (ValueError, OSError, RecursionError, subprocess.SubprocessError):
             raise ApiError(503, "staged_artifact_invalid", "生成候选的规格无法校验。") from None
-        self.runtime_verifier(html, data["entries"], backup=self.permits_backup(row), storage_limit=limit,
-                              website=spec.get("kind") == "website")
+        try:
+            self.runtime_verifier(html, data["entries"], backup=self.permits_backup(row), storage_limit=limit,
+                                  website=spec.get("kind") == "website")
+        except RuntimeVerificationError as error:
+            logging.getLogger(__name__).warning("staged runtime rejected task=%s candidate=%s reason=%s",
+                                                identifier, identity["sha256"], error.diagnostic)
+            raise
         with self.store.connection(write=True) as db:
             row, _, revision, result_id = self.publication_binding(db, token, marker, identifier, identity, data)
             if row["state"] == "published":

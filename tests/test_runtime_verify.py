@@ -47,6 +47,19 @@ class RuntimeVerifierTests(unittest.TestCase):
                 verify(artifact(script), [])
             self.assertEqual((result.exception.status, result.exception.code), (422, "staged_runtime_failed"))
 
+    def test_runtime_diagnostics_distinguish_script_exception_from_inert_website_tabs(self):
+        with self.assertRaises(ApiError) as startup:
+            verify(artifact("throw new Error('private-model-text');"), [])
+        self.assertEqual(getattr(startup.exception, "diagnostic", None), "script_exception")
+        self.assertNotIn("private-model-text", str(startup.exception))
+
+        tabs = (b'<!doctype html><div role="tablist">'
+                b'<button role="tab" aria-selected="true">First</button>'
+                b'<button role="tab" aria-selected="false">Second</button></div>')
+        with self.assertRaises(ApiError) as interaction:
+            verify(tabs, [], website=True)
+        self.assertEqual(getattr(interaction.exception, "diagnostic", None), "website_tabs")
+
     def test_candidate_cannot_reach_http_or_webrtc_loopback_probe(self):
         arrivals = []
 
