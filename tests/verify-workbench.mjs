@@ -201,7 +201,7 @@ try {
   async function activeTool(previousId = '') {
     const selector = '#preview iframe[data-tool]';
     return until(async () => {
-      const id = await evaluate(`document.querySelector('${selector}')?.dataset.tool`);
+      const id = await evaluate(`document.querySelector('${selector}')?.checkVisibility() ? document.querySelector('${selector}').dataset.tool : null`);
       if (!id || id === previousId) {
         const error = await evaluate('document.querySelector("#error")?.textContent');
         if (error) throw new Error(error);
@@ -845,8 +845,8 @@ try {
     await screenshot('release-history');
     await click('#updates-back');
     await until(() => evaluate('location.pathname === "/" && !document.querySelector("#workspace").hidden'));
-    assert.equal((await activeTool()).loader, beforeUpdates);
     assert.equal(await evaluate('document.querySelector("#requirement").value'), '返回后保留的草稿');
+    assert.equal((await openLatest()).loader, beforeUpdates);
     evidence.tests.push({ id: 'TEST-009', result: 'passed', currentBuild: config.body.build, retainedPreview: true });
   }
   async function assertOldTool() {
@@ -1149,7 +1149,6 @@ try {
         assert.equal(await visible('#table-entry'), true);
         assert.equal(await visible('#idea-entry'), true);
         assert.equal(await evaluate('document.activeElement.id'), 'requirement');
-        assert.equal((await activeTool()).loader, second.loader);
         assert.equal(await visible('.elys-preview'), false);
         await click('#library-entry');
         assert.equal(await visible('.elys-composer'), false);

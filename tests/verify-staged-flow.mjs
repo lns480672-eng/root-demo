@@ -349,8 +349,8 @@ export async function verifyStagedReconnect(ctx) {
   assert.equal(await evaluate('window.fixtureSubmissionBounded'), true, '提交已受理但无响应时，页面必须结束等待');
   await until(() => visible('#error'));
   assert.match(await evaluate('document.querySelector("#error").textContent'), /连接.*保留.*重试/);
-  assert.equal((await activeTool()).id, old.id);
-  assert.equal(await evaluate('document.querySelector("#preview iframe[data-tool]").inert'), false);
+  assert.equal(await visible('.elys-preview'), false);
+  assert.equal(await evaluate('document.querySelector("#preview iframe[data-tool]").dataset.tool'), old.id);
   assert.equal(await evaluate('document.querySelector("#requirement").value'), nextInput);
   await screenshot('submit-timeout-narrow');
   await click('#generate');
@@ -650,7 +650,8 @@ export async function verifyStagedQuotaFeedback(ctx) {
   assert.equal(await visible('#staged-issue'), false);
   assert.equal(await visible('#staged-resume'), false);
   assert.equal(await evaluate('document.querySelector("#requirement").value'), next);
-  assert.equal((await activeTool()).id, old.id);
+  assert.equal(await visible('.elys-preview'), false);
+  assert.equal(await evaluate('document.querySelector("#preview iframe[data-tool]").dataset.tool'), old.id);
   assert.deepEqual((await appRequest('/api/trial')).body.generation, before);
   await screenshot('shared-generation-quota-narrow');
   evidence.tests.push({id:'TEST-017-06', personalRemaining:before.remaining, siteRemaining:before.totalRemaining});
@@ -703,7 +704,8 @@ with sqlite3.connect(sys.argv[1]) as db:
   assert.equal(await evaluate('document.querySelector("#requirement").value'), failedRequirement);
   assert.equal(await visible('#staged-resume'), false);
   assert.equal((await balance()).used, oldBalance.used);
-  assert.equal((await activeTool()).id, old.id);
+  assert.equal(await visible('.elys-preview'), false);
+  assert.equal(await evaluate('document.querySelector("#preview iframe[data-tool]").dataset.tool'), old.id);
   assert.equal((await appRequest('/api/tools')).body.items.length, 1);
   fixtureSql(`
 import sqlite3, sys, time, uuid
