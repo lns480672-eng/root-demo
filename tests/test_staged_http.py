@@ -28,6 +28,7 @@ import time
 from unittest.mock import patch
 import assistant_model
 import generate
+from runtime_verify import RuntimeVerificationError
 import staged_revision
 from staged_jobs import StagedJobs
 import workbench
@@ -77,6 +78,10 @@ def stages(stage, requirement, prior, key, admit, record, *, category="auto"):
             })
             if requirement.endswith("括号缺失"):
                 content["script"] = "document.addEventListener('click', () => { void 0; }"
+            if requirement == "官网失效日程标签":
+                content["markup"] = "<h1>invalid-website-tabs-fixture</h1>"
+            if requirement == "官网验证竞态":
+                content["markup"] = "<h1>racing-website-tabs-fixture</h1>"
         record({"stage":stage,"status":"ok","dispatched":True})
         return json.dumps(content, ensure_ascii=False).encode()
     if requirement.startswith("计算"):
@@ -207,6 +212,20 @@ def revise(stage, requirement, prior, key, admit, record, *, base):
         return staged_revision.provide(stage, requirement, prior, key, admit, record, base=base)
 
 def verify_runtime(html, entries, *, backup, storage_limit, website):
+    if website and b"invalid-website-tabs-fixture" in html:
+        ready = runs / "website-verifier-recovered"
+        if not ready.exists():
+            ready.touch()
+            raise ApiError(503, "staged_verifier_unavailable", "固定替身模拟检查暂不可用")
+        raise RuntimeVerificationError("website_tabs")
+    if website and b"racing-website-tabs-fixture" in html:
+        waiting = runs / "racing-website-verifier-waiting"
+        if not waiting.exists():
+            waiting.touch()
+            deadline = time.monotonic() + 4
+            while not (runs / "racing-website-verifier-release").exists() and time.monotonic() < deadline:
+                time.sleep(.01)
+            raise RuntimeVerificationError("website_tabs")
     if b'throw new Error("synthetic startup failure");' in html:
         raise ApiError(422, "staged_runtime_failed", "固定替身检测到启动失败")
     gate = dict(entries).get("result")
@@ -446,6 +465,60 @@ class StagedHTTP(StagedHTTPFixture):
         self.assertEqual(self.request(path + "/publish", payload, owner)[0], 200)
         reopened = self.request(tool, auth=owner)[1]
         self.assertEqual((reopened["version"], reopened["html"]), (2, expected))
+
+    def test_invalid_website_tabs_are_removed_from_preview_but_verifier_outage_is_retryable(self):
+        owner = self.account("website-recovery-owner")
+        requirement = "官网失效日程标签"
+        status, generated, _ = self.gen(owner, requirement)
+        self.assertEqual(status, 202)
+        task = generated["task"]["id"]
+        self.wait_task(owner, task, "complete")
+        path = "/api/staged/" + task
+        status, candidate, _ = self.request(path + "/candidate", {}, owner)
+        self.assertEqual(status, 200)
+        payload = {**candidate["staged"], "toolId":candidate["id"], "entries":[]}
+        self.assertEqual(self.request(path + "/verify-preview", payload, owner)[0], 503)
+        self.assertEqual(self.request(path, auth=owner)[1]["task"]["state"], "complete")
+
+        status, body, _ = self.request(path + "/verify-preview", payload, owner)
+        self.assertEqual((status, body["code"]), (422, "staged_runtime_failed"))
+        failed = self.request(path, auth=owner)[1]["task"]
+        self.assertEqual((failed["state"], failed["reason"], failed["resumable"]),
+                         ("failed", "staged_runtime_failed", False))
+        self.assertEqual(self.request("/api/staged", auth=owner)[1]["tasks"], [])
+        history = self.request("/api/staged/history", auth=owner)[1]["tasks"]
+        self.assertEqual([(item["id"], item["requirement"]) for item in history], [(task, requirement)])
+        self.assertEqual(self.request(path + "/candidate", {}, owner)[0], 409)
+        self.assertEqual(self.request(path + "/publish", payload, owner)[0], 409)
+        self.assertEqual(self.request(path + "/resume", {}, owner)[1]["task"]["state"], "failed")
+        self.assertEqual(self.request("/api/tools", auth=owner)[1]["items"], [])
+        self.assertEqual(self.request("/api/trial", auth=owner)[1]["generation"]["used"], 0)
+        status, new_task, _ = self.gen(owner, requirement)
+        self.assertEqual(status, 202)
+        self.assertNotEqual(new_task["task"]["id"], task)
+
+    def test_late_website_rejection_cannot_revoke_recorded_verification(self):
+        owner = self.account("website-verification-race")
+        task = self.gen(owner, "官网验证竞态")[1]["task"]["id"]
+        self.wait_task(owner, task, "complete")
+        path = "/api/staged/" + task
+        candidate = self.request(path + "/candidate", {}, owner)[1]
+        payload = {**candidate["staged"], "toolId":candidate["id"], "entries":[]}
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            delayed = pool.submit(self.request, path + "/verify-preview", payload, owner)
+            waiting = self.runs / "racing-website-verifier-waiting"
+            deadline = time.monotonic() + 3
+            try:
+                while not waiting.exists() and time.monotonic() < deadline:
+                    time.sleep(.01)
+                self.assertTrue(waiting.exists())
+                self.assert_preview_verified(path, payload, owner)
+            finally:
+                (self.runs / "racing-website-verifier-release").touch()
+            self.assertEqual(delayed.result()[0], 422)
+        self.assertEqual(self.request(path, auth=owner)[1]["task"]["state"], "complete")
+        self.assertEqual(self.request(path + "/publish", payload, owner)[0], 200)
+        self.assertEqual(self.request("/api/trial", auth=owner)[1]["generation"]["used"], 1)
 
     def test_runtime_proof_is_bound_to_the_candidate_snapshot_and_nonce(self):
         owner = self.account("runtime-proof-owner")

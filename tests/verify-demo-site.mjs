@@ -199,4 +199,29 @@ export async function verifyDemoSite(ctx) {
   assert.deepEqual(probeRequests, probeControls, '预览尝试导航时不能访问外部资源');
   assert.equal(await evaluate('location.href'), hostLocation, '预览尝试导航时工作台仍留在原页');
   evidence.tests.push({id:'CHG-046-late-navigation', outboundBlocked:true, workbenchRetained:true});
+
+  if (process.env.ROOT_STAGED_LIVE !== '1') {
+    const recoveryRequirement = '做一个单页官网原型，有上午和下午可切换的日程。';
+    await click('#new-tool');
+    await generate(recoveryRequirement);
+    const failed = await until(async () => {
+      const {body:{tasks}} = await appRequest('/api/staged/history');
+      return tasks.find(task => task.requirement === recoveryRequirement && task.state === 'failed');
+    });
+    assert.equal(failed.reason, 'staged_runtime_failed');
+    assert.equal(failed.resumable, false);
+    await until(async () => !await visible('#staged-preview')
+      && await evaluate('!document.querySelector("#generate").disabled'));
+    assert.equal(await evaluate('document.querySelector("#requirement").value'), recoveryRequirement);
+    assert.equal((await appRequest('/api/trial')).body.generation.used, after.used);
+    assert.equal((await library()).items.length, 2);
+    await screenshot('demo-site-invalid-tabs-retained-requirement');
+
+    await click('#generate');
+    const saved = await activeTool(restoredBrand.id);
+    await click('#afternoon-tab', saved.context);
+    assert.equal(await page(saved, 'document.getElementById("afternoon").checkVisibility()'), true);
+    assert.equal((await appRequest('/api/trial')).body.generation.used, after.used + 1);
+    evidence.tests.push({id:'CHG-046-runtime-recovery', failed:failed.id, recovered:saved.id, personal:1});
+  }
 }

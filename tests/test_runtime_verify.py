@@ -54,13 +54,27 @@ class RuntimeVerifierTests(unittest.TestCase):
             return artifact(script).replace(b"<!doctype html>", b"<!doctype html><!--root:storage=none-->", 1)
 
         verify(no_storage("document.querySelector('p').textContent = 120 / 3;"), [])
-        for source, entries in (
-            (no_storage("window['local' + 'Storage'].clear();"), []),
-            (no_storage("void 0;"), [["record", "old"]]),
+        for source, entries, diagnostic in (
+            (no_storage("window['local' + 'Storage'].clear();"), [], "script_exception"),
+            (no_storage("void 0;"), [["record", "old"]], "storage_not_allowed"),
         ):
             with self.subTest(source=source), self.assertRaises(ApiError) as result:
                 verify(source, entries)
             self.assertEqual((result.exception.status, result.exception.code), (422, "staged_runtime_failed"))
+            self.assertEqual(result.exception.diagnostic, diagnostic)
+
+    def test_runtime_diagnostics_distinguish_script_exception_from_inert_website_tabs(self):
+        with self.assertRaises(ApiError) as startup:
+            verify(artifact("throw new Error('private-model-text');"), [])
+        self.assertEqual(getattr(startup.exception, "diagnostic", None), "script_exception")
+        self.assertNotIn("private-model-text", str(startup.exception))
+
+        tabs = (b'<!doctype html><div role="tablist">'
+                b'<button role="tab" aria-selected="true">First</button>'
+                b'<button role="tab" aria-selected="false">Second</button></div>')
+        with self.assertRaises(ApiError) as interaction:
+            verify(tabs, [], website=True)
+        self.assertEqual(getattr(interaction.exception, "diagnostic", None), "website_tabs")
 
     def test_candidate_cannot_reach_http_or_webrtc_loopback_probe(self):
         arrivals = []

@@ -1,6 +1,7 @@
 """Account-owned staged generation with fenced Git checkpoints."""
 import hashlib
 import json
+import logging
 import os
 from pathlib import Path
 import re
@@ -11,7 +12,7 @@ import time
 import uuid
 
 from accounts import ApiError, TABLE_STORAGE_BYTES, TOOL_STORAGE_BYTES, pack_entries
-from runtime_verify import check_script
+from runtime_verify import RuntimeVerificationError, check_script
 from staged_revision import REVISION_GUIDANCE
 
 MAX_ATTEMPTS = 8
@@ -134,7 +135,8 @@ class StagedJobs:
         result = {"id":row["id"], "requirement":row["requirement"], "state":state,
                   "steps":list(steps), "completed":list(steps[:done]), "stage":steps[done] if done < len(steps) else None,
                   "issue":row["issue"], "reason":row["failure"],
-                  "resumable":state in ("queued", "failed", "interrupted")}
+                  "resumable":state in ("queued", "failed", "interrupted")
+                  and row["failure"] != "staged_runtime_failed"}
         guidance = REVISION_GUIDANCE.get(row["failure"])
         if state == "unsupported" and guidance:
             result["guidance"] = guidance
@@ -416,8 +418,8 @@ class StagedJobs:
     def claim(self, token, marker, identifier, *, resume=True):
         with self.store.connection(write=True) as db:
             row = self.owned(db, token, marker, identifier)
-            state = self.view(row)["state"]
-            if state not in (("queued", "failed", "interrupted") if resume else ("queued",)):
+            task = self.view(row)
+            if not (task["resumable"] if resume else task["state"] == "queued"):
                 return None
             if row["fence"]:
                 self.recover(db, row)
@@ -702,8 +704,25 @@ class StagedJobs:
                 raise ValueError("invalid candidate specification")
         except (ValueError, OSError, RecursionError, subprocess.SubprocessError):
             raise ApiError(503, "staged_artifact_invalid", "生成候选的规格无法校验。") from None
-        self.runtime_verifier(html, data["entries"], backup=self.permits_backup(row), storage_limit=limit,
-                              website=spec.get("kind") == "website")
+        try:
+            self.runtime_verifier(html, data["entries"], backup=self.permits_backup(row), storage_limit=limit,
+                                  website=spec.get("kind") == "website")
+        except RuntimeVerificationError as error:
+            logging.getLogger(__name__).warning("staged runtime rejected task=%s candidate=%s reason=%s",
+                                                identifier, identity["sha256"], error.diagnostic)
+            if (revision is None and spec.get("kind") == "website"
+                    and error.diagnostic == "website_tabs" and not data["entries"]):
+                with self.store.connection(write=True) as db:
+                    db.execute("""
+                        UPDATE staged_jobs SET state='failed',failure=?,issue=?,updated_at=?
+                        WHERE id=? AND state='complete' AND head=? AND expires>?
+                        AND EXISTS (
+                            SELECT 1 FROM staged_candidates
+                            WHERE task=staged_jobs.id AND nonce=? AND runtime_proof IS NULL
+                        )
+                    """, (error.code, uuid.uuid4().hex[:12], self.clock(), identifier, identity["commit"],
+                          self.clock(), candidate["nonce"]))
+            raise
         with self.store.connection(write=True) as db:
             row, _, revision, result_id = self.publication_binding(db, token, marker, identifier, identity, data)
             if row["state"] == "published":

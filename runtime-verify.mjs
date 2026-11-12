@@ -12,7 +12,7 @@ for await (const part of process.stdin) input.push(part);
 const { html, entries, backup, limit, website } = JSON.parse(Buffer.concat(input).toString());
 const storageDisabled = html.startsWith('<!doctype html><!--root:storage=none-->');
 if (storageDisabled && entries.length) {
-  process.stdout.write('failed\n');
+  process.stdout.write('failed:storage_not_allowed\n');
   process.exit(0);
 }
 const workbench = await readFile(new URL('./workbench/workbench.js', import.meta.url), 'utf8');
@@ -65,7 +65,7 @@ const chrome = spawn(chromePath, [
 ], { stdio: ['ignore', 'ignore', 'ignore', 'pipe', 'pipe'] });
 
 let closed = false;
-let failed = false;
+let failure = '';
 let candidateStarted = false;
 let served = false;
 let canaryEnabled = true;
@@ -103,7 +103,7 @@ async function attached(params) {
   const id = params.sessionId;
   if (params.targetInfo.type !== 'iframe') {
     // The candidate never needs workers, popups, or another browsing target.
-    failed = true;
+    failure ||= 'isolation_event';
     return;
   }
   const ready = (async () => {
@@ -127,7 +127,7 @@ async function requestPaused(params, id) {
   if (id === targetSession && canaryEnabled && request.method === 'GET' && request.url === canary) {
     return cdp('Fetch.continueRequest', { requestId }, id);
   }
-  if (candidateStarted && params.resourceType === 'Document') failed = true;
+  if (candidateStarted && params.resourceType === 'Document') failure ||= 'frame_changed';
   return cdp('Fetch.failRequest', { requestId, errorReason: 'BlockedByClient' }, id);
 }
 
@@ -140,24 +140,24 @@ function receive(message) {
     return;
   }
   const { method, params, sessionId } = message;
-  if (method === 'Runtime.exceptionThrown' && candidateStarted) failed = true;
-  if (method === 'Page.frameNavigated' && candidateStarted) failed = true;
+  if (method === 'Runtime.exceptionThrown' && candidateStarted) failure ||= 'script_exception';
+  if (method === 'Page.frameNavigated' && candidateStarted) failure ||= 'frame_changed';
   if (method === 'Page.frameAttached' && sessionId === targetSession) {
-    if (candidateFrameId) failed = true;
+    if (candidateFrameId) failure ||= 'isolation_event';
     else candidateFrameId = params.frameId;
   }
-  if (method === 'Page.frameDetached' && candidateStarted && params.reason !== 'swap') failed = true;
+  if (method === 'Page.frameDetached' && candidateStarted && params.reason !== 'swap') failure ||= 'frame_changed';
   if (method === 'Target.attachedToTarget' && params.targetInfo.type !== 'page') {
-    void attached(params).catch(() => { failed = true; });
+    void attached(params).catch(() => { failure ||= 'isolation_event'; });
   }
-  if (method === 'Fetch.requestPaused') void requestPaused(params, sessionId).catch(() => { failed = true; });
+  if (method === 'Fetch.requestPaused') void requestPaused(params, sessionId).catch(() => { failure ||= 'isolation_event'; });
 }
 
 let buffer = '';
 reply.setEncoding('utf8');
 reply.on('data', chunk => {
   if (buffer.length + chunk.length > 2 * 1024 * 1024) {
-    failed = true;
+    failure ||= 'isolation_event';
     close();
     reply.destroy();
     chrome.kill();
@@ -291,7 +291,7 @@ async function run() {
     try { await fetch(${JSON.stringify(canary)}); } catch (error) { httpBlocked = error instanceof TypeError; }
     return httpBlocked && ${blocksWebRTC};
   })()`);
-  if (!policy || failed) throw new Error('Chromium does not enforce the verification network policy');
+  if (!policy || failure) throw new Error('Chromium does not enforce the verification network policy');
   canaryEnabled = false;
   server.close();
 
@@ -305,11 +305,11 @@ async function run() {
     return true;
   })()`, executionContextId);
   let candidate;
-  while (!candidate && !failed && Date.now() < deadline) {
+  while (!candidate && !failure && Date.now() < deadline) {
     if (candidateFrameId) candidate = await candidateFrame();
     if (!candidate) await delay(25);
   }
-  if (!candidate || failed) throw new Error('Could not attach to the isolated verification frame');
+  if (!candidate || failure) throw new Error('Could not attach to the isolated verification frame');
   const { sessionId, frame } = candidate;
   const observer = await cdp('Page.createIsolatedWorld', {
     frameId: frame.id, worldName: 'root-candidate-observer',
@@ -321,26 +321,28 @@ async function run() {
   await cdp('Page.setDocumentContent', { frameId: frame.id, html: srcdoc }, sessionId);
   await delay(250);
   const current = await candidateFrame();
-  if (failed || !current || current.frame.loaderId !== frame.loaderId) return 'failed';
+  if (failure) return 'failed:' + failure;
+  if (!current || current.frame.loaderId !== frame.loaderId) return 'failed:frame_changed';
   const result = await evaluate(
     `document.readyState === 'complete' && Boolean(document.body?.childElementCount) && ${blocksWebRTC}`,
     observer.executionContextId, sessionId);
-  if (!result || failed) return 'failed';
+  if (failure) return 'failed:' + failure;
+  if (!result) return 'failed:document_not_ready';
   if (website && !await evaluate(
     '(' + verifyWebsiteTabs.toString() + ')()', observer.executionContextId, sessionId,
-  )) return 'failed';
-  return failed ? 'failed' : 'ok';
+  )) return 'failed:' + (failure || 'website_tabs');
+  return failure ? 'failed:' + failure : 'ok';
 }
 
 let timer;
 try {
   const verdict = await Promise.race([
     run(),
-    new Promise(resolve => { timer = setTimeout(() => resolve(candidateStarted ? 'failed' : 'unavailable'), 9000); }),
+    new Promise(resolve => { timer = setTimeout(() => resolve(candidateStarted ? 'failed:' + (failure || 'runtime_timeout') : 'unavailable'), 9000); }),
   ]);
   process.stdout.write(verdict + '\n');
 } catch {
-  process.stdout.write(failed && candidateStarted ? 'failed\n' : 'unavailable\n');
+  process.stdout.write(failure && candidateStarted ? 'failed:' + failure + '\n' : 'unavailable\n');
 } finally {
   clearTimeout(timer);
   server.closeAllConnections();

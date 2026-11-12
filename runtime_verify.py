@@ -24,8 +24,10 @@ def _unavailable():
     return ApiError(503, "staged_verifier_unavailable", "服务端预览检查暂不可用，候选尚未保存。")
 
 
-def _failed():
-    return ApiError(422, "staged_runtime_failed", "候选未通过服务端运行检查，原工具仍可用。")
+class RuntimeVerificationError(ApiError):
+    def __init__(self, diagnostic):
+        super().__init__(422, "staged_runtime_failed", "候选未通过服务端运行检查，原工具仍可用。")
+        self.diagnostic = diagnostic
 
 
 def check_script(source):
@@ -70,11 +72,11 @@ def verify(html, entries, *, backup=False, storage_limit=TOOL_STORAGE_BYTES, web
     """Require isolated startup and the applicable website checks for the fixed snapshot."""
     packed = pack_entries(entries, limit=storage_limit)
     if not isinstance(html, bytes) or not html.lower().startswith(b"<!doctype html>"):
-        raise _failed()
+        raise RuntimeVerificationError("invalid_document")
     try:
         source = html.decode("utf-8")
     except UnicodeError:
-        raise _failed() from None
+        raise RuntimeVerificationError("invalid_document") from None
 
     command = _command()
     if not SLOTS.acquire(timeout=1):
@@ -105,6 +107,9 @@ def verify(html, entries, *, backup=False, storage_limit=TOOL_STORAGE_BYTES, web
 
     if process.returncode == 0 and output == b"ok\n":
         return
-    if process.returncode == 0 and output == b"failed\n":
-        raise _failed()
+    if process.returncode == 0:
+        for reason in ("script_exception", "frame_changed", "isolation_event", "document_not_ready",
+                       "website_tabs", "runtime_timeout", "storage_not_allowed"):
+            if output == f"failed:{reason}\n".encode("ascii"):
+                raise RuntimeVerificationError(reason)
     raise _unavailable()
