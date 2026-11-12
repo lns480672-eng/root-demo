@@ -719,7 +719,8 @@ class StagedHTTP(StagedHTTPFixture):
                     task = response["task"]["id"]
                     return "/api/staged/" + task, self.wait_task(owner, task, state)
 
-                variants = ("我想加一个阅读时间", "增加一个阅读时间?") if index == 0 else ()
+                variants = (("我想加一个阅读时间", "增加一个阅读时间?") if index == 0
+                            else ("页面水平居中", "把工具内容区居中"))
                 for ambiguous in (original, f"  {original} ！ ", *variants):
                     rejected, question = revise(ambiguous, "unsupported")
                     self.assertEqual(question["reason"], reason)

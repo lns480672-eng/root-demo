@@ -642,8 +642,8 @@ def planned_local_revision(base, requirement):
             reason = "revision_field_clarification_required"
             raise ApiError(422, reason, REVISION_GUIDANCE[reason])
     if base["kind"] == "program" and "居中" in requirement:
-        explicit = re.search(r"垂直|纵向|按钮|输入框|结果|工作台|整页|横向|水平|左右", requirement)
-        reason = "revision_alignment_unsupported" if explicit else "revision_alignment_clarification_required"
+        outside_scope = re.search(r"垂直|纵向|按钮|输入框|结果|工作台|整页", requirement)
+        reason = "revision_alignment_unsupported" if outside_scope else "revision_alignment_clarification_required"
         raise ApiError(422, reason, REVISION_GUIDANCE[reason])
     if base["kind"] != "ledger" or not _ledger_operation(requirement)[0]:
         raise _out_of_scope()
