@@ -140,7 +140,8 @@ def validate_spec(value):
             keys(value, "kind", "layout", "title", "goal")
             require(value["layout"] in staged_website.LAYOUTS, "bad_website_layout")
         else:
-            keys(value, "kind", "title", "goal")
+            keys(value, "kind", "title", "goal", optional=("contentAlignment",))
+            require(value.get("contentAlignment", "default") in ("default", "center"), "bad_program_alignment")
         require(label(value["title"]), "bad_title")
         goal = value["goal"]
         require(isinstance(goal, str) and goal.isprintable() and 0 < len(goal.strip()) <= 240,

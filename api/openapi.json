@@ -4243,6 +4243,10 @@
               }
             ]
           },
+          "guidance": {
+            "type": "string",
+            "description": "修改目标待澄清或当前能力不足时的具体提示。"
+          },
           "reason": {
             "anyOf": [
               {
