@@ -371,6 +371,17 @@ try {
     await until(() => visible('#entry-coachmark'));
   }
 
+  async function assertCenteredNonWorkspaceShell() {
+    assert.equal(await evaluate(`(() => {
+      const product = document.querySelector('.elys-product');
+      const shell = product.getBoundingClientRect();
+      const right = document.documentElement.clientWidth - shell.right;
+      return document.querySelector('#workspace').hidden &&
+        shell.left > 0 && Math.abs(shell.left - right) <= 1 &&
+        getComputedStyle(product).maxWidth === '1350px';
+    })()`), true);
+  }
+
   async function openLatest() {
     await until(() => evaluate('document.documentElement.dataset.ready === "true"'));
     await click('#library-entry');
@@ -517,6 +528,7 @@ try {
   }
   if (!live) {
     stage = 'account visual layout and registration feedback';
+    if (entryFlow) await assertCenteredNonWorkspaceShell();
     await screenshot('account-login');
     await click('#auth-mode');
     assert.deepEqual(await evaluate(
@@ -620,17 +632,19 @@ try {
       const layout = await evaluate(`(() => {
         const shell = document.querySelector('.elys-product').getBoundingClientRect();
         const workspace = document.querySelector('#workspace');
-        const contentLeft = document.querySelector('.workspace-sidebar').getBoundingClientRect().right +
-          parseFloat(getComputedStyle(workspace).columnGap);
+        const nav = document.querySelector('.workspace-sidebar');
+        const contentLeft = nav.getBoundingClientRect().right + parseFloat(getComputedStyle(workspace).columnGap);
         const input = document.querySelector('#composer').getBoundingClientRect();
         const contentRight = workspace.getBoundingClientRect().right;
         return {
           left: shell.left,
           right: document.documentElement.clientWidth - shell.right,
           centerOffset: Math.abs((input.left + input.right - contentLeft - contentRight) / 2),
-          overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
+          navigationOnLeft: nav.checkVisibility() && contentLeft <= input.left + 1,
+          overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth || input.right > shell.right,
         };
       })()`);
+      assert.equal(layout.navigationOnLeft, true, '导航保持在左侧，视口 ' + width);
       assert.equal(layout.left, 0, '工作台左侧贴边，视口 ' + width);
       assert.equal(layout.right, 0, '工作台右侧贴边，视口 ' + width);
       assert.ok(layout.centerOffset <= 1, '输入区在导航右侧居中，视口 ' + width);
@@ -865,6 +879,7 @@ try {
     assert.equal(await evaluate('document.querySelector("#release-list li[aria-current=true] code").textContent'),
       config.body.build);
     assert.equal(await evaluate('document.querySelector("#workspace").hidden'), true);
+    if (entryFlow) await assertCenteredNonWorkspaceShell();
     await screenshot('release-history');
     await click('#updates-back');
     await until(() => evaluate('location.pathname === "/" && !document.querySelector("#workspace").hidden'));
@@ -1399,18 +1414,37 @@ try {
     })()`);
     await click('#generate');
     await until(() => evaluate('typeof window.releaseLayoutGeneration === "function"'));
-    assert.equal(await evaluate(`(() => {
-      const workspace = document.querySelector('#workspace');
-      const composer = document.querySelector('.elys-composer');
-      const preview = document.querySelector('.elys-preview');
-      const columns = getComputedStyle(workspace).gridTemplateColumns.split(' ').map(parseFloat);
-      return workspace.dataset.mode === 'compose' && columns.length === 3 &&
-        columns[1] > 0 && columns[2] > columns[1] &&
-        getComputedStyle(composer).gridArea === 'composer' && getComputedStyle(preview).gridArea === 'content';
-    })()`), true, '开始后在固定导航右侧分出生成和预览两列');
-    assert.equal(await visible('.elys-preview'), false);
-    await screenshot('workspace-generation-1920');
-    await evaluate('window.releaseLayoutGeneration(); void 0');
+    try {
+      for (const width of [1920, 390]) {
+        await cdp('Emulation.setDeviceMetricsOverride', {width, height:980, deviceScaleFactor:1, mobile:width === 390});
+        const layout = await evaluate(`(() => {
+          const workspace = document.querySelector('#workspace');
+          const shell = document.querySelector('.elys-product').getBoundingClientRect();
+          const nav = document.querySelector('.workspace-sidebar');
+          const composer = document.querySelector('.elys-composer');
+          const viewport = document.documentElement;
+          const style = getComputedStyle(workspace);
+          return {
+            mode: workspace.dataset.mode,
+            columns: style.gridTemplateColumns.split(' ').length,
+            areas: style.gridTemplateAreas,
+            navigation: nav.checkVisibility(),
+            progress: document.querySelector('#loading').checkVisibility(),
+            fits: shell.left === 0 && shell.right === viewport.clientWidth &&
+              composer.getBoundingClientRect().right <= shell.right && viewport.scrollWidth === viewport.clientWidth,
+          };
+        })()`);
+        assert.deepEqual(layout, {
+          mode:'compose', columns:width === 390 ? 2 : 3,
+          areas:width === 390 ? '"sidebar composer" "sidebar content"' : '"sidebar composer content"',
+          navigation:true, progress:true, fits:true,
+        });
+        assert.equal(await visible('.elys-preview'), false);
+        await screenshot('workspace-generation-' + width);
+      }
+    } finally {
+      await evaluate('window.releaseLayoutGeneration(); void 0');
+    }
     const directTool = await activeTool(previous);
     await cdp('Emulation.setDeviceMetricsOverride', {width:1360,height:980,deviceScaleFactor:1,mobile:false});
     await recordRun(directTool);
