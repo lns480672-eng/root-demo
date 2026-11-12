@@ -498,7 +498,8 @@ export async function verifyLedgerTheme(ctx) {
       await screenshot('local-plan-v' + version);
       await click('#revision-confirm');
       await until(async () => (await versions()).current === version);
-      await until(() => visible('#revise-tool'));
+      await until(() => evaluate('document.querySelector("#revise-tool")?.checkVisibility()'
+        + ' && !document.querySelector("#revise-tool").disabled'));
       await screenshot('local-applied-v' + version);
     }
     assert.deepEqual((await stored(old.id)).entries, before.entries);
