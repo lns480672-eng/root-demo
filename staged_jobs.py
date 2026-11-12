@@ -11,6 +11,7 @@ import time
 import uuid
 
 from accounts import ApiError, TABLE_STORAGE_BYTES, TOOL_STORAGE_BYTES, pack_entries
+from runtime_verify import check_script
 from staged_revision import REVISION_GUIDANCE
 
 MAX_ATTEMPTS = 8
@@ -426,6 +427,8 @@ class StagedJobs:
 
     def checkpoint(self, identifier, fence, index, stage, content, prior):
         self.blueprint.validate(stage, content, prior)
+        if stage == "implementation":
+            check_script(json.loads(content)["script"])
         with self.store.connection(write=True) as db:
             row = self.worker(db, identifier, fence, index)
             self.check_revision(db, row, stage, content, prior)

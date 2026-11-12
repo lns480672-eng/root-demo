@@ -74,6 +74,8 @@ def stages(stage, requirement, prior, key, admit, record, *, category="auto"):
                 "format":"website-code-v1", "markup":"<h1>候选唯一标记</h1>",
                 "style":"h1 { margin: 1rem; }", "script":"void 0;",
             })
+            if requirement.endswith("括号缺失"):
+                content["script"] = "document.addEventListener('click', () => { void 0; }"
         record({"stage":stage,"status":"ok","dispatched":True})
         return json.dumps(content, ensure_ascii=False).encode()
     if requirement.startswith("计算"):
@@ -342,15 +344,19 @@ class StagedHTTP(StagedHTTPFixture):
     def test_website_code_saves_and_reopens_and_invalid_output_has_no_candidate(self):
         owner = self.account("website-code-owner")
         before = self.request("/api/trial", auth=owner)[1]["generation"]["used"]
-        for requirement in ("官网代码无效", "官网代码有效"):
+        for requirement in ("官网代码无效", "官网脚本括号缺失", "官网代码有效"):
             status, response, _ = self.request("/api/generate", {
                 "requirement": requirement, "requestId": uuid4().hex, "category": "brand",
             }, owner)
             self.assertEqual(status, 202)
             task = response["task"]["id"]
             path = "/api/staged/" + task
-            if requirement.endswith("无效"):
-                self.wait_task(owner, task, "failed")
+            if not requirement.endswith("有效"):
+                failed = self.wait_task(owner, task, "failed")
+                if requirement.endswith("括号缺失"):
+                    self.assertEqual(failed["reason"], "invalid_staged_result")
+                    self.assertEqual(failed["stage"], "implementation")
+                    self.assertEqual(failed["completed"], ["spec"])
                 self.assertEqual(self.request(path + "/candidate", {}, owner)[0], 409)
                 self.assertEqual(self.request("/api/trial", auth=owner)[1]["generation"]["used"], before)
                 continue
