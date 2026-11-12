@@ -35,17 +35,13 @@ theme_check = "--ledger-theme" in sys.argv[5:]
 history_check = "--staged-history" in sys.argv[5:]
 
 
-def history_program(stage, requirement, admit, record, base=None):
+def history_program(stage, requirement, admit, record):
     admit()
     if stage == "implementation" and requirement.endswith("首次失败"):
         record({"stage":stage, "status":"invalid_staged_result", "dispatched":True})
         raise ApiError(502, "invalid_staged_result", "替身模拟无效实现")
     record({"stage":stage, "status":"ok", "dispatched":True})
-    if base:
-        content = dict(base["source"][stage])
-        if stage == "implementation":
-            content["markup"] += '<p id="history-revised">同一工具的新版本</p>'
-    elif stage == "spec":
+    if stage == "spec":
         content = {"kind":"program", "title":"历史复测工具", "goal":"验证明确重新提交后的保存"}
     else:
         content = {"markup":'<p id="history-saved">历史复测工具已保存</p>', "script":"void 0;"}
@@ -116,8 +112,6 @@ if not key:
 runs = Path(sys.argv[3])
 Store(runs / "workspace.sqlite3").create_invite("fixture-invite", uses=2)
 def revise(stage, requirement, prior, key, admit, record, *, base):
-    if history_check and not live:
-        return history_program(stage, requirement, admit, record, base)
     if live or (base["kind"] != "table" and not theme_check):
         return staged_revision.provide(stage, requirement, prior, key, admit, record, base=base)
 
