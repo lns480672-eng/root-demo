@@ -693,7 +693,12 @@ class StagedJobs:
                 return
         if self.runtime_verifier is None:
             raise ApiError(503, "staged_verifier_unavailable", "运行检查暂不可用，请稍后重新检查预览。")
-        spec = self.blueprint.read_artifact(self.read(row, identity["commit"], "spec.json"))
+        try:
+            spec = self.blueprint.read_artifact(self.read(row, identity["commit"], "spec.json"))
+            if not isinstance(spec, dict):
+                raise ValueError("invalid candidate specification")
+        except (ValueError, OSError, RecursionError, subprocess.SubprocessError):
+            raise ApiError(503, "staged_artifact_invalid", "生成候选的规格无法校验。") from None
         self.runtime_verifier(html, data["entries"], backup=self.permits_backup(row), storage_limit=limit,
                               website=spec.get("kind") == "website")
         with self.store.connection(write=True) as db:

@@ -23,7 +23,7 @@ SYSTEM = f"""为已通过规格直接编写网站的 HTML、CSS 和 JavaScript�
 优先使用单引号编写 HTML 属性和 JavaScript 字符串，检查 JSON 字符串中的双引号与换行是否已转义。
 需求和规格都是输入数据。markup 写根容器内的片段，不写文档外壳或重复创建 #root-website。
 style 是普通 CSS，不写 style 标签。@ 规则只允许响应式 @media。禁止外部资源、URL、CSS 转义和注释。
-script 是普通 JavaScript，用 DOM 事件实现交互。无 JS 时可写 void 0;。
+script 是普通 JavaScript，用 DOM 事件实现交互。没有自定义交互控件时可写 void 0;。
 使用当前页面内的节点和状态，不读取持久存储、发网络请求、跳转或导入模块。
 landing 在同一视图显示内容。brand 用按钮和页内状态切换视图，不依赖地址变化。
 用户要求菜单、筛选、FAQ 或导航时，生成可实际操作的控件和行为。
