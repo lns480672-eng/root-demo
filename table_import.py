@@ -517,7 +517,7 @@ def tool_configuration(html):
     filters = re.search(r"const columnFilters = (\[[0-9, ]*\]);", html)
     if title and filters:
         configuration = {"title": unescape(title[1]), "filters": json.loads(filters[1])}
-        if render_tool(**configuration) == html:
+        if html in (render_tool(**configuration), render_tool(**configuration, styled=False)):
             return configuration
     raise ValueError("unrecognized table renderer")
 
@@ -550,7 +550,7 @@ def read_saved_table(entries):
     return table
 
 
-def render_tool(title=SUGGESTION, filters=()):
+def render_tool(title=SUGGESTION, filters=(), *, styled=True):
     """Render trusted markup. Records and field names stay in sandbox storage."""
     if not valid_label(title, MAX_HEADER_LENGTH):
         raise ValueError("invalid table title")
@@ -558,9 +558,26 @@ def render_tool(title=SUGGESTION, filters=()):
             or any(type(index) is not int or not 0 <= index < MAX_TABLE_COLUMNS for index in filters)
             or len(filters) != len(set(filters))):
         raise ValueError("invalid table filters")
-    return (TOOL_HTML.replace("__TABLE_CELL_LIMIT__", str(MAX_CELL_LENGTH))
-            .replace("__TABLE_COLUMN_FILTERS__", json.dumps(filters))
-            .replace("__TABLE_TITLE__", escape(title)))
+    markup = (TOOL_HTML.replace("__TABLE_CELL_LIMIT__", str(MAX_CELL_LENGTH))
+              .replace("__TABLE_COLUMN_FILTERS__", json.dumps(filters))
+              .replace("__TABLE_TITLE__", escape(title)))
+    if styled:
+        return markup.replace("</style>", TABLE_VISUAL_STYLE + "</style>", 1)
+    return markup
+
+
+TABLE_VISUAL_STYLE = """
+    body { padding: clamp(12px, 3vw, 28px); background: #f4f5f8; }
+    h1 { font-size: clamp(22px, 4vw, 30px); line-height: 1.2; overflow-wrap: anywhere; }
+    #table-source { color: #47546a; }
+    #table-add-record, .table { background: #fff; border: 1px solid #d6dbe7; border-radius: 12px; }
+    #table-add-record { padding: 12px; }
+    #table-add-record summary { width: fit-content; font-weight: 650; color: #24499b; }
+    input, select, button { max-width: 100%; padding: 6px 10px; border: 1px solid #a6afc0;
+      border-radius: 6px; color: inherit; background: #fff; font: inherit; }
+    #table-entry-form button { border-color: #24499b; background: #24499b; color: #fff; cursor: pointer; }
+    :focus-visible { outline: 2px solid #24499b; outline-offset: 2px; }
+"""
 
 
 TOOL_HTML = """<!doctype html>

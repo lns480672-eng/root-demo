@@ -203,9 +203,14 @@ class StageProviderTests(unittest.TestCase):
             "style": "#workshop { padding: 16px; }",
             "script": "document.getElementById('workshop').hidden = false;",
         }
-        with patch.object(assistant_model, "_exchange", return_value=envelope(json.dumps(model_code))):
+        requirement = "为风筝工坊做官网，偏好活泼的插画风"
+        with patch.object(assistant_model, "_exchange", return_value=envelope(json.dumps(model_code))) as dispatch:
             previous["implementation.json"] = blueprint.provide(
-                "implementation", "生成有课程介绍的风筝工坊官网", previous, "fixture-key", Mock(), category="brand")
+                "implementation", requirement, previous, "fixture-key", Mock(), category="brand")
+        messages = json.loads(dispatch.call_args.args[0])["body"]["messages"]
+        self.assertEqual(json.loads(messages[1]["content"])["requirement"], requirement)
+        for criterion in ("受众", "首要任务", "用户视觉偏好", "字阶", "390px", "focus-visible"):
+            self.assertIn(criterion, messages[0]["content"])
         app = blueprint.assemble(previous).decode()
         self.assertIn(model_code["markup"], app)
         self.assertIn(model_code["style"], app)

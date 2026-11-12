@@ -96,11 +96,18 @@ def assemble(spec, implementation):
     return f'''<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{title}</title><style>
-body{{font:15px/1.55 system-ui,sans-serif;margin:14px;color:#202637;background:#f4f5f8}}
-main{{background:white;border:1px solid #d6dbe7;border-radius:8px;padding:12px;overflow:auto}}
-h1{{font-size:22px}}label{{display:block;margin:4px 0}}
-input,button,select,textarea{{font:inherit;padding:4px;max-width:100%;box-sizing:border-box}}
-table{{border-collapse:collapse}}th,td{{padding:4px 8px;text-align:left}}
+*{{box-sizing:border-box}}
+body{{font:15px/1.55 system-ui,sans-serif;margin:clamp(12px,3vw,28px);color:#202637;background:#f4f5f8}}
+h1{{font-size:clamp(22px,4vw,30px);line-height:1.2;overflow-wrap:anywhere;margin:0 0 16px}}
+main{{background:#fff;border:1px solid #d6dbe7;border-radius:12px;padding:clamp(12px,3vw,24px);overflow:auto}}
+label{{display:block;margin:6px 0}}
+input,button,select,textarea{{font:inherit;max-width:100%;padding:6px 10px;border:1px solid #a6afc0;border-radius:6px;color:inherit}}
+input,select,textarea{{background:#fff}}
+button{{background:#f5f7fa;cursor:pointer;white-space:normal}}
+button[type=submit],form button:not([type]){{background:#24499b;color:white;border-color:#24499b}}
+:focus-visible{{outline:2px solid #24499b;outline-offset:2px}}
+output{{font-weight:650;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}}
+table{{border-collapse:collapse}}th,td{{padding:6px 9px;text-align:left}}
 {alignment}</style></head><body><h1>{title}</h1><main id="root-program">{markup}
 </main><script>
 (() => {{

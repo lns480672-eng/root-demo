@@ -352,12 +352,20 @@ def assemble(previous):
     return ('''<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>''' + title + '''</title><style>
-body{font:15px/1.55 system-ui,sans-serif;margin:14px;color:#202637;background:''' + background + '''}
-main{display:grid;gap:12px}section{border:1px solid #d6dbe7;background:#fff;border-radius:8px;padding:12px;overflow:auto}
-h1{font-size:22px}h2{font-size:17px;margin:0 0 6px}
-form,.filter-bar{display:flex;flex-wrap:wrap;gap:10px;align-items:end}label{display:grid;gap:3px}
-input,button,select,textarea{font:inherit;padding:4px;max-width:100%}
-table{border-collapse:collapse;width:100%}th,td{padding:4px 8px;text-align:left;border-bottom:1px solid #ddd}
+*{box-sizing:border-box}
+body{font:15px/1.55 system-ui,sans-serif;margin:clamp(12px,3vw,28px);color:#202637;background:''' + background + '''}
+main{display:grid;gap:16px;min-width:0}
+section{min-width:0;border:1px solid #d6dbe7;background:#fff;border-radius:12px;padding:clamp(12px,2vw,20px);overflow:auto}
+h1{font-size:clamp(22px,4vw,30px);line-height:1.2;overflow-wrap:anywhere;margin:0 0 16px}
+h2{font-size:17px;line-height:1.3;margin:0 0 10px}
+form,.filter-bar{display:flex;flex-wrap:wrap;gap:10px;align-items:end}label{display:grid;gap:4px;min-width:0}
+input,button,select,textarea{font:inherit;max-width:100%;padding:6px 10px;border:1px solid #a6afc0;border-radius:6px;color:inherit}
+input,select,textarea{background:#fff}
+button{background:#f5f7fa;cursor:pointer;white-space:normal}
+#entry button[type=submit]{background:#24499b;color:#fff;border-color:#24499b}
+:focus-visible{outline:2px solid #24499b;outline-offset:2px}
+table{border-collapse:collapse;width:100%}th,td{padding:6px 9px;text-align:left;border-bottom:1px solid #dee3eb}
+th{background:#f5f7fa}
 textarea{box-sizing:border-box;width:100%}[role=alert]{color:#ae2b2b}
 #record-board{display:flex;gap:10px;overflow-x:auto;padding-bottom:6px}
 #record-board>section{flex:1 0 12rem;background:''' + background + '''}
