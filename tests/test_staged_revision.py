@@ -65,13 +65,17 @@ class RevisionContextTests(unittest.TestCase):
             ('class="primary"', 'class="secondary"'),
             ('<button id="split" data-op="add" class="primary">计算</button>', ""),
             (note, "新" * 401),
+            (note, "\u202e隐藏"),
+            (note, '<button id="split">重复</button>'),
+            ('<button id="split" data-op="add" class="primary">计算</button>',
+             '<form><button id="split" data-op="add" class="primary">计算</button></form>'),
         ):
             plan["edits"][0].update(before=before, after=after)
             with self.subTest(before=before), self.assertRaises(ApiError):
                 revision.plan_artifacts(encode(plan), base)
 
     def test_stateless_script_edit_blocks_existing_records_before_confirmation(self):
-        spec = {"kind": "program", "title": "分账计算", "goal": "平均分摊"}
+        spec = {"kind": "program", "title": "分账计算", "goal": "平均分摊", "storage": "none"}
         code = {"markup": "<output id='result'></output>",
                 "script": "document.getElementById('result').textContent = (12 / 3).toFixed(0);"}
         base = revision.prepare({"spec.json": encode(spec), "implementation.json": encode(code)})
@@ -85,7 +89,7 @@ class RevisionContextTests(unittest.TestCase):
         self.assertIn("脚本", revision.describe(base, files, "", [])[0])
         with self.assertRaises(ApiError):
             revision.describe(base, files, "", [["existing", "record"]])
-        plan["edits"][0]["after"] = ".toFixed(2); localStorage.clear()"
+        base["source"]["spec"]["storage"] = "tool"
         with self.assertRaises(ApiError):
             revision.plan_artifacts(encode(plan), base)
 

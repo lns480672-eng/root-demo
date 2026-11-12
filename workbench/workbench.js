@@ -923,7 +923,7 @@ function serializeEntries(entries, limit) {
 }
 
 // Runs inside the opaque frame before any generated code. It has only this tool's snapshot.
-function initializeFrame(entries, token, parentOrigin, limit, backup) {
+function initializeFrame(entries, token, parentOrigin, limit, backup, storageDisabled) {
   const send = parent.postMessage.bind(parent);
   const values = new Map(entries);
   const existing = new Set(values.keys());
@@ -977,7 +977,7 @@ function initializeFrame(entries, token, parentOrigin, limit, backup) {
     for (const [key, value] of next) values.set(key, value);
     report('storage', { entries: snapshot });
   }
-  Object.defineProperty(window, 'localStorage', {
+  if (!storageDisabled) Object.defineProperty(window, 'localStorage', {
     value: Object.freeze({
       get length() { return values.size; },
       getItem(key) {
@@ -1087,6 +1087,7 @@ window.addEventListener('message', event => {
   if (!frame) return;
   const { type, entries } = event.data;
   if (type === 'storage') {
+    if (frame.storageDisabled) return;
     if (frame === active && pendingPublication?.runId) return;
     try {
       const snapshot = serializeEntries(entries, frame.storageLimit);
@@ -1097,7 +1098,7 @@ window.addEventListener('message', event => {
       else warnStorage('这次更改未能保存，刷新后可能丢失。');
     }
   } else if (type === 'backup-restore') {
-    enqueueBackupRestore(frame, event.data);
+    if (!frame.storageDisabled) enqueueBackupRestore(frame, event.data);
   } else if (type === 'quota') {
     if (frame === candidate) frame.reject(new Error('新工具数据超出浏览器存储限制。'));
     else warnStorage('工具存储空间已满，这次更改未保存。');
@@ -1405,21 +1406,22 @@ async function openTool(tool, restore = false) {
 
   const iframe = document.createElement('iframe');
   iframe.title = '生成的工具';
-  const backup = tool.stagedBackup === true;
+  const storageDisabled = tool.html.startsWith('<!doctype html><!--root:storage=none-->');
+  const backup = !storageDisabled && tool.stagedBackup === true;
   iframe.setAttribute('sandbox', 'allow-scripts allow-forms' + (backup ? ' allow-downloads' : ''));
   iframe.referrerPolicy = 'no-referrer';
   iframe.tabIndex = -1;
   iframe.inert = true;
   const frame = {
     id: tool.id, token: crypto.randomUUID(), iframe, snapshot: original,
-    storageLimit, backup,
+    storageLimit, backup, storageDisabled,
     revision: tool.revision, version: tool.version, saveTail: Promise.resolve(), saveFailed: false,
   };
   const old = active;
   candidate = frame;
   const ready = new Promise((resolve, reject) => Object.assign(frame, { resolve, reject }));
   const deadline = setTimeout(() => frame.reject(new Error('准备预览超时，需求已保留。')), 5000);
-  const args = JSON.stringify([entries, frame.token, location.origin, storageLimit, backup]).replaceAll('<', '\\u003c');
+  const args = JSON.stringify([storageDisabled ? [] : entries, frame.token, location.origin, storageLimit, backup, storageDisabled]).replaceAll('<', '\\u003c');
   const bootstrap = '(' + initializeFrame.toString() + ')(...' + args + ')';
   iframe.srcdoc = '<!doctype html><meta charset="utf-8">'
     + '<meta name="viewport" content="width=device-width, initial-scale=1">'

@@ -47,7 +47,7 @@ def assemble(spec, value):
     title = escape(spec["title"])
     layout = escape(spec["layout"], quote=True)
     markup, style, script = value["markup"], value["style"], value["script"]
-    return f"""<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
+    return f"""<!doctype html>{staged_program.NO_STORAGE_MARKER}<html lang="zh-CN"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{title}</title><style>{style}</style></head><body>
 <div id="root-website" data-layout="{layout}">{markup}</div>

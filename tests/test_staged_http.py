@@ -79,7 +79,9 @@ def stages(stage, requirement, prior, key, admit, record, *, category="auto"):
     if requirement.startswith("计算"):
         content = {"kind":"program","title":"加法计算器","goal":"计算两数和"} if stage == "spec" else {
             "markup":'<p id="answer"></p><p id="caption">相加</p>', "script":'document.querySelector("#answer").textContent="5";'}
-        if stage == "implementation" and requirement == "计算分账":
+        if stage == "spec" and requirement == "计算分账无存储":
+            content["storage"] = "none"
+        if stage == "implementation" and requirement in ("计算分账", "计算分账无存储"):
             content = {
                 "markup": '<input id="amount"><input id="people"><button id="split">分摊</button><output id="result"></output>',
                 "script": 'const field = id => document.getElementById(id);'
@@ -872,7 +874,7 @@ if (fields.result.textContent !== '40.00') process.exit(1);
 
     def test_script_revision_rechecks_record_free_snapshot_at_confirmation(self):
         owner = self.account("stateless-script-revision")
-        generated = self.gen(owner, "计算分账")[1]["task"]["id"]
+        generated = self.gen(owner, "计算分账无存储")[1]["task"]["id"]
         self.wait_task(owner, generated, "complete")
         path = "/api/staged/" + generated
         candidate = self.request(path + "/candidate", {}, owner)[1]

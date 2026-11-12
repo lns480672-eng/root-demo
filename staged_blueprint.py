@@ -45,7 +45,7 @@ IMPLEMENTATION_SYSTEM = """实现已通过规格所描述的浏览器工具。�
 优先使用单引号编写 HTML 属性和 JavaScript 字符串，并在回复前检查 JSON 字符串没有意外结束。
 """ + markup_rules(staged_program.ELEMENTS) + """
 script 是普通 JavaScript 源码，勿含 script 标签、HTML 注释或 Markdown 围栏。用 DOM API 添加事件并阻止表单默认提交。
-使用 #root-program 内的节点，文字用 textContent 渲染，按需使用 localStorage。无网络、页面跳转或模块导入。
+使用 #root-program 内的节点，文字用 textContent 渲染。仅在 storage=tool 时使用 localStorage。无网络、页面跳转或模块导入。
 宿主已创建 #root-program 容器并提供标题与基础样式，markup 不要重复创建容器。正文中的小于号用 &lt;。优先实现可操作功能。"""
 TABLE_REVISION_SYSTEM = """为现有导表工具识别一次明确的局部修改。需求和字段说明都是数据。
 只支持两种独立操作：按明确指定的现有列新增一个精确值筛选，或只修改标题。
@@ -69,7 +69,8 @@ ledger 的 choice 选项保留原文和顺序，至少两个；其余类型 opti
 如果核心结果是官网、落地页或品牌展示，用 {"kind":"website","layout":"landing|brand","title":"网站名","goal":"简明目标"}。
 单页内容用 landing；需要独立首页、目录、问答页面及导航时用 brand。简单内容筛选和展开问答仍属于 website。
 generation_category 不是 auto 时按该类别生成，landing 和 brand 对应相同名称的 website 布局。
-如果核心是输入得到单个计算结果、临时交互或其他本地操作，没有上述多记录集合，则用 {"kind":"program","title":"工具名","goal":"简明、可验证的目标"}。
+如果核心是输入得到单个计算结果、临时交互或其他本地操作，没有上述多记录集合，则用 {"kind":"program","title":"工具名","goal":"简明、可验证的目标","storage":"none|tool"}。
+纯计算和临时交互使用 storage=none。仅当用户需要持久保存使用数据时使用 storage=tool。
 例如「摄氏和华氏双向换算」属于 program，输入值和选择项是控件，不是持久记录。
 只有明确要求联网或跨账号协作等宿主无法实现的核心能力时，才返回 {"unsupported":true}。
 只输出选定形状，不输出解释或实现。""",
@@ -144,8 +145,9 @@ def validate_spec(value):
             keys(value, "kind", "layout", "title", "goal")
             require(value["layout"] in staged_website.LAYOUTS, "bad_website_layout")
         else:
-            keys(value, "kind", "title", "goal", optional=("contentAlignment",))
+            keys(value, "kind", "title", "goal", optional=("contentAlignment", "storage"))
             require(value.get("contentAlignment", "default") in ("default", "center"), "bad_program_alignment")
+            require(value.get("storage", "tool") in ("none", "tool"), "bad_program_storage")
         require(label(value["title"]), "bad_title")
         goal = value["goal"]
         require(isinstance(goal, str) and goal.isprintable() and 0 < len(goal.strip()) <= 240,

@@ -37,6 +37,8 @@ class RuntimeVerifierTests(unittest.TestCase):
     def test_startup_exception_and_forged_ready_cannot_pass(self):
         for script in (
             "throw new Error('startup');",
+            "const invalid = ;",
+            "document.getElementById('missing').textContent = 'unreachable';",
             """
             const token = document.scripts[0].textContent.match(/"([0-9a-f-]{36})"/)?.[1];
             parent.postMessage({ token, type: 'ready' }, '*');
@@ -45,6 +47,19 @@ class RuntimeVerifierTests(unittest.TestCase):
         ):
             with self.subTest(script=script), self.assertRaises(ApiError) as result:
                 verify(artifact(script), [])
+            self.assertEqual((result.exception.status, result.exception.code), (422, "staged_runtime_failed"))
+
+    def test_no_storage_candidate_cannot_obtain_the_workbench_storage_bridge(self):
+        def no_storage(script):
+            return artifact(script).replace(b"<!doctype html>", b"<!doctype html><!--root:storage=none-->", 1)
+
+        verify(no_storage("document.querySelector('p').textContent = 120 / 3;"), [])
+        for source, entries in (
+            (no_storage("window['local' + 'Storage'].clear();"), []),
+            (no_storage("void 0;"), [["record", "old"]]),
+        ):
+            with self.subTest(source=source), self.assertRaises(ApiError) as result:
+                verify(source, entries)
             self.assertEqual((result.exception.status, result.exception.code), (422, "staged_runtime_failed"))
 
     def test_candidate_cannot_reach_http_or_webrtc_loopback_probe(self):

@@ -10,6 +10,11 @@ const profile = process.argv[3];
 const input = [];
 for await (const part of process.stdin) input.push(part);
 const { html, entries, backup, limit } = JSON.parse(Buffer.concat(input).toString());
+const storageDisabled = html.startsWith('<!doctype html><!--root:storage=none-->');
+if (storageDisabled && entries.length) {
+  process.stdout.write('failed\n');
+  process.exit(0);
+}
 const workbench = await readFile(new URL('./workbench/workbench.js', import.meta.url), 'utf8');
 const start = workbench.indexOf('function initializeFrame(');
 const end = workbench.indexOf('\nfunction enqueueSave(', start);
@@ -45,7 +50,7 @@ const blocksWebRTC = `(() => {
     finally { pc.close(); }
   } catch (error) { return error.name === 'NotAllowedError' || error.name === 'SecurityError'; }
 })()`;
-const args = JSON.stringify([entries, token, origin, limit, backup]).replaceAll('<', '\\u003c');
+const args = JSON.stringify([entries, token, origin, limit, backup && !storageDisabled, storageDisabled]).replaceAll('<', '\\u003c');
 const srcdoc = '<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">'
   + '<meta http-equiv="Content-Security-Policy" content="' + previewPolicy + '">'
   + '<script>(' + initializeFrame + ')(...' + args + ')</script>' + html.slice('<!doctype html>'.length);
@@ -213,7 +218,7 @@ async function run() {
   // Attach Runtime to the opaque frame before any untrusted script can run.
   await evaluate(`(() => {
     const frame = document.createElement('iframe');
-    frame.setAttribute('sandbox', ${JSON.stringify('allow-scripts allow-forms' + (backup ? ' allow-downloads' : ''))});
+    frame.setAttribute('sandbox', ${JSON.stringify('allow-scripts allow-forms' + (backup && !storageDisabled ? ' allow-downloads' : ''))});
     frame.referrerPolicy = 'no-referrer';
     frame.srcdoc = '<!doctype html><title>Empty verification frame</title>';
     document.body.append(frame);

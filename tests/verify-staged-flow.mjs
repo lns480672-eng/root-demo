@@ -527,7 +527,7 @@ export async function verifyStagedCalculator(ctx) {
     activeTool, accountA, root, evidence, screenshot } = ctx;
   const input = '做一个摄氏和华氏温度双向换算工具，保留两位小数。使用数字输入 id=temperature，' +
     '单位下拉 id=unit，选项值 celsius（输入摄氏）、fahrenheit（输入华氏），' +
-    '点击按钮 id=convert 进行换算，将可见结果写入 id=result。无效输入提示错误。无需联网。';
+    '点击按钮 id=convert 进行换算，将可见结果写入 id=result。无效输入提示错误。无需联网，不保存任何数据。';
   await cdp('Page.navigate', {url:base});
   await login(accountA, true);
   if (await visible('#workspace-guide')) await click('#guide-skip');
