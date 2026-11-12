@@ -122,6 +122,28 @@ class RevisionContextTests(unittest.TestCase):
             revision.provide("revision-plan", "把原价改为起始金额", {}, "fixture-key", Mock(), None, base=base)
         self.assertIn("b" * 11000, json.loads(exchange.call_args.args[0])["body"]["messages"][1]["content"])
 
+    def test_ambiguous_time_field_requires_clarification_even_when_model_guesses_date(self):
+        base = revision.prepare(artifacts())
+        plan = {"status": "proposed", "operation": {
+            "kind": "add_field", "label": "观测日期", "type": "date",
+        }}
+        cases = (
+            ("给观察台账加一个观测时间", "clarify"),
+            ("给观察台账加一个日期字段，叫观测时间", "proposed"),
+        )
+        for requirement, status in cases:
+            with self.subTest(requirement=requirement), patch.object(
+                assistant_model, "_exchange", return_value=envelope(json.dumps(plan))
+            ) as exchange:
+                payload = revision.provide("revision-plan", requirement, {}, "fixture-key", Mock(), None, base=base)
+                exchange.assert_called_once()
+                result = json.loads(payload)
+                self.assertEqual(result["status"], status)
+                if status == "clarify":
+                    self.assertIn("日期", result["question"])
+                    self.assertIn("时长", result["question"])
+                    self.assertIn("几点", result["question"])
+
     def test_model_adds_nullable_field_using_host_identity_and_impact(self):
         base = revision.prepare(artifacts())
         plan = {"status": "proposed", "operation": {

@@ -162,6 +162,8 @@ def revise(stage, requirement, prior, key, admit, record, *, base):
                 plan = {"status":"clarify","question":"要改分栏背景还是字段显示名？"}
             elif "时分" in requirement or "可空时间字段" in requirement:
                 plan = {"status":"unsupported","reason":"当前字段类型不支持具体时分。"}
+            elif "观测时间" in requirement:
+                plan["operation"] = {"kind":"add_field","label":"观测日期","type":"date"}
             elif "阅读时间" in requirement:
                 plan = {"status":"clarify","question":"要记录阅读日期、阅读时长，还是具体时分？"}
             elif "删除项目" in requirement:
@@ -788,12 +790,15 @@ class StagedHTTP(StagedHTTPFixture):
                     task = response["task"]["id"]
                     return "/api/staged/" + task, self.wait_task(owner, task, state)
 
-                variants = (("我想加一个阅读时间", "增加一个阅读时间?") if index == 0
+                variants = (("我想加一个阅读时间", "增加一个阅读时间?", "给观察台账加一个观测时间") if index == 0
                             else ("页面水平居中", "把工具内容区居中"))
                 for ambiguous in (original, f"  {original} ！ ", *variants):
                     rejected, question = revise(ambiguous, "unsupported")
                     self.assertEqual(question["reason"], reason)
                     self.assertIn("？", question["guidance"])
+                    if index == 0:
+                        for meaning in ("日期", "时长", "几点"):
+                            self.assertIn(meaning, question["guidance"])
                     self.assertFalse(question["resumable"])
                     self.assertEqual(self.request(rejected + "/candidate", {}, owner)[0], 409)
                 _, outside = revise(unsupported, "unsupported")
@@ -801,7 +806,7 @@ class StagedHTTP(StagedHTTPFixture):
                 self.assertIn(limit_copy, outside["guidance"])
                 after_questions = self.request("/api/trial", auth=owner)[1]["generation"]
                 self.assertEqual(after_questions["used"], quota["used"])
-                self.assertEqual(after_questions["totalUsed"] - quota["totalUsed"], 5)
+                self.assertEqual(after_questions["totalUsed"] - quota["totalUsed"], len(variants) + 3)
                 self.assertEqual(self.request(tool, auth=owner)[1]["entries"], entries)
                 explicit = (clarified,) if index == 0 else (
                     clarified, "我想把工具内容区水平居中", "把页面内容区左右居中",
