@@ -181,6 +181,12 @@ class RevisionContextTests(unittest.TestCase):
         self.assertIn(b"<button>Add book</button>", rendered)
         self.assertIn(b'localStorage.setItem(storageKey, JSON.stringify(books))', rendered)
 
+    def test_color_word_in_an_explicit_field_rename_remains_a_label(self):
+        base = revision.prepare(artifacts())
+        spec = revision.provide("spec", "把字段「设备」显示名改为「白色」", {}, "", Mock(), None, base=base)
+        fields = {field["id"]: field["label"] for field in json.loads(spec)["fields"]}
+        self.assertEqual(fields["device"], "白色")
+
     def test_risky_actions_require_more_than_a_field_label(self):
         base = revision.prepare(artifacts())
         for request in ("删掉「设备」列", "把「设备」改成数字", "新增字段项目并把所有记录清空",
