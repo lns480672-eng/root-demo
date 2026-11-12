@@ -70,6 +70,14 @@ def stages(stage, requirement, prior, key, admit, record):
     if requirement.startswith("计算"):
         content = {"kind":"program","title":"加法计算器","goal":"计算两数和"} if stage == "spec" else {
             "markup":'<p id="answer"></p><p id="caption">相加</p>', "script":'document.querySelector("#answer").textContent="5";'}
+        if stage == "implementation" and requirement == "计算分账":
+            content = {
+                "markup": '<input id="amount"><input id="people"><button id="split">分摊</button><output id="result"></output>',
+                "script": 'const field = id => document.getElementById(id);'
+                          'field("split").addEventListener("click", () => {'
+                          'field("result").textContent = (Number(field("amount").value) / Number(field("people").value)).toFixed(2);'
+                          '});',
+            }
         if stage == "implementation" and requirement.endswith("启动失败探针"):
             content["script"] = 'throw new Error("synthetic startup failure");'
         record({"stage":stage,"status":"ok","dispatched":True})
@@ -679,6 +687,94 @@ class StagedHTTP(StagedHTTPFixture):
         final_admin = self.admin_generation()
         self.assertEqual((final_admin["completed"] - initial_admin["completed"],
                           final_admin["failed"] - initial_admin["failed"]), (6, 1))
+
+    def test_online_revision_requests_clarify_then_apply_only_after_confirmation(self):
+        cases = (
+            ("登记读书清单", "增加一个阅读时间", "revision_field_clarification_required",
+             "新增可空整数型字段「阅读时长（分钟）」", "可空整数", "新增可空时间字段「阅读时间」",
+             "revision_field_type_unsupported", "时分"),
+            ("计算分账", "那个页面居中", "revision_alignment_clarification_required",
+             "把工具内容区水平居中", "水平居中", "把工具内容区垂直居中",
+             "revision_alignment_unsupported", "水平居中"),
+        )
+        for index, (request, original, reason, clarified, change, unsupported, limit_reason, limit_copy) in enumerate(cases):
+            with self.subTest(original=original):
+                owner = self.account(f"online-revision-{index}")
+                task = self.gen(owner, request)[1]["task"]["id"]
+                self.wait_task(owner, task, "complete")
+                path = "/api/staged/" + task
+                candidate = self.request(path + "/candidate", {}, owner)[1]
+                entries = [["root-structured-records-v1", '[{"id":1,"name":"旧书","count":1,"status":"待处理"}]']] if index == 0 else [["history", "old-calculation"]]
+                payload = {**candidate["staged"], "toolId":candidate["id"], "entries":entries}
+                self.assert_preview_verified(path, payload, owner)
+                initial = self.request(path + "/publish", payload, owner)[1]
+                tool = "/api/tools/" + initial["id"]
+                quota = self.request("/api/trial", auth=owner)[1]["generation"]
+
+                def revise(requirement, state):
+                    status, response, _ = self.request(tool + "/revise", {
+                        "requirement": requirement, "version": 1, "requestId": uuid4().hex,
+                    }, owner)
+                    self.assertEqual(status, 202)
+                    task = response["task"]["id"]
+                    return "/api/staged/" + task, self.wait_task(owner, task, state)
+
+                variants = (("我想加一个阅读时间", "增加一个阅读时间?") if index == 0
+                            else ("页面水平居中", "把工具内容区居中"))
+                for ambiguous in (original, f"  {original} ！ ", *variants):
+                    rejected, question = revise(ambiguous, "unsupported")
+                    self.assertEqual(question["reason"], reason)
+                    self.assertIn("？", question["guidance"])
+                    self.assertFalse(question["resumable"])
+                    self.assertEqual(self.request(rejected + "/candidate", {}, owner)[0], 409)
+                _, outside = revise(unsupported, "unsupported")
+                self.assertEqual(outside["reason"], limit_reason)
+                self.assertIn(limit_copy, outside["guidance"])
+                self.assertEqual(self.request("/api/trial", auth=owner)[1]["generation"], quota)
+                self.assertEqual(self.request(tool, auth=owner)[1]["entries"], entries)
+                explicit = (clarified,) if index == 0 else (
+                    clarified, "我想把工具内容区水平居中", "把页面内容区左右居中",
+                )
+                for wording in explicit:
+                    path, _ = revise(wording, "complete")
+                    status, proposal, _ = self.request(path + "/candidate", {}, owner)
+                    self.assertEqual(status, 200)
+                    self.assertIn(change, " ".join(proposal["revisionPlan"]["changes"]))
+                    self.assertEqual(proposal["entries"], entries)
+                payload = {**proposal["staged"], "toolId":initial["id"], "runId":proposal["runId"],
+                           "entries":entries, "revision":proposal["revision"],
+                           "confirmation":proposal["revisionPlan"]["confirmation"]}
+                status, denied, _ = self.request(path + "/publish", payload, owner)
+                self.assertEqual((status, denied["code"]), (409, "revision_confirmation_required"))
+                unchanged = self.request(tool, auth=owner)[1]
+                self.assertEqual((unchanged["version"], unchanged["entries"]), (1, entries))
+                self.assertEqual(self.request("/api/trial", auth=owner)[1]["generation"], quota)
+                self.confirm_revision(path, payload, owner)
+                self.assert_preview_verified(path, payload, owner)
+                status, saved, _ = self.request(path + "/publish", payload, owner)
+                self.assertEqual(status, 200)
+                self.assertEqual((saved["id"], saved["version"], saved["entries"]), (initial["id"], 2, entries))
+                self.assertEqual(self.request(path + "/publish", payload, owner)[1], saved)
+                after = self.request("/api/trial", auth=owner)[1]["generation"]
+                self.assertEqual((after["used"], after["totalUsed"]), (quota["used"] + 1, quota["totalUsed"]))
+                if index == 0:
+                    config = json.loads(re.search(r"<script>const config = ([^\n]+);", saved["html"])[1])
+                    field = next(field for field in config["spec"]["fields"] if field["label"] == "阅读时长（分钟）")
+                    self.assertEqual((field["type"], field["required"]), ("integer", False))
+                    self.assertIn(field["id"], config["entry"]["form"])
+                else:
+                    self.assertIn("margin-inline:auto", saved["html"])
+                    for html in (initial["html"], saved["html"]):
+                        script = re.search(r"<script>(.*?)</script>", html, re.S)[1]
+                        test = """
+const fields = {amount: {value: '120'}, people: {value: '3'}, result: {},
+  split: {addEventListener(event, callback) { this.calculate = callback; }}};
+const document = {getElementById: id => fields[id]};
+""" + script + """
+fields.split.calculate();
+if (fields.result.textContent !== '40.00') process.exit(1);
+"""
+                        subprocess.run(["node", "-e", test], check=True, timeout=5)
 
     def test_revision_uses_latest_data_and_replays_published_version(self):
         owner = self.account("staged-revision")

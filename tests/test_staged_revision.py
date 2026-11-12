@@ -190,6 +190,15 @@ class RevisionContextTests(unittest.TestCase):
                 fields = {field["id"]: field["label"] for field in json.loads(spec)["fields"]}
                 self.assertEqual(fields["device"], expected)
 
+    def test_explicit_optional_time_fields_reuse_supported_types(self):
+        base = revision.prepare(artifacts())
+        for label, field_type in (("文本", "text"), ("日期", "date"), ("整数", "integer")):
+            with self.subTest(field_type=field_type):
+                request = f"新增可空{label}型字段「阅读时间」"
+                spec = revision.provide("spec", request, {}, "", Mock(), None, base=base)
+                field = json.loads(spec)["fields"][-1]
+                self.assertEqual((field["label"], field["type"], field["required"]), ("阅读时间", field_type, False))
+
     def test_risky_actions_require_more_than_a_field_label(self):
         base = revision.prepare(artifacts())
         for request in ("删掉「设备」列", "把「设备」改成数字", "新增字段项目并把所有记录清空",

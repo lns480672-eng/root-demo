@@ -301,7 +301,7 @@ function rememberStagedTask(task) {
 
 function stagedStatus(task, restriction) {
   if (!task) return '';
-  if (task.reason === 'revision_clarification_required') return '需要明确修改目标';
+  if (task.reason?.endsWith('_clarification_required')) return '需要明确修改目标';
   if (task.resumable) {
     if (restriction) return restriction.label;
     const previous = generationRestrictions.get(task.reason);
@@ -318,6 +318,7 @@ function stagedReason(task, restriction) {
     ? '上次生成时，' + previous.label + '。可以重新提交需求。' : previous.message;
   if (task.state === 'expired') return '任务已过期。可用保留的原需求重新生成。';
   if (task.state === 'exhausted') return '已达到此任务的调用上限。可用保留的原需求重新生成。';
+  if (task.guidance) return task.guidance;
   if (task.reason === 'revision_risky') return '此版本暂不支持删除、转换或批量改写已有数据。旧版仍可用。';
   if (task.reason === 'revision_clarification_required') return '你想改整体背景、某个分栏的颜色，还是字段显示名？请写明修改对象，再查看方案。';
   if (task.reason === 'revision_no_change') return '这次修改没有产生可应用的变化。旧版仍可用，未扣除个人生成次数。';

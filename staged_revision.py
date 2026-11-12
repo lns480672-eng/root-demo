@@ -393,10 +393,33 @@ def _check_ledger_assembly(source, base, requirement):
 # Resolve these narrow edits against the source, then apply only the verified difference.
 FIELD_LABEL = re.compile(
     r"^(?:请)?(?:把|将)?(字段)?[「“]?([^「」“”，,]+?)[」”]?\s*(字段|显示名)?"
-    r"\s*改(?:为|成)[「“]?([^「」“”，,]+)[」”]?$"
+    r"\s*改(?:为|成)[「“『]?([^「」“”『』，,]+)[」”』]?$"
 )
 COLOR_NAME = re.compile(r"(?:浅|淡|深|亮|暗)?[黑白红橙黄绿青蓝紫粉灰棕褐米金银]色")
-ADD_FIELD = re.compile(r"^(?:请)?(?:新增|添加|增加|加)(?:一个|个)?(?:可空(?:的)?)?(?:文本)?字段[\s，,：:]*[「“]?([^「」“”，,]+)[」”]?$")
+FIELD_TYPES = {
+    "文本": ("text", "文本"),
+    "整数": ("integer", "整数"),
+    "日期": ("date", "日期"),
+}
+ADD_FIELD = re.compile(
+    r"^(?:请)?(?:新增|添加|增加|加)(?:一个|个)?(?:可空(?:的)?)?"
+    r"(?:(文本|整数|日期)型?)?字段[\s，,：:]*[「“]?([^「」“”，,]+)[」”]?$"
+)
+UNTYPED_TIME_FIELD = re.compile(
+    r"(?:我想\s*)?(?:请)?(?:新增|添加|增加|加)(?:一个|个)?(?:字段[\s，,：:]*)?[「“]?[^「」“”，,]*(?:时间|时长)[」”]?(?:字段)?"
+)
+UNSUPPORTED_TIME_FIELD = re.compile(
+    r"(?:新增|添加|增加|加)(?:一个|个)?(?:可空(?:的)?)?(?:时间|时分|时刻|小数)型?字段"
+)
+PROGRAM_CENTER = re.compile(
+    r"(?:我想\s*)?(?:请)?(?:把|将)?(?:工具|计算器|页面)?内容(?:区)?(?:整体)?(?:水平|横向|左右)居中"
+)
+REVISION_GUIDANCE = {
+    "revision_field_clarification_required": "这个时间字段要记录日期、时长还是具体时分？请写明含义和类型，可以写「新增可空整数型字段『阅读时长（分钟）』」。",
+    "revision_field_type_unsupported": "台账可新增可空文本、整数或日期字段。时分和小数暂无专用类型。记录时分可改用文本，记录时长可用整数并注明单位。",
+    "revision_alignment_clarification_required": "你想把工具内容区水平居中，还是只移动某个控件？请写明范围和方向，例如「把工具内容区水平居中」。",
+    "revision_alignment_unsupported": "当前支持工具内容区水平居中。垂直居中、单个控件布局和工作台外壳调整暂不支持。",
+}
 COLUMN_STYLE = re.compile(r"^(?:请)?(?:把|将)?[「“]?([^「」“”，,]+?)[」”]?分栏(?:背景|颜色)?改(?:为|成)([^，,。]+)$")
 WEBSITE_HEADING = re.compile(r"^(?:请)?(?:把|将)?首页主标题改(?:为|成)[「“]([^」”]+)[」”]$")
 PROGRAM_TEXT = re.compile(r"^(?:请)?(?:把|将)(?:页面)?文案[「“]([^」”]+)[」”]改(?:为|成)[「“]([^」”]+)[」”]$")
@@ -413,8 +436,14 @@ RISKY_REVISION = re.compile(
 
 
 def local_revision(base, requirement):
-    text = requirement.strip().rstrip("。")
+    text = requirement.strip().rstrip("。！？?!").strip()
     kind = base["kind"]
+    if kind == "program" and PROGRAM_CENTER.fullmatch(text):
+        source = deepcopy(base["source"])
+        if source["spec"].get("contentAlignment") == "center":
+            raise _no_change()
+        source["spec"]["contentAlignment"] = "center"
+        return source, "工具内容区由默认宽度改为水平居中，最大宽度 720 像素。原计算和记录保留。"
     if kind == "program" and (match := PROGRAM_TEXT.fullmatch(text)):
         before, after = match.groups()
         source = deepcopy(base["source"])
@@ -435,7 +464,11 @@ def local_revision(base, requirement):
     if kind != "ledger":
         return None
     if match := ADD_FIELD.fullmatch(text):
-        label = match[1].strip()
+        field_type, label = match.groups()
+        label = label.strip()
+        if field_type is None and UNTYPED_TIME_FIELD.fullmatch(text):
+            raise ApiError(422, "revision_field_clarification_required", REVISION_GUIDANCE["revision_field_clarification_required"])
+        value_type, type_label = FIELD_TYPES[field_type or "文本"]
         if not blueprint.label(label) or any(field["label"] == label for field in base["source"]["spec"]["fields"]):
             raise _out_of_scope()
         source = deepcopy(base["source"])
@@ -444,10 +477,10 @@ def local_revision(base, requirement):
             raise ApiError(422, "staged_unsupported", "台账已达到字段数量上限，旧版仍可用。")
         used = {field["id"] for field in fields}
         identifier = next(f"field_{i}" for i in range(1, 14) if f"field_{i}" not in used)
-        fields.append({"id":identifier, "label":label, "type":"text", "required":False, "options":[]})
+        fields.append({"id":identifier, "label":label, "type":value_type, "required":False, "options":[]})
         source["entry"]["form"].append(identifier)
         source["entry"]["columns"].append(identifier)
-        change = f"新增可空文本字段「{label}」。已有记录在此字段显示为空。"
+        change = f"新增可空{type_label}字段「{label}」。已有记录在此字段显示为空。"
     elif match := COLUMN_STYLE.fullmatch(text):
         name, color = match.groups()
         board = base["source"]["entry"].get("board")
@@ -595,11 +628,23 @@ def check(stage, payload, base, requirement="", *, previous=None):
 
 
 def planned_local_revision(base, requirement):
+    requirement = requirement.strip().rstrip("。！？?!").strip()
     if RISKY_REVISION.search(requirement):
         raise ApiError(422, "revision_risky", "这项操作可能删除、转换或改写已有数据，当前版本不执行。")
     local = local_revision(base, requirement)
     if local or base["kind"] == "table":
         return local
+    if base["kind"] == "ledger":
+        if UNSUPPORTED_TIME_FIELD.match(requirement):
+            reason = "revision_field_type_unsupported"
+            raise ApiError(422, reason, REVISION_GUIDANCE[reason])
+        if UNTYPED_TIME_FIELD.fullmatch(requirement):
+            reason = "revision_field_clarification_required"
+            raise ApiError(422, reason, REVISION_GUIDANCE[reason])
+    if base["kind"] == "program" and "居中" in requirement:
+        outside_scope = re.search(r"垂直|纵向|按钮|输入框|结果|工作台|整页", requirement)
+        reason = "revision_alignment_unsupported" if outside_scope else "revision_alignment_clarification_required"
+        raise ApiError(422, reason, REVISION_GUIDANCE[reason])
     if base["kind"] != "ledger" or not _ledger_operation(requirement)[0]:
         raise _out_of_scope()
     return None

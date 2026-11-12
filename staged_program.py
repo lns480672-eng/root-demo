@@ -90,6 +90,8 @@ def assemble(spec, implementation):
     validate(implementation)
     title = escape(spec["title"])
     markup, script = implementation["markup"], implementation["script"]
+    alignment = ("#root-program{box-sizing:border-box;max-width:720px;margin-inline:auto}"
+                 if spec.get("contentAlignment") == "center" else "")
     return f'''<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{title}</title><style>
@@ -98,7 +100,7 @@ main{{background:white;border:1px solid #d6dbe7;border-radius:8px;padding:12px;o
 h1{{font-size:22px}}label{{display:block;margin:4px 0}}
 input,button,select,textarea{{font:inherit;padding:4px;max-width:100%;box-sizing:border-box}}
 table{{border-collapse:collapse}}th,td{{padding:4px 8px;text-align:left}}
-</style></head><body><h1>{title}</h1><main id="root-program">{markup}
+{alignment}</style></head><body><h1>{title}</h1><main id="root-program">{markup}
 </main><script>
 (() => {{
   'use strict';
