@@ -391,7 +391,11 @@ def _check_ledger_assembly(source, base, requirement):
 
 
 # Resolve these narrow edits against the source, then apply only the verified difference.
-FIELD_LABEL = re.compile(r"^(?:请)?(?:把|将)?(?:字段)?[「“]?([^「」“”，,]+?)[」”]?\s*(?:字段|显示名)?\s*改(?:为|成)[「“]?([^「」“”，,]+)[」”]?$")
+FIELD_LABEL = re.compile(
+    r"^(?:请)?(?:把|将)?(字段)?[「“]?([^「」“”，,]+?)[」”]?\s*(字段|显示名)?"
+    r"\s*改(?:为|成)[「“]?([^「」“”，,]+)[」”]?$"
+)
+COLOR_NAME = re.compile(r"(?:浅|淡|深|亮|暗)?[黑白红橙黄绿青蓝紫粉灰棕褐米金银]色")
 ADD_FIELD = re.compile(r"^(?:请)?(?:新增|添加|增加|加)(?:一个|个)?(?:可空(?:的)?)?(?:文本)?字段[\s，,：:]*[「“]?([^「」“”，,]+)[」”]?$")
 COLUMN_STYLE = re.compile(r"^(?:请)?(?:把|将)?[「“]?([^「」“”，,]+?)[」”]?分栏(?:背景|颜色)?改(?:为|成)([^，,。]+)$")
 WEBSITE_HEADING = re.compile(r"^(?:请)?(?:把|将)?首页主标题改(?:为|成)[「“]([^」”]+)[」”]$")
@@ -459,8 +463,14 @@ def local_revision(base, requirement):
         colors[index] = theme
         change = f"「{name}」分栏背景改为{color}。其他分栏和记录保持。"
     elif match := FIELD_LABEL.fullmatch(text):
-        before, after = (value.strip() for value in match.groups())
+        field_prefix, before, field_suffix, after = match.groups()
+        before, after = before.strip(), after.strip()
         field = next((field for field in base["source"]["spec"]["fields"] if field["label"] == before), None)
+        looks_like_color = COLOR_NAME.fullmatch(after) or any(after in names for names in THEME_NAMES.values())
+        if looks_like_color and not (field_prefix or field_suffix):
+            if field is None and _ledger_operation(requirement)[0] in ("theme", "title"):
+                return None
+            raise ApiError(422, "revision_clarification_required", "请明确要改哪个分栏的背景，或哪个字段的显示名。")
         if field is None:
             return None
         if not blueprint.label(after) or after in field["options"] or any(item["label"] == after for item in base["source"]["spec"]["fields"]):

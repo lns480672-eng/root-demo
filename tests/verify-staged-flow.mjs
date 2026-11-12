@@ -427,6 +427,16 @@ export async function verifyLedgerTheme(ctx) {
   const versions = async () => (await appRequest('/api/tools/' + old.id + '/versions')).body;
   await screenshot('before-theme');
   await click('#revise-tool');
+  await generate('验收改为白色');
+  const ambiguous = await settle('验收改为白色');
+  assert.equal(ambiguous.reason, 'revision_clarification_required');
+  await until(() => visible('#staged-reason'));
+  assert.match(await evaluate('document.querySelector("#staged-reason").textContent'), /分栏的颜色.*字段显示名/);
+  assert.equal(await visible('#revision-confirm'), false);
+  assert.equal((await versions()).current, 1);
+  assert.deepEqual((await stored(old.id)).entries, before.entries);
+  assert.deepEqual(await balance(), beforeBalance);
+  await screenshot('ambiguous-color-asks-target');
   await generate('把颜色改成黄色');
   await until(() => visible('#revision-confirm'));
   assert.equal((await versions()).current, 1);

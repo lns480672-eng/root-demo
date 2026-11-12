@@ -433,6 +433,14 @@ class StagedHTTP(StagedHTTPFixture):
             return config(saved)
 
         original = publish(path, initial)
+        quota_before_clarification = self.request("/api/trial", auth=owner)[1]["generation"]
+        clarification = revision_path("验收改为白色", 1, "unsupported")
+        self.assertEqual(self.request(clarification, auth=owner)[1]["task"]["reason"],
+                         "revision_clarification_required")
+        self.assertEqual(self.request(clarification + "/candidate", {}, owner)[0], 409)
+        current = self.request(tool, auth=owner)[1]
+        self.assertEqual((current["version"], current["entries"]), (1, entries))
+        self.assertEqual(self.request("/api/trial", auth=owner)[1]["generation"], quota_before_clarification)
         original_config = config(original)
         self.assertEqual(original_config["filters"]["search"], ["name"])
         self.assertEqual(original_config["summary"]["sum"]["field"], "count")
