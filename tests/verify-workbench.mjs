@@ -464,6 +464,32 @@ try {
   await cdp('Emulation.setDeviceMetricsOverride', { width: 1360, height: 980, deviceScaleFactor: 1, mobile: false });
   await cdp('Page.navigate', { url: base });
   await until(() => evaluate('document.documentElement.dataset.ready === "true"'));
+  if (process.argv.includes('--workbench-base-path')) {
+    stage = 'shared-domain workbench navigation and reload';
+    await cdp('Network.enable');
+    for (const home of ['/workbench', '/']) {
+      await cdp('Network.setExtraHTTPHeaders', {headers: home === '/' ? {} : {'X-Root-Workbench-Path': home}});
+      await cdp('Page.navigate', {url:base + '/updates'});
+      await until(() => visible('#updates-back'));
+      assert.equal(await evaluate('document.querySelector("#updates-back").getAttribute("href")'), home);
+      await click('#updates-back');
+      await until(() => evaluate(`location.pathname === ${JSON.stringify(home)}`));
+      await until(() => visible('#auth'));
+      const previousDocument = await evaluate('performance.timeOrigin');
+      await cdp('Page.reload');
+      await until(() => evaluate(`performance.timeOrigin !== ${previousDocument} && document.documentElement.dataset.ready === "true"`));
+      assert.equal(await evaluate('location.pathname'), home);
+      assert.equal(await visible('#auth'), true);
+      await cdp('Page.navigate', {url:base + '/admin'});
+      await until(() => visible('.workbench-link'));
+      assert.equal(await evaluate('document.querySelector(".workbench-link").getAttribute("href")'), home);
+      await click('.workbench-link');
+      await until(() => visible('#auth'));
+      assert.equal(await evaluate('location.pathname'), home);
+    }
+    evidence.tests.push({id:'AC-003-workbench-base-path', directUpdates:true, reload:true, adminReturn:true,
+      supportedPaths:['/workbench', '/']});
+  }
   if (adminSetup) {
     stage = 'administrator setup, invite and password change';
     const code = execFileSync('python3', ['-B', 'workbench.py', '--runs-dir', join(root, 'runs'),

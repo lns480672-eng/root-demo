@@ -299,6 +299,29 @@ class StagedReconnectHTTP(StagedHTTPFixture):
 
 
 class StagedHTTP(StagedHTTPFixture):
+
+    def test_workbench_page_links_support_both_proxy_paths(self):
+        for path in ("/workbench", "/updates", "/admin"):
+            for prefix in ("/workbench", "/", "//outside.invalid"):
+                with self.subTest(path=path, prefix=prefix):
+                    request = Request(self.base + path, headers={"X-Root-Workbench-Path": prefix})
+                    with urlopen(request, timeout=8) as response:
+                        self.assertIn(self.base + "/workbench", response.headers["Connection-Allowlist"])
+                        expected = "/workbench" if path == "/workbench" or prefix == "/workbench" else "/"
+                        self.assertIn(f'href="{expected}"', response.read().decode())
+
+        status, _, cookie = self.request("/api/admin/login", {
+            "username": "staged-operator", "password": "test-only-password",
+        })
+        self.assertEqual(status, 200)
+        request = Request(self.base + "/admin", headers={
+            "X-Root-Workbench-Path": "/workbench", "Cookie": cookie.split(";")[0],
+        })
+        with urlopen(request, timeout=8) as response:
+            html = response.read().decode()
+            self.assertIn('id="back-to-workbench" class="workbench-link" href="/workbench"', html)
+            self.assertNotIn('id="admin-login-form"', html)
+
     def test_runtime_proof_is_bound_to_the_candidate_snapshot_and_nonce(self):
         owner = self.account("runtime-proof-owner")
         other = self.account("runtime-proof-other")

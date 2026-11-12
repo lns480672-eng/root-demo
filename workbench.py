@@ -27,8 +27,11 @@ from trial_budget import TrialBudget
 
 ROOT = Path(__file__).resolve().parent
 ADMIN = "/admin"
+WORKBENCH = "/workbench"
+SHELL_ROUTES = ("/", WORKBENCH, "/updates", ADMIN)
 STATIC = {
     "/": ("index.html", "text/html; charset=utf-8"),
+    WORKBENCH: ("index.html", "text/html; charset=utf-8"),
     "/updates": ("index.html", "text/html; charset=utf-8"),
     ADMIN: ("admin.html", "text/html; charset=utf-8"),
     "/admin.css": ("admin.css", "text/css; charset=utf-8"),
@@ -266,23 +269,31 @@ def serve(key, port, runs=generate.RUNS, *, generation_limits=(5, 30), analysis_
             else:
                 self.error(503, "storage_unavailable", "本机数据暂时无法读取或保存，请重试。")
 
+        def send_shell(self, page, mime):
+            # The same backend serves the legacy IP and the shared-domain proxy.
+            if self.path == WORKBENCH or self.headers.get("X-Root-Workbench-Path") == WORKBENCH:
+                page = page.replace(b'href="/"', b'href="/workbench"')
+            self.send_bytes(200, page, mime, SHELL_POLICY)
+
         def handle_get(self):
             if self.path in assets:
                 if self.path == ADMIN:
                     with store.connection() as db:
                         if not admin_usernames and store.setup_available(store.setup_state(db)):
-                            self.send_bytes(200, setup_page, STATIC[ADMIN][1], SHELL_POLICY)
+                            self.send_shell(setup_page, STATIC[ADMIN][1])
                             return
                         try:
                             budget.require_admin(db, self.cookie_token(admin=True), None)
                         except ApiError as error:
                             if error.code not in ("login_required", "admin_required"):
                                 raise
-                            self.send_bytes(200, login_page, STATIC[ADMIN][1], SHELL_POLICY)
+                            self.send_shell(login_page, STATIC[ADMIN][1])
                             return
                 _, mime = STATIC[self.path]
-                self.send_bytes(200, assets[self.path], mime,
-                                SHELL_POLICY if self.path in ("/", "/updates", ADMIN) else None)
+                if self.path in SHELL_ROUTES:
+                    self.send_shell(assets[self.path], mime)
+                else:
+                    self.send_bytes(200, assets[self.path], mime)
             elif self.path == "/api/config":
                 config = {"configured": bool(key), "build": build}
                 if staged:

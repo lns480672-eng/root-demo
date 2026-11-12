@@ -889,7 +889,7 @@ for (const id of ['updates-link', 'updates-back']) {
     else if (history.state?.fromWorkbench) {
       history.back();
       return;
-    } else history.replaceState(null, '', '/');
+    } else history.replaceState(null, '', event.currentTarget.getAttribute('href'));
     renderRoute(true);
   });
 }
