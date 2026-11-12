@@ -97,6 +97,7 @@ function generationError(error) {
 }
 
 function render() {
+  const starting = phase === 'startup';
   const pending = ['model', 'preview', 'restore', 'sync', 'table'].includes(phase);
   const syncing = Boolean(pendingPublication);
   const pausingEdits = syncing && Boolean(pendingPublication.runId);
@@ -112,7 +113,7 @@ function render() {
   product.dataset.state = pending ? 'loading' : failure ? 'failure' : active ? 'success' : 'initial';
   const atStart = workspace.dataset.mode === 'start';
   generate.textContent = pending ? '生成中…' : failure ? '重试' : editing && stagedEnabled ? '查看修改方案' : editing ? '生成新版' : atStart ? '开始' : '直接生成';
-  generate.disabled = !session || !configured || !networkIsolated || phase === 'startup' || blocked ||
+  generate.disabled = !session || !configured || !networkIsolated || starting || blocked ||
     tableMode || returning || Boolean(pendingRevision) || !requirement.value.trim();
   requirement.readOnly = blocked;
   byId('generation-scope').hidden = !stagedEnabled || editing || tableMode;
@@ -122,7 +123,7 @@ function render() {
   library.hidden = !browsing;
   byId('library-entry').setAttribute('aria-expanded', String(browsing));
   markNavigation(assistantOpen ? assistantDestination : browsing ? 'library-entry' : 'new-tool');
-  for (const id of primaryNavigation) byId(id).disabled = blocked;
+  for (const id of primaryNavigation) byId(id).disabled = blocked || (starting && id === 'library-entry');
   byId('new-tool-options').hidden = !atStart && !['fast', 'table'].includes(entryMode);
   previewSection.hidden = !browsing && !editing && !showingSample && !syncing && !stagedPendingId;
   const returnToLibrary = byId('return-to-library');
@@ -130,7 +131,7 @@ function render() {
   returnToLibrary.disabled = blocked;
   let currentTitle = '工具预览';
   for (const button of byId('tool-list').querySelectorAll('button')) {
-    button.disabled = blocked || !networkIsolated;
+    button.disabled = blocked || starting || !networkIsolated;
     const selected = button.dataset.id === active?.id;
     button.setAttribute('aria-current', String(selected));
     if (selected) {
