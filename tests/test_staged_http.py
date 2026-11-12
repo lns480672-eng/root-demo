@@ -71,7 +71,8 @@ def stages(stage, requirement, prior, key, admit, record, *, category="auto"):
         content = {"kind":"website","layout":"brand","title":"风筝工坊","goal":"展示课程"}
         if stage == "implementation":
             content = ({"intro":{"heading":"旧模板"}} if requirement.endswith("无效") else {
-                "format":"website-code-v1", "markup":"<h1>候选唯一标记</h1>",
+                "format":"website-code-v1",
+                "markup":"<header><p>候选唯一标记</p></header><main><h1>候选唯一标记</h1></main>",
                 "style":"h1 { margin: 1rem; }", "script":"void 0;",
             })
         record({"stage":stage,"status":"ok","dispatched":True})
@@ -182,6 +183,10 @@ def revise(stage, requirement, prior, key, admit, record, *, base):
                 plan["operation"] = {"kind":"add_field","label":"阅读时长（分钟）","type":"integer"}
             else:
                 plan["operation"] = {"kind":"add_field","label":"项目","type":"text"}
+        elif base["kind"] == "website":
+            targets = request["revision_source"]["text_targets"]
+            selected = next(target for target in targets if target["path"] == "main > h1")
+            plan["text_edit"] = {"target":selected["id"], "text":"新的课程标题"}
         elif "只显示一位小数" in requirement:
             plan["edits"] = [{"part":"script","before":".toFixed(2)","after":".toFixed(1)"}]
         elif "垂直居中" in requirement:
@@ -398,6 +403,42 @@ class StagedHTTP(StagedHTTPFixture):
             self.assertEqual(status, 200)
             self.assertEqual(reopened["html"], candidate["html"])
         self.assertEqual(self.request("/api/trial", auth=owner)[1]["generation"]["used"], before + 1)
+
+    def test_website_title_revision_changes_only_the_selected_element_after_confirmation(self):
+        owner = self.account("website-title-owner")
+        status, created, _ = self.gen(owner, "官网代码有效")
+        self.assertEqual(status, 202)
+        task = created["task"]["id"]
+        self.wait_task(owner, task, "complete")
+        path = "/api/staged/" + task
+        original = self.request(path + "/candidate", {}, owner)[1]
+        data = {**original["staged"], "toolId":original["id"], "entries":[]}
+        self.assert_preview_verified(path, data, owner)
+        self.assertEqual(self.request(path + "/publish", data, owner)[0], 200)
+        tool = "/api/tools/" + original["id"]
+        status, created, _ = self.request(tool + "/revise", {
+            "requirement":"只把主标题改成新的课程标题，页眉同名文字保持。",
+            "version":1, "requestId":uuid4().hex,
+        }, owner)
+        self.assertEqual(status, 202)
+        task = created["task"]["id"]
+        self.wait_task(owner, task, "complete")
+        path = "/api/staged/" + task
+        candidate = self.request(path + "/candidate", {}, owner)[1]
+        expected = original["html"].replace("<h1>候选唯一标记</h1>", "<h1>新的课程标题</h1>")
+        self.assertEqual(candidate["html"], expected)
+        self.assertIn("main > h1", candidate["revisionPlan"]["changes"][0])
+        payload = {**candidate["staged"], "toolId":original["id"], "runId":candidate["runId"],
+                   "entries":[], "revision":candidate["revision"],
+                   "confirmation":candidate["revisionPlan"]["confirmation"]}
+        status, denied, _ = self.request(path + "/publish", payload, owner)
+        self.assertEqual((status, denied["code"]), (409, "revision_confirmation_required"))
+        self.assertEqual(self.request(tool, auth=owner)[1]["html"], original["html"])
+        self.confirm_revision(path, payload, owner)
+        self.assert_preview_verified(path, payload, owner)
+        self.assertEqual(self.request(path + "/publish", payload, owner)[0], 200)
+        reopened = self.request(tool, auth=owner)[1]
+        self.assertEqual((reopened["version"], reopened["html"]), (2, expected))
 
     def test_runtime_proof_is_bound_to_the_candidate_snapshot_and_nonce(self):
         owner = self.account("runtime-proof-owner")

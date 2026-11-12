@@ -1,6 +1,7 @@
 """Validate model-written website code before assembling an isolated preview."""
 
-from html import escape
+from html import escape, unescape
+from html.parser import HTMLParser
 import re
 
 import staged_program
@@ -38,6 +39,53 @@ def validate(value):
         raise ValueError("bad_website_style_size")
     if UNSAFE_STYLE.search(style):
         raise ValueError("bad_website_style_reference")
+
+
+class TextTargetParser(HTMLParser):
+    """Find plain text interiors without changing the source or its element bindings."""
+
+    def __init__(self, markup):
+        super().__init__(convert_charrefs=False)
+        self.markup = markup
+        self.line_offsets = [0, *(match.end() for match in re.finditer("\n", markup))]
+        self.stack = []
+        self.targets = {}
+
+    def source_offset(self):
+        line, column = self.getpos()
+        return self.line_offsets[line - 1] + column
+
+    def handle_starttag(self, tag, attrs):
+        if tag in staged_program.VOID_ELEMENTS:
+            return
+        attrs = dict(attrs)
+        label = attrs.get("id") or attrs.get("class") or ""
+        descriptor = f"{tag} [{label[:40]}]" if label else tag
+        self.stack.append((tag, descriptor, self.source_offset() + len(self.get_starttag_text())))
+
+    def handle_endtag(self, tag):
+        if not self.stack or self.stack[-1][0] != tag:
+            raise ValueError("bad_website_text_target")
+        _, descriptor, start = self.stack.pop()
+        end = self.source_offset()
+        original = self.markup[start:end]
+        visible = unescape(original).strip()
+        if tag in {"option", "textarea"} or "<" in original or not visible or len(visible) > 400:
+            return
+        if any(parent in {"select", "textarea"} for parent, _, _ in self.stack):
+            return
+        path = " > ".join([*(item[1] for item in self.stack[-4:]), descriptor])
+        self.targets[f"t{len(self.targets) + 1}"] = (start, end, path, visible)
+
+
+def text_targets(markup):
+    parser = TextTargetParser(markup)
+    parser.feed(markup)
+    parser.close()
+    if parser.stack:
+        raise ValueError("bad_website_text_target")
+    return parser.targets
+
 
 
 def assemble(spec, value):

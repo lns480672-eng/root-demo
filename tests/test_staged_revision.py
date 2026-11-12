@@ -74,6 +74,52 @@ class RevisionContextTests(unittest.TestCase):
             with self.subTest(before=before), self.assertRaises(ApiError):
                 revision.plan_artifacts(encode(plan), base)
 
+    def test_website_rejects_markup_changes_across_independent_elements(self):
+        spec = {"kind": "website", "layout": "brand", "title": "纸舟木作坊", "goal": "展示课程"}
+        code = {
+            "format": "website-code-v1",
+            "markup": '<header><span class="logo">纸舟木作坊</span></header>'
+                      '<main><h1>纸舟木作坊</h1></main><footer><p>纸舟木作坊</p></footer>',
+            "style": "",
+            "script": "void 0;",
+        }
+        base = revision.prepare({"spec.json": encode(spec), "implementation.json": encode(code)})
+        separate_edits = [
+            {"part": "markup", "before": '<span class="logo">纸舟木作坊</span>',
+             "after": '<span class="logo">纸舟手作工作室</span>'},
+            {"part": "markup", "before": "<h1>纸舟木作坊</h1>", "after": "<h1>纸舟手作工作室</h1>"},
+        ]
+        wide_edit = [{"part": "markup", "before": "<h1>纸舟木作坊</h1></main><footer><p>纸舟木作坊",
+                      "after": "<h1>纸舟手作工作室</h1></main><footer><p>纸舟手作工作室"}]
+        for edits in (separate_edits, wide_edit):
+            with self.subTest(edits=edits), self.assertRaises((ApiError, ValueError)):
+                revision.check_plan(encode({"status": "proposed", "edits": edits}), base)
+
+    def test_website_text_edit_uses_the_selected_target_and_escapes_new_text(self):
+        spec = {"kind": "website", "layout": "brand", "title": "纸舟木作坊", "goal": "展示课程"}
+        markup = '<header><span class="logo">纸舟 &amp; 木作</span></header>\r\n' \
+                 '<main id="home"><h1>  纸舟 &amp; 木作  </h1></main><footer><p>纸舟 &amp; 木作</p></footer>'
+        code = {"format": "website-code-v1", "markup": markup, "style": "", "script": "void 0;"}
+        base = revision.prepare({"spec.json": encode(spec), "implementation.json": encode(code)})
+        plan = {"status": "proposed", "text_edit": {"target": "t2", "text": "手作 < 初学"}}
+        with patch.object(assistant_model, "_exchange", return_value=envelope(json.dumps(plan))) as exchange:
+            payload = revision.provide("revision-plan", "改首页主标题", {}, "fixture-key", Mock(), None, base=base)
+        request = json.loads(json.loads(exchange.call_args.args[0])["body"]["messages"][1]["content"])
+        targets = request["revision_source"]["text_targets"]
+        self.assertEqual([target["text"] for target in targets], ["纸舟 & 木作"] * 3)
+        self.assertEqual(targets[1]["path"], "main [home] > h1")
+        actual = json.loads(revision.plan_artifacts(payload, base)["implementation"])
+        self.assertEqual(actual, {**code, "markup": markup.replace(
+            '<h1>  纸舟 &amp; 木作  </h1>', '<h1>  手作 &lt; 初学  </h1>',
+        )})
+        self.assertIn("main [home] > h1", revision.describe(base, {"revision-plan.json": payload}, "", [])[0])
+        for edit in (
+            {"target": "unknown", "text": "新文案"},
+            {"target": "t2", "text": "新文案", "after": "额外补丁"},
+        ):
+            with self.subTest(edit=edit), self.assertRaises(ValueError):
+                revision.check_plan(encode({"status": "proposed", "text_edit": edit}), base)
+
     def test_stateless_script_edit_blocks_existing_records_before_confirmation(self):
         spec = {"kind": "program", "title": "分账计算", "goal": "平均分摊", "storage": "none"}
         code = {"markup": "<output id='result'></output>",
