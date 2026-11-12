@@ -79,6 +79,8 @@ def stages(stage, requirement, prior, key, admit, record, *, category="auto"):
                 content["script"] = "document.addEventListener('click', () => { void 0; }"
             if requirement == "官网失效日程标签":
                 content["markup"] = "<h1>invalid-website-tabs-fixture</h1>"
+            if requirement == "官网验证竞态":
+                content["markup"] = "<h1>racing-website-tabs-fixture</h1>"
         record({"stage":stage,"status":"ok","dispatched":True})
         return json.dumps(content, ensure_ascii=False).encode()
     if requirement.startswith("计算"):
@@ -178,6 +180,14 @@ def verify_runtime(html, entries, *, backup, storage_limit, website):
             ready.touch()
             raise ApiError(503, "staged_verifier_unavailable", "固定替身模拟检查暂不可用")
         raise RuntimeVerificationError("website_tabs")
+    if website and b"racing-website-tabs-fixture" in html:
+        waiting = runs / "racing-website-verifier-waiting"
+        if not waiting.exists():
+            waiting.touch()
+            deadline = time.monotonic() + 4
+            while not (runs / "racing-website-verifier-release").exists() and time.monotonic() < deadline:
+                time.sleep(.01)
+            raise RuntimeVerificationError("website_tabs")
     if b'throw new Error("synthetic startup failure");' in html:
         raise ApiError(422, "staged_runtime_failed", "固定替身检测到启动失败")
     if entries == [["result", "verify-late"]]:
@@ -411,6 +421,29 @@ class StagedHTTP(StagedHTTPFixture):
         status, new_task, _ = self.gen(owner, requirement)
         self.assertEqual(status, 202)
         self.assertNotEqual(new_task["task"]["id"], task)
+
+    def test_late_website_rejection_cannot_revoke_recorded_verification(self):
+        owner = self.account("website-verification-race")
+        task = self.gen(owner, "官网验证竞态")[1]["task"]["id"]
+        self.wait_task(owner, task, "complete")
+        path = "/api/staged/" + task
+        candidate = self.request(path + "/candidate", {}, owner)[1]
+        payload = {**candidate["staged"], "toolId":candidate["id"], "entries":[]}
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            delayed = pool.submit(self.request, path + "/verify-preview", payload, owner)
+            waiting = self.runs / "racing-website-verifier-waiting"
+            deadline = time.monotonic() + 3
+            try:
+                while not waiting.exists() and time.monotonic() < deadline:
+                    time.sleep(.01)
+                self.assertTrue(waiting.exists())
+                self.assert_preview_verified(path, payload, owner)
+            finally:
+                (self.runs / "racing-website-verifier-release").touch()
+            self.assertEqual(delayed.result()[0], 422)
+        self.assertEqual(self.request(path, auth=owner)[1]["task"]["state"], "complete")
+        self.assertEqual(self.request(path + "/publish", payload, owner)[0], 200)
+        self.assertEqual(self.request("/api/trial", auth=owner)[1]["generation"]["used"], 1)
 
     def test_runtime_proof_is_bound_to_the_candidate_snapshot_and_nonce(self):
         owner = self.account("runtime-proof-owner")
