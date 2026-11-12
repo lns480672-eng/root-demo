@@ -221,6 +221,7 @@ class StageProviderTests(unittest.TestCase):
             {**code, "style": "h1 { background: url(https://example.invalid/image); }"},
             {**code, "style": "h1 { background: u" + chr(92) + "72l(https://example.invalid/image); }"},
             {**code, "style": "</style><script>void 0;</script>"},
+            {**code, "style": "", "script": "void 0;</script><script>void 0;"},
             {**code, "style": "", "markup": "<iframe src='https://example.invalid'></iframe>"},
         ]
         for result in invalid:

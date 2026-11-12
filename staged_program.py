@@ -12,7 +12,7 @@ MAX_ARTIFACT_BYTES = 24 * 1024
 VOID_ELEMENTS = frozenset("br col hr input wbr".split())
 ELEMENTS = VOID_ELEMENTS | frozenset("""
 a abbr article aside b blockquote button canvas caption code colgroup dd details div dl dt em fieldset
-footer form h1 h2 h3 h4 h5 h6 header i kbd label legend li main mark meter nav ol optgroup option output p pre
+footer form h2 h3 h4 h5 h6 header i kbd label legend li mark meter ol optgroup option output p pre
 progress s samp section select small span strong sub summary sup table tbody td textarea tfoot th
 thead time tr u ul var
 """.split())
@@ -28,12 +28,13 @@ SCRIPT_BOUNDARY = re.compile(r"</?script|<!--|-->", re.IGNORECASE)
 class Fragment(HTMLParser):
     """Check that the model produced only inert markup under the generated tool root."""
 
-    def __init__(self):
+    def __init__(self, elements=ELEMENTS):
         super().__init__(convert_charrefs=False)
+        self.elements = elements
         self.open = []
 
     def handle_starttag(self, tag, attrs):
-        if tag not in ELEMENTS:
+        if tag not in self.elements:
             raise ValueError("bad_program_markup")
         seen = set()
         for name, value in attrs:
@@ -70,7 +71,7 @@ class Fragment(HTMLParser):
     handle_comment = handle_decl
 
 
-def validate(value):
+def validate(value, *, elements=ELEMENTS):
     if not isinstance(value, dict) or value.keys() != {"markup", "script"}:
         raise ValueError("bad_program_shape")
     markup, script = value["markup"], value["script"]
@@ -79,7 +80,7 @@ def validate(value):
             raise ValueError("bad_program_size")
     if SCRIPT_BOUNDARY.search(script):
         raise ValueError("bad_program_script")
-    parser = Fragment()
+    parser = Fragment(elements)
     parser.feed(markup)
     parser.close()
     if parser.open:

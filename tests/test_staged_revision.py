@@ -117,6 +117,21 @@ class RevisionContextTests(unittest.TestCase):
         })}
         revision.check("assemble", blueprint.assemble(revised), base, previous=revised)
 
+    def test_website_heading_revision_preserves_other_code(self):
+        spec = {"kind": "website", "layout": "brand", "title": "山野咖啡", "goal": "品牌和菜单"}
+        content = {"format": "website-code-v1", "markup": "<main><h1>咖啡 &amp; 茶</h1><p>菜单</p></main>",
+                   "style": "main { padding: 1rem; }", "script": "void 0;"}
+        source = {"spec.json": encode(spec), "implementation.json": encode(content)}
+        base = revision.prepare(source)
+        requirement = "把首页主标题改为「咖啡 < 茶」"
+        changed, _ = revision.local_revision(base, requirement)
+        files = {**source, "implementation.json": encode(changed["implementation"])}
+        revised_html = blueprint.assemble(files)
+        revision.check("assemble", revised_html, base, requirement, previous=files)
+        self.assertIn("咖啡 &lt; 茶", revised_html.decode())
+        self.assertEqual(changed["implementation"]["script"], content["script"])
+        self.assertEqual(changed["implementation"]["style"], content["style"])
+
     def test_ledger_color_rejects_model_substitution_for_unsupported_request(self):
         original = artifacts()
         original["spec.json"] = encode({**json.loads(original["spec.json"]), "theme": "yellow"})
