@@ -465,12 +465,12 @@ def local_revision(base, requirement):
     elif match := FIELD_LABEL.fullmatch(text):
         field_prefix, before, field_suffix, after = match.groups()
         before, after = before.strip(), after.strip()
-        if not (field_prefix or field_suffix):
-            if _ledger_operation(requirement)[0] in ("theme", "title"):
-                return None
-            if COLOR_NAME.fullmatch(after) or any(after in names for names in THEME_NAMES.values()):
-                raise ApiError(422, "revision_clarification_required", "请明确要改哪个分栏的背景，或哪个字段的显示名。")
         field = next((field for field in base["source"]["spec"]["fields"] if field["label"] == before), None)
+        looks_like_color = COLOR_NAME.fullmatch(after) or any(after in names for names in THEME_NAMES.values())
+        if looks_like_color and not (field_prefix or field_suffix):
+            if field is None and _ledger_operation(requirement)[0] in ("theme", "title"):
+                return None
+            raise ApiError(422, "revision_clarification_required", "请明确要改哪个分栏的背景，或哪个字段的显示名。")
         if field is None:
             return None
         if not blueprint.label(after) or after in field["options"] or any(item["label"] == after for item in base["source"]["spec"]["fields"]):
