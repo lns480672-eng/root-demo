@@ -90,6 +90,39 @@ class RuntimeVerifierTests(unittest.TestCase):
                 http.shutdown()
                 server.join(timeout=2)
 
+    def test_website_tabs_must_switch_selection_and_declared_panels(self):
+        markup = (
+            '<!doctype html><div role="tablist">'
+            '<button id="early" role="tab" aria-selected="true" aria-controls="first">第一时段</button>'
+            '<button id="late" role="tab" aria-selected="false" aria-controls="second">第二时段</button>'
+            '</div><p id="first" role="tabpanel">集合</p><p id="second" role="tabpanel" hidden>观测</p>'
+        )
+        selection_only = """
+            document.querySelector('#late').addEventListener('click', () => {
+                document.querySelector('#early').setAttribute('aria-selected', 'false');
+                document.querySelector('#late').setAttribute('aria-selected', 'true');
+            });
+        """
+        forward_only = selection_only + """
+            document.querySelector('#late').addEventListener('click', () => {
+                document.querySelector('#first').hidden = true;
+                document.querySelector('#second').hidden = false;
+            });
+        """
+        for script in ("void 0;", selection_only, forward_only):
+            with self.subTest(script=script):
+                with self.assertRaises(ApiError) as result:
+                    verify((markup + "<script>" + script + "</script>").encode(), [], website=True)
+                self.assertEqual((result.exception.status, result.exception.code), (422, "staged_runtime_failed"))
+        verify((markup + "<script>" + forward_only + """
+            document.querySelector('#early').addEventListener('click', () => {
+                document.querySelector('#early').setAttribute('aria-selected', 'true');
+                document.querySelector('#late').setAttribute('aria-selected', 'false');
+                document.querySelector('#first').hidden = false;
+                document.querySelector('#second').hidden = true;
+            });
+        </script>""").encode(), [], website=True)
+
     def test_missing_browser_cannot_authorize_a_candidate(self):
         with patch.dict(os.environ, {"ROOT_VERIFY_CHROME": "/path/to/nonexistent/chromium"}), \
                 self.assertRaises(ApiError) as result:

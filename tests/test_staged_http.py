@@ -166,7 +166,7 @@ def revise(stage, requirement, prior, key, admit, record, *, base):
             return staged_revision.provide(stage, requirement, prior, key, admit, record, base=base)
     return staged_revision.provide(stage, requirement, prior, key, admit, record, base=base)
 
-def verify_runtime(html, entries, *, backup, storage_limit):
+def verify_runtime(html, entries, *, backup, storage_limit, website):
     if b'throw new Error("synthetic startup failure");' in html:
         raise ApiError(422, "staged_runtime_failed", "固定替身检测到启动失败")
     if entries == [["result", "verify-late"]]:

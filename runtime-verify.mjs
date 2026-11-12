@@ -9,7 +9,7 @@ const chromePath = process.argv[2];
 const profile = process.argv[3];
 const input = [];
 for await (const part of process.stdin) input.push(part);
-const { html, entries, backup, limit } = JSON.parse(Buffer.concat(input).toString());
+const { html, entries, backup, limit, website } = JSON.parse(Buffer.concat(input).toString());
 const workbench = await readFile(new URL('./workbench/workbench.js', import.meta.url), 'utf8');
 const start = workbench.indexOf('function initializeFrame(');
 const end = workbench.indexOf('\nfunction enqueueSave(', start);
@@ -185,6 +185,46 @@ async function candidateFrame() {
   return { sessionId, frame:tree.frame };
 }
 
+async function verifyWebsiteTabs() {
+  const visible = node => node?.checkVisibility({visibilityProperty:true}) && node.getClientRects().length > 0;
+  const tabs = group => [...group.querySelectorAll('[role="tab"]')].filter(
+    tab => tab.closest('[role="tablist"]') === group && visible(tab)
+      && !tab.matches(':disabled, [aria-disabled="true"]'),
+  );
+  const selected = group => tabs(group).filter(tab => tab.getAttribute('aria-selected') === 'true');
+  let remaining = 8;
+  for (const group of document.querySelectorAll('[role="tablist"]')) {
+    const items = tabs(group);
+    if (items.length < 2) continue;
+    const initial = selected(group);
+    if (initial.length !== 1) return false;
+    const first = items.indexOf(initial[0]);
+    for (let step = 1; step <= items.length && remaining > 0; step++) {
+      const index = (first + step) % items.length;
+      const target = tabs(group)[index];
+      if (!target || target.getAttribute('aria-selected') === 'true') continue;
+      remaining--;
+      target.click();
+      const deadline = performance.now() + 200;
+      let active;
+      do {
+        active = selected(group);
+        if (active.length === 1 && active[0] === tabs(group)[index]) break;
+        await new Promise(resolve => setTimeout(resolve, 25));
+      } while (performance.now() < deadline);
+      if (active.length !== 1 || active[0] !== tabs(group)[index]) return false;
+      const activePanel = active[0].getAttribute('aria-controls');
+      if (activePanel && !visible(document.getElementById(activePanel))) return false;
+      for (const tab of tabs(group)) {
+        const controls = tab.getAttribute('aria-controls');
+        if (controls && controls !== activePanel && visible(document.getElementById(controls))) return false;
+      }
+    }
+    if (remaining === 0) break;
+  }
+  return true;
+}
+
 async function run() {
   await cdp('Browser.getVersion');
   const { targetInfos } = await cdp('Target.getTargets');
@@ -240,7 +280,11 @@ async function run() {
   const result = await evaluate(
     `document.readyState === 'complete' && Boolean(document.body?.childElementCount) && ${blocksWebRTC}`,
     observer.executionContextId, sessionId);
-  return result && !failed ? 'ok' : 'failed';
+  if (!result || failed) return 'failed';
+  if (website && !await evaluate(
+    '(' + verifyWebsiteTabs.toString() + ')()', observer.executionContextId, sessionId,
+  )) return 'failed';
+  return failed ? 'failed' : 'ok';
 }
 
 let timer;

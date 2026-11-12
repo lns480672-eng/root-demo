@@ -38,8 +38,8 @@ def _command():
     return [node, str(HELPER), chrome]
 
 
-def verify(html, entries, *, backup=False, storage_limit=TOOL_STORAGE_BYTES):
-    """Require actual startup success for the given code and storage snapshot."""
+def verify(html, entries, *, backup=False, storage_limit=TOOL_STORAGE_BYTES, website=False):
+    """Require isolated startup and the applicable website checks for the fixed snapshot."""
     packed = pack_entries(entries, limit=storage_limit)
     if not isinstance(html, bytes) or not html.lower().startswith(b"<!doctype html>"):
         raise _failed()
@@ -58,7 +58,7 @@ def verify(html, entries, *, backup=False, storage_limit=TOOL_STORAGE_BYTES):
             for name in ("XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_DATA_HOME", "XDG_RUNTIME_DIR"):
                 env[name] = directory
             payload = json.dumps({"html": source, "entries": json.loads(packed), "backup": backup,
-                                  "limit": storage_limit}).encode()
+                                  "limit": storage_limit, "website": website}).encode()
             with subprocess.Popen([*command, directory], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                   stderr=subprocess.DEVNULL, env=env, start_new_session=True) as process:
                 try:
