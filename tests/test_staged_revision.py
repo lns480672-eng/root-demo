@@ -167,6 +167,27 @@ class RevisionContextTests(unittest.TestCase):
         self.assertNotIn("<html>", json.dumps(base))
         self.assertNotIn("entries", base)
 
+    def test_targeted_program_copy_preserves_working_markup_script_and_style(self):
+        base = revision.prepare({}, LEGACY)
+        request = "把页面文案「Add」改为「Add book」"
+        spec = revision.provide("spec", request, {}, "", Mock(), None, base=base)
+        prior = {"spec.json": spec}
+        candidate = revision.provide("implementation", request, prior, "", Mock(), None, base=base)
+        revision.check("implementation", candidate, base, request)
+        original = base["source"]["implementation"]
+        changed = json.loads(candidate)
+        self.assertEqual(changed, {**original, "markup": original["markup"].replace(">Add<", ">Add book<")})
+        rendered = blueprint.assemble({**prior, "implementation.json": candidate})
+        self.assertIn(b"<button>Add book</button>", rendered)
+        self.assertIn(b'localStorage.setItem(storageKey, JSON.stringify(books))', rendered)
+
+    def test_risky_actions_require_more_than_a_field_label(self):
+        base = revision.prepare(artifacts())
+        for request in ("删掉「设备」列", "把「设备」改成数字", "新增字段项目并把所有记录清空"):
+            with self.subTest(request=request), self.assertRaises(ApiError) as raised:
+                revision.provide("spec", request, {}, "", Mock(), None, base=base)
+            self.assertEqual(raised.exception.code, "revision_risky")
+
     def test_legacy_rejects_external_or_unbounded_sources(self):
         variants = [
             LEGACY.replace(b"<script>", b'<script src="https://example.test/lib.js">'),

@@ -110,7 +110,7 @@ class StagedJobs:
     def latest(self, db, owner):
         return db.execute("""
             SELECT * FROM staged_jobs WHERE owner=? AND expires>?
-            AND state NOT IN ('published','exhausted','unsupported')
+            AND state NOT IN ('published','exhausted','unsupported','cancelled')
             ORDER BY updated_at DESC, expires DESC LIMIT 1
         """, (owner, self.clock())).fetchone()
 
@@ -467,7 +467,8 @@ class StagedJobs:
             issue = uuid.uuid4().hex[:12]
             code = error.code if isinstance(error, ApiError) else ""
             state = {"staged_exhausted":"exhausted", "staged_unsupported":"unsupported",
-                     "revision_no_change":"unsupported"}.get(code, "failed")
+                     "revision_no_change":"unsupported", "revision_risky":"unsupported",
+                     "revision_clarification_required":"failed"}.get(code, "failed")
             with self.store.connection(write=True) as db:
                 db.execute("""UPDATE staged_jobs SET state=?,lease_until=0,issue=?,failure=?,updated_at=?
                               WHERE id=? AND fence=? AND state='running' AND lease_until>?""",
@@ -516,11 +517,34 @@ class StagedJobs:
             if revision:
                 result.update(id=current["id"], runId=candidate["tool_id"], entries=json.loads(current["entries"]),
                               revision=current["revision"], version=current["version"] + 1)
+                result["revisionPlan"] = {
+                    "toolId":current["id"], "title":current["title"], "baseVersion":current["version"],
+                    "dataRevision":current["revision"],
+                    "changes":self.revision.describe(json.loads(revision["context"]), self.files(row),
+                                                     row["requirement"], json.loads(current["entries"])),
+                    "confirmation":self.revision_confirmation(candidate, current),
+                }
                 if current["table_tool"]:
                     result["storageLimit"] = TABLE_STORAGE_BYTES
             if self.permits_backup(row):
                 result["stagedBackup"] = True
             return result
+
+    @staticmethod
+    def revision_confirmation(candidate, current):
+        return digest(encoded({"nonce":candidate["nonce"], "sha256":candidate["digest"],
+                               "tool":current["id"], "version":current["version"], "revision":current["revision"]}))
+
+    def cancel_revision(self, token, marker, identifier, nonce):
+        with self.store.connection(write=True) as db:
+            row = self.owned(db, token, marker, identifier)
+            candidate = self.candidate_record(db, identifier)
+            if (not self.revision_record(db, identifier) or candidate is None or candidate["nonce"] != nonce
+                    or row["state"] not in ("complete", "cancelled")):
+                raise ApiError(409, "revision_cannot_cancel", "此修改方案已变化或无法取消。")
+            db.execute("UPDATE staged_jobs SET state='cancelled',updated_at=? WHERE id=?",
+                       (self.clock(), identifier))
+            return self.view(self.row(db, identifier), db)
 
     def check_revision_candidate(self, row, revision, html):
         context = json.loads(revision["context"])
@@ -586,7 +610,10 @@ class StagedJobs:
             self.store.require_version(revision["base_version"], current["version"])
             self.check_table_schema(revision, current)
             if type(data.get("revision")) is not int or data["revision"] != current["revision"]:
-                raise ApiError(409, "revision_conflict", "已有更新的数据，请用最新记录重新准备预览。")
+                raise ApiError(409, "revision_conflict", "已有更新的数据，请重新查看并确认修改方案。")
+            candidate = self.candidate_record(db, row["id"])
+            if data.get("confirmation") != self.revision_confirmation(candidate, current):
+                raise ApiError(409, "revision_confirmation_required", "请先确认当前工具的修改方案。")
         limit = TABLE_STORAGE_BYTES if current and current["table_tool"] else TOOL_STORAGE_BYTES
         packed = pack_entries(data.get("entries"), limit=limit)
         proof = digest(encoded({**identity, "policy":RUNTIME_PROOF_VERSION, "owner":row["owner"], "nonce":data["nonce"],

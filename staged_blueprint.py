@@ -146,10 +146,15 @@ def validate_spec(value):
         require(isinstance(goal, str) and goal.isprintable() and 0 < len(goal.strip()) <= 240,
                 "bad_program_goal")
         return
-    keys(value, "title", "fields", optional=("kind", "modules", "theme"))
+    keys(value, "title", "fields", optional=("kind", "modules", "theme", "columnThemes"))
     require(value.get("kind", "ledger") == "ledger", "bad_spec_kind")
     theme = value.get("theme", "gray")
     require(isinstance(theme, str) and theme in LEDGER_THEMES, "bad_ledger_theme")
+    if "columnThemes" in value:
+        colors = value["columnThemes"]
+        require(isinstance(colors, dict) and all(re.fullmatch(r"0|[1-9][0-9]?", index)
+                and isinstance(theme, str) and theme in LEDGER_THEMES for index, theme in colors.items()),
+                "bad_column_theme")
     if "modules" in value:
         modules = value["modules"]
         require(unique_strings(modules, len(OPTIONAL_MODULES)) and set(modules) <= set(OPTIONAL_MODULES),
@@ -211,6 +216,9 @@ def validate_module(stage, value, spec):
             board = value["board"]
             ref(board, {"choice"}, slot="board")
             require(choice is not None and board == choice["field"], "bad_board_choice")
+        if "columnThemes" in spec:
+            require("board" in value and all(int(index) < len(fields[value["board"]]["options"])
+                    for index in spec["columnThemes"]), "bad_column_theme")
         coverage = set(value["form"])
         if choice is not None:
             coverage.add(choice["field"])
@@ -331,6 +339,10 @@ def assemble(previous):
     data = json.dumps(config, ensure_ascii=True, sort_keys=True, separators=(",", ":")).replace("<", "\\u003c")
     title = html.escape(config["spec"]["title"])
     background = LEDGER_THEMES[config["spec"].get("theme", "gray")]
+    column_style = "".join(
+        f"#record-board>section:nth-child({int(index) + 1}){{background:{LEDGER_THEMES[theme]}}}"
+        for index, theme in config["spec"].get("columnThemes", {}).items()
+    )
     shell = RUNTIME.read_text(encoding="utf-8")
     return ('''<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -344,6 +356,7 @@ table{border-collapse:collapse;width:100%}th,td{padding:4px 8px;text-align:left;
 textarea{box-sizing:border-box;width:100%}[role=alert]{color:#ae2b2b}
 #record-board{display:flex;gap:10px;overflow-x:auto;padding-bottom:6px}
 #record-board>section{flex:1 0 12rem;background:''' + background + '''}
+''' + column_style + '''
 #record-board h3{margin:0 0 8px;font-size:15px}
 #record-board article{background:white;border:1px solid #d6dbe7;border-radius:6px;margin-bottom:8px;padding:8px}
 #record-board dl{margin:0 0 8px}#record-board dt{font-weight:600}

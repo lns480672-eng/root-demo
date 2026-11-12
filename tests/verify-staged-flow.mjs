@@ -424,6 +424,11 @@ export async function verifyLedgerTheme(ctx) {
   await screenshot('before-theme');
   await click('#revise-tool');
   await generate('把颜色改成黄色');
+  await until(() => visible('#revision-confirm'));
+  assert.equal((await versions()).current, 1);
+  assert.equal((await balance()).used, beforeBalance.used);
+  await screenshot('theme-plan-before-confirm');
+  await click('#revision-confirm');
   const revised = await settle('把颜色改成黄色');
   assert.equal(revised.state, 'published', revised.reason);
   assert.equal(revised.toolId, old.id);
@@ -454,6 +459,43 @@ export async function verifyLedgerTheme(ctx) {
     assert.equal((await balance()).used, beforeBalance.used + 1);
     assert.deepEqual(await board(await activeTool()), after);
     await screenshot(change.includes('22px') ? 'unchanged-theme' : 'unsupported-theme');
+  }
+  if (!live) {
+    const beforeLocal = await balance();
+    const localChange = '公司名称改为雇主';
+    await click('#revise-tool');
+    await generate(localChange);
+    await until(() => visible('#revision-confirm'));
+    assert.match(await evaluate('document.querySelector("#revision-plan-changes").textContent'), /公司名称.*雇主/);
+    await screenshot('field-rename-cancel-plan');
+    await click('#revision-cancel');
+    await until(async () => !await visible('#revision-confirm') && !await visible('#requirement'));
+    assert.equal((await versions()).current, 2);
+    assert.deepEqual((await stored(old.id)).entries, before.entries);
+    assert.deepEqual(await balance(), beforeLocal);
+    for (const [request, version] of [[localChange, 3], ['新增一个可空文本字段「项目」', 4],
+      ['把「面试中」分栏背景改为浅蓝', 5]]) {
+      await click('#revise-tool');
+      await generate(request);
+      await until(() => visible('#revision-confirm'));
+      await screenshot('local-plan-v' + version);
+      await click('#revision-confirm');
+      await until(async () => (await versions()).current === version);
+      await until(() => visible('#revise-tool'));
+      await screenshot('local-applied-v' + version);
+    }
+    assert.deepEqual((await stored(old.id)).entries, before.entries);
+    assert.equal((await balance()).used, beforeLocal.used + 3);
+    assert.equal((await balance()).totalUsed, beforeLocal.totalUsed);
+    await cdp('Page.reload');
+    await until(() => evaluate('document.documentElement.dataset.ready === "true"'));
+    const reopened = await activeTool();
+    assert.equal(reopened.id, old.id);
+    const finalBoard = await board(reopened);
+    const column = finalBoard.columns.find(item => item.name === '面试中');
+    assert.equal(column.background, 'rgb(219, 234, 254)');
+    assert.match(column.cards.join(), /雇主.*合成甲公司.*项目/s);
+    await screenshot('local-restored');
   }
   const receipts = (await readFile(join(root, 'runs', 'staged-usage.jsonl'), 'utf8')).trim().split('\n').map(JSON.parse);
   evidence.runs = receipts.filter(item => [initial.id, revised.id].includes(item.task));
@@ -534,6 +576,8 @@ export async function verifyStagedRevision(ctx) {
   assert.equal(task.baseToolId, old.id);
   assert.equal(task.baseVersion, 1);
   await add('乙 生成期间写入');
+  await until(() => visible('#revision-confirm'));
+  await click('#revision-confirm');
   await until(async () => {
     const current = (await appRequest(taskPath + task.id)).body.task;
     if (['failed','unsupported'].includes(current.state)) {
@@ -554,6 +598,8 @@ export async function verifyStagedRevision(ctx) {
   assert.equal((await activeTool()).loader, old.loader);
   assert.match(JSON.stringify((await stored(old.id)).entries), /丙 候选之后写入/);
   await click('#staged-preview');
+  await until(() => visible('#revision-confirm'));
+  await click('#revision-confirm');
   const revised = await until(async () => {
     const current = await activeTool().catch(() => null);
     return current && current.id === old.id && current.loader !== old.loader && current;
@@ -703,7 +749,7 @@ with sqlite3.connect(sys.argv[1]) as db:
   await bringBack(previous.id);
   await until(async () => (await activeTool()).id === old.id);
   assert.equal(await evaluate('document.querySelector("#requirement").value'), revisedRequirement);
-  assert.equal(await evaluate('document.querySelector("#generate").textContent'), '生成新版');
+  assert.equal(await evaluate('document.querySelector("#generate").textContent'), '查看修改方案');
   assert.deepEqual(await balance(), beforeRevise);
   await evaluate(`(() => {
     const original = window.fetch;
@@ -722,6 +768,8 @@ with sqlite3.connect(sys.argv[1]) as db:
   })()`);
   const revised = '修改原工具的说明，历史验证重新提交';
   await generate(revised);
+  await until(() => visible('#revision-confirm'));
+  await click('#revision-confirm');
   const pendingTaskPath = await until(async () => {
     if (!await visible('#staged-sync')) return;
     return evaluate('!document.querySelector("#staged-sync").disabled && window.historyPublishedPath');

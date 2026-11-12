@@ -56,7 +56,7 @@ TRIAL_ADMIN = "/api/trial/admin"
 STAGED = "/api/staged"
 STAGED_HISTORY = STAGED + "/history"
 STAGED_TASK = re.compile(STAGED + r"/([a-f0-9]{32})")
-STAGED_ACTION = re.compile(STAGED + r"/([a-f0-9]{32})/(resume|candidate|verify-preview|publish|resolve-publish)")
+STAGED_ACTION = re.compile(STAGED + r"/([a-f0-9]{32})/(resume|candidate|cancel-revision|verify-preview|publish|resolve-publish)")
 ADMIN_INVITES = "/api/admin/invites"
 ADMIN_SETUP = "/api/admin/setup"
 ADMIN_PASSWORD = "/api/admin/password"
@@ -463,6 +463,8 @@ def serve(key, port, runs=generate.RUNS, *, generation_limits=(5, 30), analysis_
                     self.send_json(202, {"task":start_staged(token, marker, match[1], resume=True)})
                 elif match[2] == "candidate":
                     self.send_json(200, staged.candidate(token, marker, match[1]))
+                elif match[2] == "cancel-revision":
+                    self.send_json(200, {"task":staged.cancel_revision(token, marker, match[1], data.get("nonce"))})
                 elif match[2] == "verify-preview":
                     staged.verify_preview(token, marker, match[1], data)
                     self.send_json(200, {"verified":True})

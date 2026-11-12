@@ -48,7 +48,7 @@ const stagedStepLabels = {
 const stagedStates = {
   queued: '等待生成', running: '正在生成工具', failed: '阶段未完成', interrupted: '生成已中断',
   complete: '等待检查预览', published: '已保存', expired: '已过期', exhausted: '已达调用上限',
-  unsupported: '暂不支持此需求',
+  unsupported: '暂不支持此需求', cancelled: '已取消修改',
 };
 const generationRestrictions = new Map([
   ['generation_total_limit', {
@@ -80,6 +80,7 @@ let stagedLoadError = '';
 let stagedPendingId = null;
 let stagedPendingNonce = null;
 let stagedSubmission = null;
+let pendingRevision = null;
 
 function currentGenerationRestriction() {
   if (!trial) return;
@@ -107,9 +108,9 @@ function render() {
   const showingSample = Boolean(sampleTemplate);
   const showingTool = Boolean(active) && !showingSample;
   product.dataset.state = pending ? 'loading' : failure ? 'failure' : active ? 'success' : 'initial';
-  generate.textContent = pending ? '生成中…' : failure ? '重试' : editing ? '生成新版' : '直接生成';
+  generate.textContent = pending ? '生成中…' : failure ? '重试' : editing && stagedEnabled ? '查看修改方案' : editing ? '生成新版' : '直接生成';
   generate.disabled = !session || !configured || !networkIsolated || phase === 'startup' || blocked ||
-    tableMode || returning || !requirement.value.trim();
+    tableMode || returning || Boolean(pendingRevision) || !requirement.value.trim();
   requirement.readOnly = blocked;
   byId('generation-scope').hidden = !stagedEnabled || editing || tableMode;
   generationCategory.disabled = blocked;
@@ -287,6 +288,7 @@ function isActiveStagedTask(task) {
 
 function clearStagedSelection() {
   selectedStagedId = stagedAutoId = null;
+  pendingRevision = null;
   stagedMessage = '';
 }
 
@@ -314,6 +316,8 @@ function stagedReason(task, restriction) {
     ? '上次生成时，' + previous.label + '。可以重新提交需求。' : previous.message;
   if (task.state === 'expired') return '任务已过期。可用保留的原需求重新生成。';
   if (task.state === 'exhausted') return '已达到此任务的调用上限。可用保留的原需求重新生成。';
+  if (task.reason === 'revision_risky') return '此版本暂不支持删除、转换或批量改写已有数据。旧版仍可用。';
+  if (task.reason === 'revision_clarification_required') return '要改整体背景还是某个分栏？请写明位置和颜色，再查看方案。';
   if (task.reason === 'revision_no_change') return '这次修改没有产生可应用的变化。旧版仍可用，未扣除个人生成次数。';
   if (task.state === 'unsupported') return task.baseToolId
     ? '这项修改暂不支持。旧版仍可用，未扣除个人生成次数。'
@@ -425,10 +429,23 @@ function renderStagedTasks(blocked, restriction) {
   const resume = byId('staged-resume');
   resume.hidden = !['queued', 'interrupted'].includes(task?.state) || Boolean(stagedPendingId);
   resume.disabled = !canAct || !configured || quotaBlocked;
+  const proposal = pendingRevision?.revisionPlan;
+  const confirmation = byId('revision-confirmation');
+  confirmation.hidden = !proposal;
+  if (proposal && confirmation.dataset.plan !== proposal.confirmation) {
+    confirmation.dataset.plan = proposal.confirmation;
+    byId('revision-plan-tool').textContent = '「' + proposal.title + '」v' + proposal.baseVersion;
+    byId('revision-plan-changes').replaceChildren(...proposal.changes.map(change => {
+      const item = document.createElement('li');
+      item.textContent = change;
+      return item;
+    }));
+  }
+  for (const id of ['revision-confirm', 'revision-adjust', 'revision-cancel']) byId(id).disabled = !canAct;
   const reopen = byId('staged-preview');
-  reopen.hidden = task?.state !== 'complete' || Boolean(stagedPendingId);
+  reopen.hidden = task?.state !== 'complete' || Boolean(stagedPendingId) || Boolean(proposal);
   reopen.disabled = !canAct;
-  reopen.textContent = stagedMessage ? '重新预览' : '检查预览';
+  reopen.textContent = task?.baseToolId ? '查看修改方案' : stagedMessage ? '重新预览' : '检查预览';
   const sync = byId('staged-sync');
   sync.hidden = !stagedPendingId;
   sync.disabled = !canAct;
@@ -1276,6 +1293,7 @@ async function commitStaged(frame, tool) {
   const payload = {
     toolId: frame.id, commit, sha256, nonce, entries: JSON.parse(frame.snapshot),
     runId: tool.runId, revision: tool.runId ? frame.revision : undefined,
+    confirmation: tool.revisionPlan?.confirmation,
   };
   const path = '/api/staged/' + taskId;
   stagedActivity = '正在验证运行';
@@ -1342,7 +1360,7 @@ async function synchronizeStagedPublication({ readOnly = false } = {}) {
   }
 }
 
-async function openStagedCandidate(task) {
+async function openStagedCandidate(task, approvedTool = null) {
   if (phase !== 'idle' || pendingPublication || stagedPendingId || !networkIsolated) return;
   stagedAutoId = null;
   selectedStagedId = task.id;
@@ -1357,7 +1375,7 @@ async function openStagedCandidate(task) {
       if (task.state === 'published') {
         await openTool(await workspaceApi('/api/tools/' + task.toolId, undefined, publicationTimeout), true);
       } else {
-        tool = await workspaceApi('/api/staged/' + task.id + '/candidate', {}, publicationTimeout);
+        tool = approvedTool || await workspaceApi('/api/staged/' + task.id + '/candidate', {}, publicationTimeout);
       }
     } catch (error) {
       if (error.code !== 'staged_not_ready') throw error;
@@ -1367,6 +1385,10 @@ async function openStagedCandidate(task) {
     }
     if (tool) {
       if (tool.staged?.taskId !== task.id) throw new Error('候选与当前任务不匹配，无法打开预览。');
+      if (tool.revisionPlan && !approvedTool) {
+        pendingRevision = tool;
+        return;
+      }
       await openTool(tool);
     }
     await finishStagedComposition(task.id);
@@ -1376,10 +1398,42 @@ async function openStagedCandidate(task) {
     phase = 'idle';
     stagedActivity = '';
     render();
+    if (pendingRevision) byId('revision-confirm').focus();
     refreshStagedTasks();
     refreshTrial();
   }
 }
+
+byId('revision-confirm').addEventListener('click', () => {
+  const task = selectedStagedTask();
+  const tool = pendingRevision;
+  if (!tool || task?.id !== tool.staged.taskId || phase !== 'idle') return;
+  pendingRevision = null;
+  openStagedCandidate(task, tool);
+});
+
+async function discardRevision(adjust) {
+  const tool = pendingRevision;
+  if (!tool || phase !== 'idle') return;
+  phase = 'sync';
+  render();
+  try {
+    const { task } = await workspaceApi('/api/staged/' + tool.staged.taskId + '/cancel-revision',
+      { nonce: tool.staged.nonce }, publicationTimeout);
+    rememberStagedTask(task);
+    clearStagedSelection();
+    if (!adjust) finishComposition();
+  } catch (error) {
+    stagedMessage = generationError(error);
+  } finally {
+    phase = 'idle';
+    render();
+    if (adjust && !pendingRevision) requirement.focus();
+  }
+}
+
+byId('revision-adjust').addEventListener('click', () => discardRevision(true));
+byId('revision-cancel').addEventListener('click', () => discardRevision(false));
 
 async function openTool(tool, restore = false) {
   if (!validToolId(tool.id) || typeof tool.html !== 'string' || !/^<!doctype html>/i.test(tool.html)) {

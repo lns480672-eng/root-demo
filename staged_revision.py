@@ -1,5 +1,6 @@
 """Source-only model context and compatibility checks for staged tool revisions."""
 
+from copy import deepcopy
 import html
 from html.parser import HTMLParser
 import json
@@ -313,7 +314,8 @@ def _ledger_patch(payload, base, active_modules, requirement):
 def _effective_ledger(source):
     config = blueprint.ledger_config(source)
     spec, entry = config["spec"], config["entry"]
-    config["spec"] = {"title": spec["title"], "fields": spec["fields"], "theme": _theme(spec)}
+    config["spec"] = {"title": spec["title"], "fields": spec["fields"], "theme": _theme(spec),
+                      "columnThemes":spec.get("columnThemes")}
     config["entry"] = {**entry, **{flag: entry.get(flag, False) for flag in ("allow_edit", "allow_delete", "backup")}}
     return config
 
@@ -332,6 +334,8 @@ def _check_ledger_spec(candidate, base, requirement):
         if not _requested_theme(_theme(candidate), target):
             raise _out_of_scope()
     elif _theme(candidate) != _theme(old):
+        raise _out_of_scope()
+    if candidate.get("columnThemes") != old.get("columnThemes"):
         raise _out_of_scope()
 
     modules = set(_active_modules(base))
@@ -384,8 +388,135 @@ def _check_ledger_assembly(source, base, requirement):
         raise _out_of_scope()
 
 
+
+# Resolve these narrow edits against the source, then apply only the verified difference.
+FIELD_LABEL = re.compile(r"^(?:请)?(?:把|将)?(?:字段)?[「“]?([^「」“”，,]+?)[」”]?\s*(?:字段|显示名)?\s*改(?:为|成)[「“]?([^「」“”，,]+)[」”]?$")
+ADD_FIELD = re.compile(r"^(?:请)?(?:新增|添加|增加|加)(?:一个|个)?(?:可空(?:的)?)?(?:文本)?字段[\s，,：:]*[「“]?([^「」“”，,]+)[」”]?$")
+COLUMN_STYLE = re.compile(r"^(?:请)?(?:把|将)?[「“]?([^「」“”，,]+?)[」”]?分栏(?:背景|颜色)?改(?:为|成)([^，,。]+)$")
+WEBSITE_HEADING = re.compile(r"^(?:请)?(?:把|将)?首页主标题改(?:为|成)[「“]([^」”]+)[」”]$")
+PROGRAM_TEXT = re.compile(r"^(?:请)?(?:把|将)(?:页面)?文案[「“]([^」”]+)[」”]改(?:为|成)[「“]([^」”]+)[」”]$")
+QUOTED_TEXT = re.compile(r"「[^」]*」|“[^”]*”")
+DATA_TARGET = r"(?:字段|数据|记录|事项|列)"
+DESTRUCTIVE_ACTION = r"(?:删除|删掉|清空|移除|覆盖|回填)"
+RISKY_REVISION = re.compile(
+    rf"{DESTRUCTIVE_ACTION}.*{DATA_TARGET}|{DATA_TARGET}.*{DESTRUCTIVE_ACTION}|"
+    r"批量(?:修改|回填|更新)|回填|必填|改(?:成|为)(?:数字|日期|数值|整数|布尔)|"
+    r"(?:改|修改|更改|转换)(?:字段)?类型|数据库|\b(?:ALTER|DROP|TRUNCATE)\s+TABLE\b",
+    re.I,
+)
+
+
+def local_revision(base, requirement):
+    text = requirement.strip().rstrip("。")
+    kind = base["kind"]
+    if kind == "program" and (match := PROGRAM_TEXT.fullmatch(text)):
+        before, after = match.groups()
+        source = deepcopy(base["source"])
+        original = ">" + html.escape(before, quote=False) + "<"
+        markup = source["implementation"]["markup"]
+        if not blueprint.label(after) or markup.count(original) != 1 or before == after:
+            raise _out_of_scope()
+        source["implementation"]["markup"] = markup.replace(original, ">" + html.escape(after, quote=False) + "<", 1)
+        return source, f"页面文案「{before}」改为「{after}」。脚本与存储保持。"
+    if kind == "website" and (match := WEBSITE_HEADING.fullmatch(text)):
+        source = deepcopy(base["source"])
+        heading = source["implementation"]["intro"]
+        before, after = heading["heading"], match[1]
+        if not blueprint.label(after) or before == after:
+            raise _out_of_scope()
+        heading["heading"] = after
+        return source, f"首页主标题「{before}」改为「{after}」。导航、目录和问答保持。"
+    if kind != "ledger":
+        return None
+    if match := ADD_FIELD.fullmatch(text):
+        label = match[1].strip()
+        if not blueprint.label(label) or any(field["label"] == label for field in base["source"]["spec"]["fields"]):
+            raise _out_of_scope()
+        source = deepcopy(base["source"])
+        fields = source["spec"]["fields"]
+        if len(fields) >= 12:
+            raise ApiError(422, "staged_unsupported", "台账已达到字段数量上限，旧版仍可用。")
+        used = {field["id"] for field in fields}
+        identifier = next(f"field_{i}" for i in range(1, 14) if f"field_{i}" not in used)
+        fields.append({"id":identifier, "label":label, "type":"text", "required":False, "options":[]})
+        source["entry"]["form"].append(identifier)
+        source["entry"]["columns"].append(identifier)
+        change = f"新增可空文本字段「{label}」。已有记录在此字段显示为空。"
+    elif match := COLUMN_STYLE.fullmatch(text):
+        name, color = match.groups()
+        board = base["source"]["entry"].get("board")
+        field = next((field for field in base["source"]["spec"]["fields"] if field["id"] == board), None)
+        theme = next((theme for theme, names in THEME_NAMES.items() if color in names or color == theme), None)
+        if field is None or name not in field["options"] or theme is None:
+            raise _out_of_scope()
+        source = deepcopy(base["source"])
+        index = str(field["options"].index(name))
+        colors = source["spec"].setdefault("columnThemes", {})
+        if colors.get(index, _theme(source["spec"])) == theme:
+            raise _no_change()
+        colors[index] = theme
+        change = f"「{name}」分栏背景改为{color}。其他分栏和记录保持。"
+    elif match := FIELD_LABEL.fullmatch(text):
+        before, after = (value.strip() for value in match.groups())
+        field = next((field for field in base["source"]["spec"]["fields"] if field["label"] == before), None)
+        if field is None:
+            return None
+        if not blueprint.label(after) or any(item["label"] == after for item in base["source"]["spec"]["fields"]):
+            raise _out_of_scope()
+        source = deepcopy(base["source"])
+        for item in source["spec"]["fields"]:
+            if item["id"] == field["id"]:
+                item["label"] = after
+        change = f"字段「{before}」显示名改为「{after}」。字段键和已有值保持。"
+        if field["id"] in source.get("export", {}).get("columns", []):
+            change += "CSV 导出表头同步更新。"
+    else:
+        return None
+    source["spec"]["modules"] = _active_modules(base)
+    return source, change
+
+
+def describe(base, files, requirement, entries):
+    local = local_revision(base, requirement)
+    if local:
+        changes = [local[1]]
+    else:
+        spec = blueprint.read_artifact(files["spec.json"])
+        old = base["source"]["spec"]
+        changes = []
+        if spec["title"] != old["title"]:
+            changes.append(f"工具标题「{old['title']}」改为「{spec['title']}」。")
+        if _theme(spec) != _theme(old):
+            changes.append(f"整体背景改为{THEME_NAMES[_theme(spec)][0]}。")
+        operation, _ = _ledger_operation(requirement)
+        if operation == "remove_csv":
+            changes.append("移除 CSV 导出。")
+        if operation == "add_filter" or (base["kind"] == "table" and spec.get("filters") != old.get("filters")):
+            changes.append("添加已指定字段的筛选。")
+        if not changes:
+            changes.append(f"本次请求「{requirement}」。")
+    changes.append("保留已有记录和未要求修改的内容。")
+    if local and base["kind"] == "ledger":
+        try:
+            records = json.loads(dict(entries).get("root-structured-records-v1", "[]"))
+        except (TypeError, ValueError, RecursionError):
+            raise _incompatible() from None
+        if not isinstance(records, list):
+            raise _incompatible()
+        changes.append(f"已有记录 {len(records)} 条。")
+    return changes
+
+
 def check(stage, payload, base, requirement="", *, previous=None):
     """Check semantic data compatibility after normal stage validation."""
+    local = local_revision(base, requirement)
+    if local:
+        source, _ = local
+        if stage in source:
+            limit = staged_program.MAX_ARTIFACT_BYTES if stage == "implementation" else blueprint.MAX_ARTIFACT_BYTES
+            if blueprint.read_artifact(payload, limit=limit) != source[stage]:
+                raise _out_of_scope()
+        return
     if stage == "spec":
         candidate = blueprint.read_artifact(payload)
         if base["kind"] == "table":
@@ -434,6 +565,13 @@ def check(stage, payload, base, requirement="", *, previous=None):
 
 def provide(stage, requirement, previous, key, admit, record, *, base):
     """Generate one revision stage from source-only context and check before success."""
+    if RISKY_REVISION.search(QUOTED_TEXT.sub("字段", requirement)):
+        raise ApiError(422, "revision_risky", "这项操作可能删除、转换或改写已有数据，当前版本不执行。")
+    if re.fullmatch(r"(?:我想|请|帮我)?(?:改一下|换一下|调整)(?:颜色|配色)[。！？]?", requirement.strip()):
+        raise ApiError(422, "revision_clarification_required", "要改整体背景还是某个分栏？请写明位置和颜色。")
+    local = local_revision(base, requirement)
+    if local:
+        return json.dumps(local[0][stage], ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
     if base["kind"] == "table":
         spec = base["source"]["spec"]
         context = {**spec, "columns": [

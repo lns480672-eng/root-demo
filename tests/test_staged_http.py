@@ -393,7 +393,8 @@ class StagedHTTP(StagedHTTPFixture):
         def publish(candidate_path, candidate):
             payload = {**candidate["staged"], "toolId":candidate["id"], "entries":entries}
             if "runId" in candidate:
-                payload.update(runId=candidate["runId"], revision=candidate["revision"])
+                payload.update(runId=candidate["runId"], revision=candidate["revision"],
+                               confirmation=candidate["revisionPlan"]["confirmation"])
             self.assert_preview_verified(candidate_path, payload, owner)
             status, saved, _ = self.request(candidate_path + "/publish", payload, owner)
             self.assertEqual(status, 200)
@@ -413,6 +414,12 @@ class StagedHTTP(StagedHTTPFixture):
             candidate_path = revision_path(requirement, current_version, "complete")
             status, candidate, _ = self.request(candidate_path + "/candidate", {}, owner)
             self.assertEqual(status, 200)
+            proposal = candidate["revisionPlan"]
+            self.assertEqual((proposal["baseVersion"], proposal["toolId"]), (current_version, initial["id"]))
+            payload = {**candidate["staged"], "toolId":candidate["id"], "runId":candidate["runId"],
+                       "revision":candidate["revision"], "entries":entries}
+            self.assertEqual(self.request(candidate_path + "/verify-preview", payload, owner)[1]["code"],
+                             "revision_confirmation_required")
             saved = publish(candidate_path, candidate)
             self.assertEqual(saved["version"], current_version + 1)
             return config(saved)
@@ -449,6 +456,33 @@ class StagedHTTP(StagedHTTPFixture):
         history = self.request(tool + "/versions", auth=owner)[1]
         self.assertEqual([item["version"] for item in history["items"]], [4, 3, 2, 1])
         self.assertEqual(self.request("/api/trial", auth=owner)[1]["generation"]["used"], before + 3)
+
+        with self.store.connection(write=True) as db:
+            account = db.execute("SELECT id FROM accounts WHERE username='ledger-revision-scope'").fetchone()[0]
+            db.execute("INSERT INTO generation_grants VALUES (?,2)", (account,))
+        cancelled_path = revision_path("名称改为设备名称", 4, "complete")
+        cancelled = self.request(cancelled_path + "/candidate", {}, owner)[1]
+        self.assertIn("已有记录 1 条", " ".join(cancelled["revisionPlan"]["changes"]))
+        cancel = {"nonce": cancelled["staged"]["nonce"]}
+        self.assertEqual(self.request(cancelled_path + "/cancel-revision", cancel, owner)[1]["task"]["state"],
+                         "cancelled")
+        self.assertEqual(self.request(cancelled_path + "/candidate", {}, owner)[0], 409)
+        self.assertEqual(self.request(tool, auth=owner)[1]["version"], 4)
+        self.assertEqual(self.request("/api/trial", auth=owner)[1]["generation"]["used"], before + 3)
+
+        renamed_field = successful_revision("名称改为设备名称", 4)
+        self.assertEqual(renamed_field["spec"]["fields"][0]["label"], "设备名称")
+        self.assertEqual(renamed_field["spec"]["fields"][0]["id"], "name")
+        with_project = successful_revision("新增一个可空文本字段「项目」", 5)
+        field = with_project["spec"]["fields"][-1]
+        self.assertEqual((field["label"], field["required"]), ("项目", False))
+        self.assertIn(field["id"], with_project["entry"]["form"])
+        self.assertIn(field["id"], with_project["entry"]["columns"])
+        self.assertEqual(self.request(tool, auth=owner)[1]["entries"], entries)
+        risky = revision_path("删除项目字段和已有记录", 6, "unsupported")
+        self.assertEqual(self.request(risky, auth=owner)[1]["task"]["reason"], "revision_risky")
+        self.assertEqual(self.request(tool, auth=owner)[1]["version"], 6)
+        self.assertEqual(self.request("/api/trial", auth=owner)[1]["generation"]["used"], before + 5)
 
     def test_generation_category_is_part_of_the_request_identity(self):
         auth = self.account("generation-category")
@@ -630,7 +664,8 @@ class StagedHTTP(StagedHTTPFixture):
         self.assertNotEqual(revised["runId"], revised["id"])
         self.assertEqual(self.request(tool + "/versions", auth=owner)[1]["current"], 1)
         payload = {**revised["staged"], "toolId":revised["id"], "runId":revised["runId"],
-                   "entries":revised["entries"], "revision":revised["revision"]}
+                   "entries":revised["entries"], "revision":revised["revision"],
+                   "confirmation":revised["revisionPlan"]["confirmation"]}
         self.assert_preview_verified(rev_path, payload, owner)
         changes = [["history","persisted-marker"],["new","written while generating"]]
         self.assertEqual(self.request(tool + "/data", {"entries":changes,"revision":1,"version":1}, owner)[0], 200)
@@ -639,6 +674,9 @@ class StagedHTTP(StagedHTTPFixture):
         self.assertEqual(newest["staged"], revised["staged"])
         self.assertEqual(newest["entries"], changes)
         payload.update(revision=newest["revision"], entries=newest["entries"])
+        self.assertEqual(self.request(rev_path + "/publish", payload, owner)[1]["code"],
+                         "revision_confirmation_required")
+        payload["confirmation"] = newest["revisionPlan"]["confirmation"]
         status, body, _ = self.request(rev_path + "/publish", payload, owner)
         self.assertEqual((status, body.get("code")), (409, "staged_runtime_required"))
         self.assert_preview_verified(rev_path, payload, owner)
@@ -708,7 +746,8 @@ class StagedHTTP(StagedHTTPFixture):
             self.assertIn("<title>" + title + "</title>", candidate["html"])
             self.assertNotIn("private-row", candidate["html"])
             data = {**candidate["staged"], "toolId": candidate["id"], "runId": candidate["runId"],
-                    "entries": candidate["entries"], "revision": candidate["revision"]}
+                    "entries": candidate["entries"], "revision": candidate["revision"],
+                    "confirmation": candidate["revisionPlan"]["confirmation"]}
             self.assert_preview_verified(path, data, owner)
             status, saved, _ = self.request(path + "/publish", data, owner)
             self.assertEqual(status, 200)

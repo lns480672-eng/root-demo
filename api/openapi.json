@@ -1856,7 +1856,7 @@
           "生成任务"
         ],
         "summary": "读取并绑定私有预览候选",
-        "description": "仅完成且尚未发布的任务可取得私有候选。重复获取复用同一绑定，候选不进入工具库或扣个人次数。新建候选的 id 为预留的新工具 ID。修订候选的 id 为原工具 ID，runId 为新候选运行 ID，version 为待发布版本，entries 和 revision 对应获取时的最新存储。若另一修订先发布导致基准版本变化，返回 409。",
+        "description": "仅完成且尚未发布的任务可取得私有候选。重复获取复用同一绑定，候选不进入工具库或扣个人次数。新建候选的 id 为预留的新工具 ID。修订候选的 id 为原工具 ID，runId 为新候选运行 ID，version 为待发布版本，entries 和 revision 对应获取时的最新存储。若另一修订先发布导致基准版本变化，返回 409。 修订时返回 revisionPlan，用户确认后将其中的 confirmation 附在验证和发布请求中。",
         "responses": {
           "200": {
             "description": "读取并绑定私有预览候选",
@@ -1913,6 +1913,79 @@
         ]
       }
     },
+    "/api/staged/{taskId}/cancel-revision": {
+      "post": {
+        "operationId": "cancelGenerationRevision",
+        "tags": [
+          "生成任务"
+        ],
+        "summary": "撤销待确认的修改方案",
+        "description": "使用当前候选的 nonce 撤销修订方案。成功后保留原工具、记录和个人次数，同一候选无法再发布。",
+        "responses": {
+          "200": {
+            "description": "已撤销修改方案",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StagedTaskEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Http401"
+          },
+          "404": {
+            "$ref": "#/components/responses/Http404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Http409"
+          },
+          "403": {
+            "$ref": "#/components/responses/Http403"
+          },
+          "400": {
+            "$ref": "#/components/responses/Http400"
+          },
+          "415": {
+            "$ref": "#/components/responses/Http415"
+          },
+          "503": {
+            "$ref": "#/components/responses/Http503"
+          },
+          "default": {
+            "$ref": "#/components/responses/UnexpectedError"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "nonce"
+                ],
+                "properties": {
+                  "nonce": {
+                    "type": "string",
+                    "pattern": "^[a-f0-9]{32}$"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/TaskId"
+          },
+          {
+            "$ref": "#/components/parameters/Origin"
+          }
+        ]
+      }
+    },
     "/api/staged/{taskId}/verify-preview": {
       "post": {
         "operationId": "verifyGenerationPreview",
@@ -1920,7 +1993,7 @@
           "生成任务"
         ],
         "summary": "验证候选的实际隔离运行",
-        "description": "服务端独立启动隔离预览。成功后内部记录账号、任务、候选、nonce 和数据快照的绑定。失败不发布也不计个人成功。",
+        "description": "服务端独立启动隔离预览。成功后内部记录账号、任务、候选、nonce 和数据快照的绑定。失败不发布也不计个人成功。 修订需要提供用户已确认的 confirmation。",
         "responses": {
           "200": {
             "description": "实际运行检查通过",
@@ -4017,7 +4090,8 @@
               "published",
               "expired",
               "exhausted",
-              "unsupported"
+              "unsupported",
+              "cancelled"
             ]
           },
           "steps": {
@@ -4217,6 +4291,43 @@
             "properties": {
               "staged": {
                 "$ref": "#/components/schemas/StagedCandidateBinding"
+              },
+              "revisionPlan": {
+                "type": "object",
+                "properties": {
+                  "toolId": {
+                    "type": "string"
+                  },
+                  "title": {
+                    "type": "string"
+                  },
+                  "baseVersion": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "dataRevision": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "changes": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "confirmation": {
+                    "type": "string",
+                    "pattern": "^[a-f0-9]{64}$"
+                  }
+                },
+                "required": [
+                  "toolId",
+                  "title",
+                  "baseVersion",
+                  "dataRevision",
+                  "changes",
+                  "confirmation"
+                ]
               }
             },
             "required": [
@@ -4224,7 +4335,7 @@
             ]
           }
         ],
-        "description": "修订时附 runId，id 保持原工具 ID，entries/revision 来自现有工具最新数据。"
+        "description": "修订时附 runId，id 保持原工具 ID，entries/revision 来自现有工具最新数据。 revisionPlan 仅用于修订候选。"
       },
       "PublishStagedCandidate": {
         "type": "object",
@@ -4258,6 +4369,11 @@
             "type": "integer",
             "minimum": 0,
             "description": "修订首次发布必填。获取候选时返回的存储修订号。"
+          },
+          "confirmation": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$",
+            "description": "修订时必填，取自用户已确认的当前 revisionPlan。"
           }
         },
         "required": [
@@ -4269,13 +4385,19 @@
         ],
         "dependentRequired": {
           "runId": [
-            "revision"
+            "revision",
+            "confirmation"
           ],
           "revision": [
-            "runId"
+            "runId",
+            "confirmation"
+          ],
+          "confirmation": [
+            "runId",
+            "revision"
           ]
         },
-        "description": "新建发布只使用公有绑定字段。修订发布另外要求 runId 和 revision 两个字段。"
+        "description": "修订的验证和发布需要 runId、revision 和 confirmation。数据或基准版本变化时重新获取方案。"
       },
       "PublishedStagedTool": {
         "allOf": [

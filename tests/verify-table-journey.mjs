@@ -69,7 +69,13 @@ export async function verifyTableJourney({
       await evaluate('window.holdTableTaskList = false; window.resumeTableTaskList()');
     }
     const taskPath = '/api/staged/' + task.id;
+    if (reopenGuide) await click('#guide-skip');
+    let confirmed = false;
     await until(async () => {
+      if (!confirmed && await visible('#revision-confirm')) {
+        confirmed = true;
+        await click('#revision-confirm');
+      }
       const current = (await appRequest(taskPath)).body.task;
       if (['failed','unsupported','exhausted'].includes(current.state)) {
         if (expectedVersion !== null) throw new Error('修改阶段 ' + current.stage + ' 失败 ' + current.reason);
