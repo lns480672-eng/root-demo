@@ -138,6 +138,36 @@ class RevisionContextTests(unittest.TestCase):
         actual = json.loads(revision.plan_artifacts(payload, base)["implementation"])
         self.assertEqual(actual, {**code, "style": "h1 { color: blue; }"})
 
+    def test_website_style_revision_keeps_changes_inside_one_existing_rule(self):
+        spec = {"kind": "website", "layout": "landing", "title": "课程介绍", "goal": "展示课程"}
+        style = "h1 { color: red; } p { color: black; } @media (max-width: 500px) { h1 { color: pink; } }"
+        code = {"format": "website-code-v1", "markup": "<h1>课程介绍</h1><p>地点</p>",
+                "style": style, "script": "void 0;"}
+        base = revision.prepare({"spec.json": encode(spec), "implementation.json": encode(code)})
+
+        def plan(*changes):
+            return encode({"status": "proposed", "edits": [
+                {"part": "style", "before": before, "after": after} for before, after in changes
+            ]})
+
+        for candidate in (
+            plan((style, "* { display: none; }")),
+            plan(("color: red", "color: blue"), ("color: black", "color: green")),
+            plan(("color: red; } p { color: black", "color: blue; } p { color: green")),
+            plan(("max-width: 500px", "max-width: 800px")),
+            plan(("p { color: black", "h1 { color: black")),
+        ):
+            with self.subTest(candidate=candidate), self.assertRaises(ApiError):
+                revision.check_plan(candidate, base)
+
+        candidate = plan(("color: pink", "color: blue; content: '{课程}'"))
+        result = json.loads(revision.plan_artifacts(candidate, base)["implementation"])
+        self.assertEqual(result, {**code, "style": style.replace("color: pink", "color: blue; content: '{课程}'")})
+
+        new_rule = "h1:focus { color: green; }"
+        result = json.loads(revision.plan_artifacts(plan(("p { color: black; }", "p { color: black; }" + new_rule)), base)["implementation"])
+        self.assertEqual(result, {**code, "style": style.replace("p { color: black; }", "p { color: black; }" + new_rule)})
+
     def test_stateless_script_edit_blocks_existing_records_before_confirmation(self):
         spec = {"kind": "program", "title": "分账计算", "goal": "平均分摊", "storage": "none"}
         code = {"markup": "<output id='result'></output>",

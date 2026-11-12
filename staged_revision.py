@@ -29,6 +29,7 @@ WEBSITE_REVISION_PLAN_SYSTEM = """根据用户原话和当前网站源码提出�
 路径区分正文标题、页眉、页脚和其他区域。即使文案相同，也只选用户指明的位置。不要输出 HTML 或用源码补丁替换文案。
 若目标不明、有多个合理位置，或一次要求修改多个独立文案，返回 {"status":"clarify","question":"一个具体问题"}。
 用户明确要求改局部样式或交互时，可返回 {"status":"proposed","edits":[{"part":"style","before":"原片段","after":"替换片段"}]}，part 只允许 style 或 script。
+局部样式只修改一条现有 CSS 规则的声明，或新增一条规则。不要顺带调整其他选择器或响应式条件。
 before 必须逐字匹配基准源码的唯一片段，修改不能重叠，单个原片段和替换片段各不超过 400 字。保持未请求的文案、脚本、交互和结构。
 无法安全定位或执行的修改返回 {"status":"unsupported","reason":"具体限制"}。不要提交数据库、权限或数据写入。"""
 
@@ -461,8 +462,14 @@ def _check_plan(payload, base, requirement):
     if status == "proposed" and plan.keys() == {"status", "edits"} and base["kind"] in ("program", "website"):
         source = base["source"]
         implementation = apply_code_edits(source["implementation"], plan["edits"])
-        if base["kind"] == "website" and implementation["markup"] != source["implementation"]["markup"]:
-            raise ValueError("bad_website_text_edit")
+        if base["kind"] == "website":
+            original = source["implementation"]
+            if implementation["markup"] != original["markup"]:
+                raise ValueError("bad_website_text_edit")
+            if implementation["style"] != original["style"] and not staged_website.is_local_style_change(
+                original["style"], implementation["style"],
+            ):
+                raise ApiError(422, "revision_patch_invalid", "样式补丁应只修改或新增一条局部规则，旧版仍可用。")
         if implementation["script"] != source["implementation"]["script"] and not (
             base["kind"] == "website" or source["spec"].get("storage") == "none"
         ):

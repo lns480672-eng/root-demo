@@ -43,6 +43,46 @@ def validate(value):
         raise ValueError("bad_website_style_reference")
 
 
+STYLE_DELIMITERS = re.compile(r"""(?:"[^"]*"|'[^']*')|[{};'"]""")
+
+
+def style_rule_spans(style):
+    """Locate declaration blocks while treating quoted CSS strings as text."""
+    stack = []
+    spans = []
+    boundary = 0
+    for match in STYLE_DELIMITERS.finditer(style):
+        token = match.group()
+        if token == "{":
+            if stack:
+                stack[-1][2] = True
+            stack.append([boundary, match.end(), False])
+        elif token == "}":
+            if not stack:
+                return []
+            selector, start, nested = stack.pop()
+            if not nested and style[selector:start - 1].strip():
+                spans.append((selector, start, match.start()))
+        elif token != ";":
+            if len(token) == 1:
+                return []
+            continue
+        boundary = match.end()
+    return spans if not stack else []
+
+
+def is_local_style_change(original, updated):
+    old_rules = style_rule_spans(original)
+    new_rules = style_rule_spans(updated)
+    if len(old_rules) == len(new_rules):
+        for (_, old_start, old_end), (_, new_start, new_end) in zip(old_rules, new_rules):
+            if (original[:old_start] == updated[:new_start] and original[old_end:] == updated[new_end:]):
+                return True
+    if len(new_rules) == len(old_rules) + 1:
+        return any(updated[:selector] + updated[end + 1:] == original for selector, _, end in new_rules)
+    return False
+
+
 class TextTargetParser(HTMLParser):
     """Find plain text interiors without changing the source or its element bindings."""
 
