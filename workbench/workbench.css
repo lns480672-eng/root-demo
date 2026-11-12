@@ -201,6 +201,7 @@ button:enabled { cursor: pointer; }
     .elys-product :is(input, textarea) { font-size: 16px; }
   }
 
+#revision-plan-changes li { white-space: pre-wrap; overflow-wrap: anywhere; }
 .elys-product .elys-config { margin-block-start: 16px; color: var(--elys-muted); font-size: 13px; }
 .record-save-status {
   display: flex;

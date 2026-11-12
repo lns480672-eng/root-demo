@@ -17,6 +17,7 @@ from generate import ENDPOINT, MODEL, NoRedirects
 
 WALL_SECONDS = 30
 INPUT_BYTES = 24 * 1024
+REVISION_INPUT_BYTES = 96 * 1024
 OUTPUT_BYTES = 64 * 1024
 WORKER_COMMAND = (sys.executable, "-E", "-s", "-B", str(Path(__file__).resolve()))
 STAGES = {
@@ -282,7 +283,7 @@ def analyze(data, key, admit, *, record=None):
 
 
 def _worker():
-    payload = json.loads(sys.stdin.buffer.readline(INPUT_BYTES + 2))
+    payload = json.loads(sys.stdin.buffer.readline(REVISION_INPUT_BYTES + 2))
     request = urllib.request.Request(
         ENDPOINT, data=json.dumps(payload["body"], ensure_ascii=False).encode(),
         headers={"Authorization": "Bearer " + payload["key"], "Content-Type": "application/json"},

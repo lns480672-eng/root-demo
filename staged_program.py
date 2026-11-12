@@ -6,6 +6,7 @@ import re
 
 
 PLAN = ("spec", "implementation", "assemble")
+NO_STORAGE_MARKER = "<!--root:storage=none-->"
 MAX_MARKUP_BYTES = 8 * 1024
 MAX_SCRIPT_BYTES = 12 * 1024
 MAX_ARTIFACT_BYTES = 24 * 1024
@@ -93,7 +94,8 @@ def assemble(spec, implementation):
     markup, script = implementation["markup"], implementation["script"]
     alignment = ("#root-program{box-sizing:border-box;max-width:720px;margin-inline:auto}"
                  if spec.get("contentAlignment") == "center" else "")
-    return f'''<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
+    storage = NO_STORAGE_MARKER if spec.get("storage") == "none" else ""
+    return f'''<!doctype html>{storage}<html lang="zh-CN"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{title}</title><style>
 *{{box-sizing:border-box}}

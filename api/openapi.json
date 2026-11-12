@@ -4185,6 +4185,7 @@
             "items": {
               "type": "string",
               "enum": [
+                "revision-plan",
                 "spec",
                 "implementation",
                 "entry",
@@ -4203,6 +4204,7 @@
             "items": {
               "type": "string",
               "enum": [
+                "revision-plan",
                 "spec",
                 "implementation",
                 "entry",
@@ -4219,6 +4221,7 @@
               {
                 "type": "string",
                 "enum": [
+                  "revision-plan",
                   "spec",
                   "implementation",
                   "entry",

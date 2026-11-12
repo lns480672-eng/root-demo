@@ -135,6 +135,7 @@ export async function verifyStagedFlow(ctx) {
   await click('#add-record', board.context);
   assert.match(await inBoard('document.querySelector("[data-board-column=面试中] article").textContent'), /现场复核/);
 
+  await inBoard('document.querySelector("#export-backup").scrollIntoView({block:"center"})');
   await pointerClick('#export-backup', board.context);
   const backupFile = join(downloadPath, 'root-tool-backup.json');
   const backup = await until(async () => readFile(backupFile, 'utf8').catch(() => ''));
@@ -435,7 +436,8 @@ export async function verifyLedgerTheme(ctx) {
   assert.equal(await visible('#revision-confirm'), false);
   assert.equal((await versions()).current, 1);
   assert.deepEqual((await stored(old.id)).entries, before.entries);
-  assert.deepEqual(await balance(), beforeBalance);
+  assert.equal((await balance()).used, beforeBalance.used);
+  assert.equal((await balance()).totalUsed, beforeBalance.totalUsed + 1);
   await screenshot('ambiguous-color-asks-target');
   await generate('把颜色改成黄色');
   await until(() => visible('#revision-confirm'));
@@ -451,7 +453,7 @@ export async function verifyLedgerTheme(ctx) {
   assert.notEqual(history.items[0].commit, history.items[1].commit);
   assert.deepEqual((await stored(old.id)).entries, before.entries);
   assert.equal((await balance()).used, beforeBalance.used + 1);
-  assert.equal((await balance()).totalUsed, beforeBalance.totalUsed + 1);
+  assert.equal((await balance()).totalUsed, beforeBalance.totalUsed + 2);
   await cdp('Page.reload');
   await until(() => evaluate('document.documentElement.dataset.ready === "true"'));
   await click('#library-entry');
@@ -487,7 +489,8 @@ export async function verifyLedgerTheme(ctx) {
     await until(async () => !await visible('#revision-confirm') && !await visible('#requirement'));
     assert.equal((await versions()).current, 2);
     assert.deepEqual((await stored(old.id)).entries, before.entries);
-    assert.deepEqual(await balance(), beforeLocal);
+    assert.equal((await balance()).used, beforeLocal.used);
+    assert.equal((await balance()).totalUsed, beforeLocal.totalUsed + 1);
     for (const [request, version] of [[localChange, 3], ['新增一个可空文本字段「项目」', 4],
       ['把「面试中」分栏背景改为浅蓝', 5]]) {
       await click('#revise-tool');
@@ -496,12 +499,13 @@ export async function verifyLedgerTheme(ctx) {
       await screenshot('local-plan-v' + version);
       await click('#revision-confirm');
       await until(async () => (await versions()).current === version);
-      await until(() => visible('#revise-tool'));
+      await until(() => evaluate('document.querySelector("#revise-tool")?.checkVisibility()'
+        + ' && !document.querySelector("#revise-tool").disabled'));
       await screenshot('local-applied-v' + version);
     }
     assert.deepEqual((await stored(old.id)).entries, before.entries);
     assert.equal((await balance()).used, beforeLocal.used + 3);
-    assert.equal((await balance()).totalUsed, beforeLocal.totalUsed);
+    assert.equal((await balance()).totalUsed, beforeLocal.totalUsed + 4);
     await cdp('Page.reload');
     await until(() => evaluate('document.documentElement.dataset.ready === "true"'));
     await click('#library-entry');
@@ -524,7 +528,7 @@ export async function verifyStagedCalculator(ctx) {
     activeTool, accountA, root, evidence, screenshot } = ctx;
   const input = '做一个摄氏和华氏温度双向换算工具，保留两位小数。使用数字输入 id=temperature，' +
     '单位下拉 id=unit，选项值 celsius（输入摄氏）、fahrenheit（输入华氏），' +
-    '点击按钮 id=convert 进行换算，将可见结果写入 id=result。无效输入提示错误。无需联网。';
+    '点击按钮 id=convert 进行换算，将可见结果写入 id=result。无效输入提示错误。无需联网，不保存任何数据。';
   await cdp('Page.navigate', {url:base});
   await login(accountA, true);
   if (await visible('#workspace-guide')) await click('#guide-skip');
@@ -562,6 +566,46 @@ export async function verifyStagedCalculator(ctx) {
   assert.ok(evidence.runs.every(item => item.request_id && item.usage?.total_tokens > 0));
   evidence.tests.push('统一生成任务走两次真实模型调用并发布，100℃→212℉ 和 32℉→0℃ 均正确');
   await screenshot('staged-calculator');
+  if (process.env.ROOT_STAGED_SCRIPT_REVISION === '1') {
+    await evaluate(`window.addEventListener('message', event => {
+      if (event.data?.type === 'stateless-test-received') window.statelessTestReceived = true;
+    })`);
+    await evaluate(`(() => {
+      const token = document.scripts[0].textContent.match(/[0-9a-f-]{36}/)?.[0];
+      if (!token) throw new Error('missing bootstrap token');
+      parent.postMessage({ type:'storage', token, entries:[['forged','record']] }, '*');
+      parent.postMessage({ type:'stateless-test-received' }, '*');
+    })()`, tool.context);
+    await until(() => evaluate('window.statelessTestReceived === true'));
+    assert.deepEqual((await appRequest('/api/tools/' + tool.id)).body.entries, []);
+    const requirement = '改实际换算逻辑，摄氏和华氏的结果都只保留一位小数。保留所有输入与操作。';
+    await click('#revise-tool');
+    await generate(requirement);
+    const task = await until(() => findStagedTask(appRequest, requirement));
+    await until(async () => {
+      const current = (await appRequest(taskPath + task.id)).body.task;
+      if (['failed', 'unsupported'].includes(current.state)) {
+        throw new Error('脚本修改未生成候选 ' + current.reason + ' / ' + (current.guidance || ''));
+      }
+      return visible('#revision-confirm');
+    });
+    assert.match(await evaluate('document.querySelector("#revision-plan-changes").textContent'), /交互脚本/);
+    assert.equal((await appRequest('/api/tools/' + tool.id + '/versions')).body.current, 1);
+    await click('#revision-confirm');
+    const revised = await until(async () => {
+      const current = await activeTool().catch(() => null);
+      return current?.id === tool.id && current.loader !== tool.loader && current;
+    });
+    for (const [value, unit, expected] of [['100','celsius',/212\.0(?!\d)/], ['32','fahrenheit',/(^|\D)0\.0(?!\d)/]]) {
+      await evaluate('document.getElementById("temperature").value=' + JSON.stringify(value) +
+        ';document.getElementById("unit").value=' + JSON.stringify(unit) + ';', revised.context);
+      await click('#convert', revised.context);
+      assert.match(await evaluate('document.querySelector("#result").textContent', revised.context), expected);
+    }
+    assert.equal((await appRequest('/api/tools/' + tool.id + '/versions')).body.current, 2);
+    evidence.tests.push({id:'TEST-007-script', sameTool:true, precision:1, originalConversionsPreserved:true});
+    await screenshot('staged-calculator-revised');
+  }
 }
 
 export async function verifyStagedRevision(ctx) {
@@ -607,7 +651,8 @@ export async function verifyStagedRevision(ctx) {
   await until(async () => /重新查看并确认/.test(await evaluate('document.querySelector("#staged-reason").textContent')));
   assert.equal(await currentVersion(), 1);
   assert.equal((await activeTool()).loader, old.loader);
-  assert.deepEqual(await trial(), before);
+  assert.equal((await trial()).used, before.used);
+  assert.equal((await trial()).totalUsed, before.totalUsed + 1);
   await screenshot('program-concurrent-confirmation-rejected');
   await click('#staged-preview');
   await until(() => visible('#revision-confirm'));
@@ -799,7 +844,7 @@ with sqlite3.connect(sys.argv[1]) as db:
   assert.equal((await balance()).used, beforeRevise.used + 1);
   const receipts = (await readFile(join(root, 'runs', 'staged-usage.jsonl'), 'utf8')).trim().split('\n').map(JSON.parse);
   assert.deepEqual(receipts.filter(item => item.task === failed.id).map(item => item.stage), ['spec','implementation']);
-  assert.equal(receipts.filter(item => item.task === current.id).length, 0, '定点文案在宿主执行');
+  assert.deepEqual(receipts.filter(item => item.task === current.id).map(item => item.stage), ['revision-plan']);
   assert.notEqual(tool.id, old.id);
   evidence.tests.push({id:'TEST-018-09', historyLimitSeparate:true, failedPersonalCharge:0,
     newTool:tool.id, revisedTool:old.id, originalRepository:originalRepo, savedOperation:current.id});

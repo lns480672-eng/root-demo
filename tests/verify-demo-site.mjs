@@ -192,4 +192,11 @@ export async function verifyDemoSite(ctx) {
     brand:{category:'brand', task:brand.task, tool:brand.id, menu:brandMenu, reopened:true, narrowWidth:390},
     personal:2, dispatched:4});
   await screenshot('demo-site-brand-reopened');
+
+  const lateNavigation = probeUrl + '/demo-site-late-navigation';
+  await page(restoredBrand, 'setTimeout(() => { location.href = ' + JSON.stringify(lateNavigation) + '; }, 0)');
+  await new Promise(resolve => setTimeout(resolve, 1000));
+  assert.deepEqual(probeRequests, probeControls, '预览尝试导航时不能访问外部资源');
+  assert.equal(await evaluate('location.href'), hostLocation, '预览尝试导航时工作台仍留在原页');
+  evidence.tests.push({id:'CHG-046-late-navigation', outboundBlocked:true, workbenchRetained:true});
 }

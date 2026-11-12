@@ -29,6 +29,247 @@ def encode(value):
 
 
 class RevisionContextTests(unittest.TestCase):
+    def test_generated_revision_patch_applies_to_fixed_code_without_replacing_other_parts(self):
+        source = {"markup": "<label>原价</label><button>计算</button>", "script": "void 0;"}
+        edits = [{"part": "markup", "before": ">原价<", "after": ">原始金额<"}]
+        patched = revision.apply_code_edits(source, edits)
+        self.assertEqual(patched, {**source, "markup": "<label>原始金额</label><button>计算</button>"})
+        self.assertEqual(source["markup"], "<label>原价</label><button>计算</button>")
+
+        for rejected in (
+            [{"part": "markup", "before": ">不存在<", "after": ">原始金额<"}],
+            [{"part": "markup", "before": ">", "after": " invalid>"}],
+            edits + [{"part": "markup", "before": "原价</label>", "after": "冲突</label>"}],
+            [{"part": "markup", "before": source["markup"], "after": "<p>整体重写</p>"}],
+            [{"part": "storage", "before": "one", "after": "two"}],
+        ):
+            with self.subTest(rejected=rejected), self.assertRaises(ApiError):
+                revision.apply_code_edits(source, rejected)
+
+    def test_code_plan_preserves_dom_bindings_and_displays_full_edit(self):
+        spec = {"kind": "program", "title": "分账计算", "goal": "平均分摊"}
+        note = "原" * 104 + "\n尾部"
+        code = {"markup": '<button id="split" data-op="add" class="primary">计算</button><p>' + note + "</p>",
+                "script": "document.getElementById('split').onclick = () => {};"}
+        base = revision.prepare({"spec.json": encode(spec), "implementation.json": encode(code)})
+        plan = {"status": "proposed", "edits": [
+            {"part": "markup", "before": note, "after": "新" * 105 + "\n完整尾部"},
+        ]}
+        files = {"revision-plan.json": encode(plan)}
+        changes = revision.describe(base, files, "", [])
+        self.assertIn(note, changes[0])
+        self.assertIn(plan["edits"][0]["after"], changes[0])
+        for before, after in (
+            ('id="split"', 'id="other"'),
+            ('data-op="add"', 'data-op="remove"'),
+            ('class="primary"', 'class="secondary"'),
+            ('<button id="split" data-op="add" class="primary">计算</button>', ""),
+            (note, "新" * 401),
+            (note, "\u202e隐藏"),
+            (note, '<button id="split">重复</button>'),
+            ('<button id="split" data-op="add" class="primary">计算</button>',
+             '<form><button id="split" data-op="add" class="primary">计算</button></form>'),
+        ):
+            plan["edits"][0].update(before=before, after=after)
+            with self.subTest(before=before), self.assertRaises(ApiError):
+                revision.plan_artifacts(encode(plan), base)
+
+    def test_website_rejects_markup_changes_across_independent_elements(self):
+        spec = {"kind": "website", "layout": "brand", "title": "纸舟木作坊", "goal": "展示课程"}
+        code = {
+            "format": "website-code-v1",
+            "markup": '<header><span class="logo">纸舟木作坊</span></header>'
+                      '<main><h1>纸舟木作坊</h1></main><footer><p>纸舟木作坊</p></footer>',
+            "style": "",
+            "script": "void 0;",
+        }
+        base = revision.prepare({"spec.json": encode(spec), "implementation.json": encode(code)})
+        separate_edits = [
+            {"part": "markup", "before": '<span class="logo">纸舟木作坊</span>',
+             "after": '<span class="logo">纸舟手作工作室</span>'},
+            {"part": "markup", "before": "<h1>纸舟木作坊</h1>", "after": "<h1>纸舟手作工作室</h1>"},
+        ]
+        wide_edit = [{"part": "markup", "before": "<h1>纸舟木作坊</h1></main><footer><p>纸舟木作坊",
+                      "after": "<h1>纸舟手作工作室</h1></main><footer><p>纸舟手作工作室"}]
+        for edits in (separate_edits, wide_edit):
+            with self.subTest(edits=edits), self.assertRaises((ApiError, ValueError)):
+                revision.check_plan(encode({"status": "proposed", "edits": edits}), base)
+
+    def test_website_text_edit_uses_the_selected_target_and_escapes_new_text(self):
+        spec = {"kind": "website", "layout": "brand", "title": "纸舟木作坊", "goal": "展示课程"}
+        markup = '<header><span class="logo">纸舟 &amp; 木作</span></header>\r\n' \
+                 '<main id="home"><h1>  纸舟 &amp; 木作  </h1></main><footer><p>纸舟 &amp; 木作</p></footer>'
+        code = {"format": "website-code-v1", "markup": markup, "style": "", "script": "void 0;"}
+        base = revision.prepare({"spec.json": encode(spec), "implementation.json": encode(code)})
+        plan = {"status": "proposed", "text_edit": {"target": "t2", "text": "手作 < 初学"}}
+        with patch.object(assistant_model, "_exchange", return_value=envelope(json.dumps(plan))) as exchange:
+            payload = revision.provide("revision-plan", "改首页主标题", {}, "fixture-key", Mock(), None, base=base)
+        request = json.loads(json.loads(exchange.call_args.args[0])["body"]["messages"][1]["content"])
+        targets = request["revision_source"]["text_targets"]
+        self.assertEqual([target["text"] for target in targets], ["纸舟 & 木作"] * 3)
+        self.assertEqual(targets[1]["path"], "main [home] > h1")
+        actual = json.loads(revision.plan_artifacts(payload, base)["implementation"])
+        self.assertEqual(actual, {**code, "markup": markup.replace(
+            '<h1>  纸舟 &amp; 木作  </h1>', '<h1>  手作 &lt; 初学  </h1>',
+        )})
+        self.assertIn("main [home] > h1", revision.describe(base, {"revision-plan.json": payload}, "", [])[0])
+        for edit in (
+            {"target": "unknown", "text": "新文案"},
+            {"target": "t2", "text": "新文案", "after": "额外补丁"},
+        ):
+            with self.subTest(edit=edit), self.assertRaises(ValueError):
+                revision.check_plan(encode({"status": "proposed", "text_edit": edit}), base)
+
+    def test_website_style_revision_accepts_valid_self_closing_void_elements(self):
+        spec = {"kind": "website", "layout": "landing", "title": "课程介绍", "goal": "展示课程"}
+        code = {
+            "format": "website-code-v1",
+            "markup": '<main><h1>课程介绍</h1><p>课表<br/>地点</p><input type="text"/></main>',
+            "style": "h1 { color: red; }",
+            "script": "void 0;",
+        }
+        base = revision.prepare({"spec.json": encode(spec), "implementation.json": encode(code)})
+        plan = {"status": "proposed", "edits": [
+            {"part": "style", "before": "color: red", "after": "color: blue"},
+        ]}
+        with patch.object(assistant_model, "_exchange", return_value=envelope(json.dumps(plan))):
+            payload = revision.provide("revision-plan", "把主标题文字颜色换成蓝色", {}, "fixture-key",
+                                       Mock(), None, base=base)
+        actual = json.loads(revision.plan_artifacts(payload, base)["implementation"])
+        self.assertEqual(actual, {**code, "style": "h1 { color: blue; }"})
+
+    def test_website_style_revision_keeps_changes_inside_one_existing_rule(self):
+        spec = {"kind": "website", "layout": "landing", "title": "课程介绍", "goal": "展示课程"}
+        style = "h1 { color: red; } p { color: black; } @media (max-width: 500px) { h1 { color: pink; } }"
+        code = {"format": "website-code-v1", "markup": "<h1>课程介绍</h1><p>地点</p>",
+                "style": style, "script": "void 0;"}
+        base = revision.prepare({"spec.json": encode(spec), "implementation.json": encode(code)})
+
+        def plan(*changes):
+            return encode({"status": "proposed", "edits": [
+                {"part": "style", "before": before, "after": after} for before, after in changes
+            ]})
+
+        for candidate in (
+            plan((style, "* { display: none; }")),
+            plan(("color: red", "color: blue"), ("color: black", "color: green")),
+            plan(("color: red; } p { color: black", "color: blue; } p { color: green")),
+            plan(("max-width: 500px", "max-width: 800px")),
+            plan(("p { color: black", "h1 { color: black")),
+            plan(("color: red", "color: red; content: '\n} * { display: none } p { content: '")),
+            plan(("color: red", "color: red; content: '\r} * { display: none } p { content: '")),
+            plan(("color: red", "color: red; content: '\f} * { display: none } p { content: '")),
+            plan(("p { color: black; }", "p { color: black; } i { content: '\n} * {display:none} i { content: ' }")),
+        ):
+            with self.subTest(candidate=candidate), self.assertRaises(ApiError):
+                revision.check_plan(candidate, base)
+
+        candidate = plan(("color: pink", "color: blue; content: '{课程}'"))
+        result = json.loads(revision.plan_artifacts(candidate, base)["implementation"])
+        self.assertEqual(result, {**code, "style": style.replace("color: pink", "color: blue; content: '{课程}'")})
+
+        new_rule = "h1:focus { color: green; }"
+        result = json.loads(revision.plan_artifacts(plan(("p { color: black; }", "p { color: black; }" + new_rule)), base)["implementation"])
+        self.assertEqual(result, {**code, "style": style.replace("p { color: black; }", "p { color: black; }" + new_rule)})
+
+    def test_stateless_script_edit_blocks_existing_records_before_confirmation(self):
+        spec = {"kind": "program", "title": "分账计算", "goal": "平均分摊", "storage": "none"}
+        code = {"markup": "<output id='result'></output>",
+                "script": "document.getElementById('result').textContent = (12 / 3).toFixed(0);"}
+        base = revision.prepare({"spec.json": encode(spec), "implementation.json": encode(code)})
+        plan = {"status": "proposed", "edits": [
+            {"part": "script", "before": ".toFixed(0)", "after": ".toFixed(2)"},
+        ]}
+        files = {"revision-plan.json": encode(plan)}
+        candidate = json.loads(revision.plan_artifacts(files["revision-plan.json"], base)["implementation"])
+        self.assertIn(".toFixed(2)", candidate["script"])
+        self.assertEqual(candidate["markup"], code["markup"])
+        self.assertIn("脚本", revision.describe(base, files, "", [])[0])
+        with self.assertRaises(ApiError):
+            revision.describe(base, files, "", [["existing", "record"]])
+        base["source"]["spec"]["storage"] = "tool"
+        with self.assertRaises(ApiError):
+            revision.plan_artifacts(encode(plan), base)
+
+    def test_revision_plan_sends_original_requirement_and_fixed_source_to_model(self):
+        spec = {"kind": "program", "title": "分账计算", "goal": "平均分摊"}
+        code = {"markup": "<label>原价</label><button>计算</button>", "script": "void 0;"}
+        base = revision.prepare({"spec.json": encode(spec), "implementation.json": encode(code)})
+        requirement = "帮使用者看到输入框就知道填的是起始金额"
+        plan = {"status": "proposed", "edits": [
+            {"part": "markup", "before": ">原价<", "after": ">起始金额<"},
+        ]}
+        with patch.object(assistant_model, "_exchange", return_value=envelope(json.dumps(plan))) as exchange:
+            artifact = revision.provide("revision-plan", requirement, {}, "fixture-key", Mock(), None, base=base)
+        self.assertEqual(json.loads(artifact), plan)
+        request = json.loads(json.loads(exchange.call_args.args[0])["body"]["messages"][1]["content"])
+        self.assertEqual(request["requirement"], requirement)
+        self.assertEqual(request["revision_source"]["source"]["implementation"], code)
+
+    def test_revision_plans_accept_valid_code_larger_than_the_old_context_limit(self):
+        spec = {"kind": "program", "title": "分账计算", "goal": "平均分摊"}
+        code = {
+            "markup": "<label>原价</label><p>" + "a" * 7800 + "</p>",
+            "script": "void 0; /* " + "b" * 11000 + " */",
+        }
+        base = revision.prepare({"spec.json": encode(spec), "implementation.json": encode(code)})
+        plan = {"status": "proposed", "edits": [
+            {"part": "markup", "before": ">原价<", "after": ">起始金额<"},
+        ]}
+        with patch.object(assistant_model, "_exchange", return_value=envelope(json.dumps(plan))) as exchange:
+            revision.provide("revision-plan", "把原价改为起始金额", {}, "fixture-key", Mock(), None, base=base)
+        self.assertIn("b" * 11000, json.loads(exchange.call_args.args[0])["body"]["messages"][1]["content"])
+
+    def test_ambiguous_time_field_requires_clarification_even_when_model_guesses_date(self):
+        base = revision.prepare(artifacts())
+        plan = {"status": "proposed", "operation": {
+            "kind": "add_field", "label": "观测日期", "type": "date",
+        }}
+        cases = (
+            ("给观察台账加一个观测时间", "clarify"),
+            ("增加一个可空时间字段", "clarify"),
+            ("加一个选填的时间字段", "clarify"),
+            ("新增必填时间字段", "clarify"),
+            ("把开始日期改成必填，再加一个时间字段", "clarify"),
+            ("在备注文本后面加一个时间字段", "clarify"),
+            ("加一个时间字段，同时分到第二组", "clarify"),
+            ("加一个日期字段，再加一个时间字段", "clarify"),
+            ("给观察台账加一个观测时间，记录日期", "proposed"),
+            ("给观察台账加一个日期字段，叫观测时间", "proposed"),
+        )
+        for requirement, status in cases:
+            with self.subTest(requirement=requirement), patch.object(
+                assistant_model, "_exchange", return_value=envelope(json.dumps(plan))
+            ) as exchange:
+                payload = revision.provide("revision-plan", requirement, {}, "fixture-key", Mock(), None, base=base)
+                exchange.assert_called_once()
+                result = json.loads(payload)
+                self.assertEqual(result["status"], status)
+                if status == "clarify":
+                    self.assertIn("日期", result["question"])
+                    self.assertIn("时长", result["question"])
+                    self.assertIn("几点", result["question"])
+
+    def test_model_adds_nullable_field_using_host_identity_and_impact(self):
+        base = revision.prepare(artifacts())
+        plan = {"status": "proposed", "operation": {
+            "kind": "add_field", "label": "下次检查日", "type": "date",
+        }}
+        output = revision.plan_artifacts(encode(plan), base)
+        spec = json.loads(output["spec"])
+        new = spec["fields"][-1]
+        self.assertEqual(new, {"id": "field_1", "label": "下次检查日", "type": "date",
+                               "required": False, "options": []})
+        self.assertEqual(spec["fields"][:-1], base["source"]["spec"]["fields"])
+        self.assertIn(new["id"], json.loads(output["entry"])["form"])
+        changes = revision.describe(base, {"revision-plan.json": encode(plan)}, "",
+                                    [["root-structured-records-v1", '[{"id":1},{"id":2}]']])
+        self.assertIn("已有记录 2 条", " ".join(changes))
+        self.assertIn("显示为空", " ".join(changes))
+        plan["operation"]["required"] = True
+        with self.assertRaises(ValueError):
+            revision.plan_artifacts(encode(plan), base)
+
     def test_title_and_csv_patches_reuse_unmodified_checkpoint_artifacts(self):
         original = artifacts()
         base = revision.prepare(original)
