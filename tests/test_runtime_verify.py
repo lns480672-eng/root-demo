@@ -145,10 +145,10 @@ class RuntimeVerifierTests(unittest.TestCase):
     def test_website_tabs_without_distinct_panels_must_change_visible_content(self):
         for controls in ("", ' aria-controls="detail"'):
             markup = (
-                '<!doctype html><section><div role="tablist">'
+                '<!doctype html><main><section><div role="tablist">'
                 f'<button role="tab" aria-selected="true"{controls}>第一档</button>'
                 f'<button role="tab" aria-selected="false"{controls}>第二档</button>'
-                '</div><article id="detail">集合时间</article></section>'
+                '</div></section><article id="detail">集合时间</article><p id="status"></p></main>'
             )
             handlers = """
                 for (const tab of document.querySelectorAll('button')) {
@@ -165,6 +165,10 @@ class RuntimeVerifierTests(unittest.TestCase):
                 with self.assertRaises(ApiError) as result:
                     verify((markup + "<script>" + noop + "</script>").encode(), [], website=True)
                 self.assertEqual(result.exception.code, "staged_runtime_failed")
+                if controls:
+                    status_only = handlers.replace("ACTION", "document.querySelector('#status').textContent = tab.textContent;")
+                    with self.assertRaises(ApiError):
+                        verify((markup + "<script>" + status_only + "</script>").encode(), [], website=True)
                 working = handlers.replace("ACTION", """
                     setTimeout(() => {
                         document.querySelector('#detail').textContent =
