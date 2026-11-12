@@ -839,6 +839,88 @@ try {
   evidence.tests.push({ id: 'TEST-002', result: 'passed', tool: first.id, record: sample,
     reloadedDocument: true, isolationFixtureChecked: !live });
   await screenshot('record-restored');
+
+  if (process.argv.includes('--record-save-status')) {
+    stage = 'TEST-002-A/B/C record saving acknowledgement';
+    const saveState = () => evaluate('document.querySelector("#record-save-status")?.dataset.state || ""');
+    const add = async name => {
+      await type('#book', name, restored.context);
+      await click('form button', restored.context);
+      assert.match(await evaluate('document.querySelector("#list").innerText', restored.context), new RegExp(name));
+    };
+    const intercept = () => evaluate(`(() => {
+      const fetch = window.fetch;
+      window.saveReleases = [];
+      window.fetch = async (path, options) => {
+        if (options?.method !== 'POST' || !String(path).endsWith('/data')) return fetch(path, options);
+        const outcome = await new Promise(resolve => window.saveReleases.push(resolve));
+        if (outcome === 'rejected') {
+          return new Response(JSON.stringify({code:'revision_conflict', message:'模拟明确拒绝'}), {
+            status:409, headers:{'Content-Type':'application/json'}
+          });
+        }
+        const response = await fetch(path, options);
+        if (outcome === 'unknown') throw new TypeError('模拟服务端已写入但回执丢失');
+        return response;
+      };
+    })()`);
+    const waitForRequest = count => until(() => evaluate('window.saveReleases.length === ' + count));
+    const release = (index, result) => evaluate('window.saveReleases[' + index + '](' + JSON.stringify(result) + ')');
+    const assertStatus = async (state, text) => {
+      assert.equal(await saveState(), state);
+      assert.match(await evaluate('document.querySelector("#record-save-status").textContent'), text);
+    };
+
+    await intercept();
+    await add('已保存队列第一条');
+    await waitForRequest(1);
+    await assertStatus('pending', /正在保存.*请等保存完成再刷新/s);
+    await screenshot('record-saving-desktop');
+    await add('已保存队列第二条');
+    await release(0, 'saved');
+    await waitForRequest(2);
+    await assertStatus('pending', /正在保存/);
+    await cdp('Emulation.setDeviceMetricsOverride', {width:390, height:844, deviceScaleFactor:1, mobile:true});
+    assert.equal(await visible('#record-save-status'), true);
+    await screenshot('record-saving-390');
+    await release(1, 'saved');
+    await until(async () => (await saveState()) === 'saved');
+    await assertStatus('saved', /已保存.*我的工具/s);
+    await screenshot('record-saved-390');
+
+    async function reopen() {
+      const before = await evaluate('performance.timeOrigin');
+      await cdp('Page.reload', {ignoreCache:true});
+      await until(() => evaluate('performance.timeOrigin !== ' + before + ' && document.documentElement.dataset.ready === "true"'));
+      restored = await openLatest();
+      assert.equal(restored.id, first.id);
+      const books = await evaluate('document.querySelector("#list").innerText', restored.context);
+      assert.match(books, /星际旅行手记.*已保存队列第一条.*已保存队列第二条/s);
+      return books;
+    }
+
+    await reopen();
+    await intercept();
+    await add('明确失败不保留');
+    await waitForRequest(1);
+    await release(0, 'rejected');
+    await until(async () => (await saveState()) === 'failed');
+    await assertStatus('failed', /保存失败.*这次更改尚未保存/s);
+    await screenshot('record-save-rejected');
+    assert.doesNotMatch(await reopen(), /明确失败不保留/);
+
+    await intercept();
+    await add('回执丢失可核对');
+    await waitForRequest(1);
+    await release(0, 'unknown');
+    await until(async () => (await saveState()) === 'unknown');
+    await assertStatus('unknown', /无法确认是否已保存.*我的工具/s);
+    await screenshot('record-save-unknown');
+    assert.match(await reopen(), /回执丢失可核对/);
+    evidence.tests.push({id:'TEST-002-A/B/C', queueWaitedForLatest:true, savedRowsReopened:true,
+      rejectedWriteAbsent:true, missingAcknowledgementSeparated:true, widths:[1440,390]});
+  }
+
   if (liveRevision) {
     stage = 'real DeepSeek revision preserves data and adds an operable filter';
     await evaluate(`(() => {

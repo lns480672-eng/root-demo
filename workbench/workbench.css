@@ -202,6 +202,24 @@ button:enabled { cursor: pointer; }
   }
 
 .elys-product .elys-config { margin-block-start: 16px; color: var(--elys-muted); font-size: 13px; }
+.record-save-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 8px;
+  margin: 12px 0;
+  padding: 8px 10px;
+  border: 1px solid #d8dff4;
+  border-radius: 8px;
+  background: #eef1fc;
+  color: #2c4485;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+.record-save-status[hidden] { display: none; }
+.record-save-status[data-state="saved"] { border-color: #cddfd6; background: #edf5ef; color: #22573a; }
+.record-save-status[data-state="failed"],
+.record-save-status[data-state="unknown"] { border-color: #eccfc9; background: #fcf0ee; color: #8a2b24; }
 .preview-frames { position: relative; min-width: 0; }
 .preview-frames iframe {
   display: block;

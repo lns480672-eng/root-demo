@@ -913,6 +913,23 @@ function warnStorage(message) {
   notice.hidden = !message;
 }
 
+function showRecordSave(frame, state) {
+  if (frame !== active) return;
+  const notice = byId('record-save-status');
+  if (notice.dataset.state === state) return;
+  const messages = {
+    pending: ['正在保存…', '请等保存完成再刷新。'],
+    saved: ['已保存', '刷新后可从「我的工具」找回记录。'],
+    failed: ['保存失败', '这次更改尚未保存，刷新前请先记下。'],
+    unknown: ['无法确认是否已保存', '请先记下本次更改，再从「我的工具」重开核对。'],
+  };
+  const [title, detail] = messages[state] ?? ['', ''];
+  notice.dataset.state = state;
+  byId('record-save-title').textContent = title;
+  byId('record-save-detail').textContent = detail;
+  notice.hidden = !title;
+}
+
 function serializeEntries(entries, limit) {
   if (!Array.isArray(entries) || !entries.every(
     entry => Array.isArray(entry) && entry.length === 2 && entry.every(value => typeof value === 'string'),
@@ -1008,21 +1025,20 @@ function initializeFrame(entries, token, parentOrigin, limit, backup) {
 }
 
 function enqueueSave(frame, snapshot) {
+  if (frame.saveFailed) return;
+  const sequence = ++frame.recordSaveSequence;
+  showRecordSave(frame, 'pending');
   frame.saveTail = frame.saveTail.then(async () => {
     if (frame.saveFailed) return;
-    if (frame === active) warnStorage('正在保存…');
     try {
       const saved = await workspaceApi('/api/tools/' + frame.id + '/data', {
         revision: frame.revision, version: frame.version, entries: JSON.parse(snapshot),
       }, publicationTimeout);
       frame.revision = saved.revision;
-      if (frame === active) warnStorage('');
+      if (sequence === frame.recordSaveSequence) showRecordSave(frame, 'saved');
     } catch (error) {
       frame.saveFailed = true;
-      if (frame === active) {
-        warnStorage(error.code === 'transport' ? '无法确认记录是否已保存，请从「我的工具」重新打开核对。'
-          : error.message + ' 本次修改未保存。');
-      }
+      showRecordSave(frame, error.code === 'transport' ? 'unknown' : 'failed');
     }
   });
 }
@@ -1094,13 +1110,19 @@ window.addEventListener('message', event => {
       if (frame === active) enqueueSave(frame, snapshot);
     } catch {
       if (frame === candidate) frame.reject(new Error('无法保存新工具的数据，旧工具已保留。'));
-      else warnStorage('这次更改未能保存，刷新后可能丢失。');
+      else {
+        frame.recordSaveSequence += 1;
+        showRecordSave(frame, 'failed');
+      }
     }
   } else if (type === 'backup-restore') {
     enqueueBackupRestore(frame, event.data);
   } else if (type === 'quota') {
     if (frame === candidate) frame.reject(new Error('新工具数据超出浏览器存储限制。'));
-    else warnStorage('工具存储空间已满，这次更改未保存。');
+    else {
+      frame.recordSaveSequence += 1;
+      showRecordSave(frame, 'failed');
+    }
   } else if (frame === candidate && type === 'ready') {
     frame.resolve();
   } else if (frame === candidate && type === 'init-error') {
@@ -1413,7 +1435,7 @@ async function openTool(tool, restore = false) {
   const frame = {
     id: tool.id, token: crypto.randomUUID(), iframe, snapshot: original,
     storageLimit, backup,
-    revision: tool.revision, version: tool.version, saveTail: Promise.resolve(), saveFailed: false,
+    revision: tool.revision, version: tool.version, saveTail: Promise.resolve(), saveFailed: false, recordSaveSequence: 0,
   };
   const old = active;
   candidate = frame;
@@ -1463,6 +1485,7 @@ async function openTool(tool, restore = false) {
     iframe.removeAttribute('tabindex');
     resumeStorage(frame);
     warnStorage('');
+    showRecordSave(frame, '');
     restored = restore;
     if (frame.snapshot !== savedSnapshot) enqueueSave(frame, frame.snapshot);
     if (old?.id !== frame.id) showToolHistory(false);
