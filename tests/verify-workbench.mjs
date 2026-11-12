@@ -1209,6 +1209,13 @@ try {
         assert.equal(await visible('.elys-composer'), false);
         await click('#assistant-exit');
         assert.equal(await visible('.elys-preview'), true);
+        assert.equal(await evaluate(`(() => {
+          const composer = document.querySelector('.elys-composer').getBoundingClientRect();
+          const preview = document.querySelector('.elys-preview').getBoundingClientRect();
+          return preview.width > 0 && preview.height > 0 && (${width} === 390
+            ? Math.abs(preview.left - composer.left) <= 1 && preview.top >= composer.bottom
+            : preview.left >= composer.right);
+        })()`), true, '同屏显示的预览与编辑区分开布局');
         assert.equal(await evaluate('document.querySelector("#requirement").value'), '保持这条修改草稿');
         assert.equal(await evaluate('editing'), true);
         assert.equal(await evaluate('document.querySelector("#guide-start").disabled'), true);
@@ -1430,7 +1437,7 @@ try {
           return {
             mode: workspace.dataset.mode,
             columns: columns.length,
-            positiveWidths: columns.every(width => width > 0),
+            usableContentTracks: columns.slice(1).every(width => width >= 200),
             composerArea: getComputedStyle(composer).gridArea,
             previewArea: getComputedStyle(preview).gridArea,
             areas: style.gridTemplateAreas,
@@ -1445,7 +1452,7 @@ try {
         })()`);
         assert.deepEqual(layout, {
           mode:'compose', columns:width === 390 ? 2 : 3,
-          positiveWidths:true, composerArea:'composer', previewArea:'content',
+          usableContentTracks:true, composerArea:'composer', previewArea:'content',
           areas:width === 390 ? '"sidebar composer" "sidebar content"' : '"sidebar composer content"',
           navigation:true, progress:true, fits:true,
         });
