@@ -156,6 +156,10 @@ class RevisionContextTests(unittest.TestCase):
             plan(("color: red; } p { color: black", "color: blue; } p { color: green")),
             plan(("max-width: 500px", "max-width: 800px")),
             plan(("p { color: black", "h1 { color: black")),
+            plan(("color: red", "color: red; content: '\n} * { display: none } p { content: '")),
+            plan(("color: red", "color: red; content: '\r} * { display: none } p { content: '")),
+            plan(("color: red", "color: red; content: '\f} * { display: none } p { content: '")),
+            plan(("p { color: black; }", "p { color: black; } i { content: '\n} * {display:none} i { content: ' }")),
         ):
             with self.subTest(candidate=candidate), self.assertRaises(ApiError):
                 revision.check_plan(candidate, base)

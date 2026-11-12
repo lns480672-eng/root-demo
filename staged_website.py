@@ -43,7 +43,7 @@ def validate(value):
         raise ValueError("bad_website_style_reference")
 
 
-STYLE_DELIMITERS = re.compile(r"""(?:"[^"]*"|'[^']*')|[{};'"]""")
+STYLE_DELIMITERS = re.compile(r"""(?:"[^"\n\r\f]*"|'[^'\n\r\f]*')|[{};'"]""")
 
 
 def style_rule_spans(style):
