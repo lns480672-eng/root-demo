@@ -125,7 +125,7 @@ if len(sys.argv) == 2 or sys.argv[2] == "bootstrap":
     store.register({"username":"staged-operator","password":"test-only-password","invite":store.create_invite()})
 advance = StagedJobs.advance_row
 def interrupt_revision_plan(self, db, row, oid, stage, content):
-    marker = self.runs / "interrupted-revision-plan"
+    marker = self.runs / ("interrupted-revision-plan-" + row["id"])
     if stage == "revision-plan" and "计划保存中断探针" in row["requirement"] and not marker.exists():
         marker.touch()
         raise ValueError("fixture after git ref update")
@@ -876,6 +876,42 @@ if (fields.result.textContent !== '40.00') process.exit(1);
         candidate = self.request(path + "/candidate", {}, owner)[1]
         self.assertIn('<p id="caption">两数之和</p>', candidate["html"])
         self.assertEqual(self.request("/api/trial", auth=owner)[1]["generation"]["totalUsed"], previous_calls + 1)
+
+    def test_revision_resume_preserves_terminal_plan_and_existing_tool(self):
+        owner = self.account("resume-terminal-revision")
+        created = self.gen(owner, "计算分账")[1]["task"]["id"]
+        self.wait_task(owner, created, "complete")
+        path = "/api/staged/" + created
+        original = self.request(path + "/candidate", {}, owner)[1]
+        entries = [["history", "old-calculation"]]
+        data = {**original["staged"], "toolId":original["id"], "entries":entries}
+        self.assert_preview_verified(path, data, owner)
+        self.assertEqual(self.request(path + "/publish", data, owner)[0], 200)
+        tool = "/api/tools/" + original["id"]
+        before = self.request("/api/trial", auth=owner)[1]["generation"]
+
+        for index, (requirement, reason, guidance) in enumerate((
+            ("那个页面居中", "revision_clarification_required", "移动某个控件"),
+            ("把工具内容区垂直居中", "staged_unsupported", "目前支持整个内容区水平居中"),
+        ), 1):
+            with self.subTest(reason=reason):
+                revised = self.request(tool + "/revise", {
+                    "version":1, "requirement":requirement + "（计划保存中断探针）", "requestId":uuid4().hex,
+                }, owner)[1]["task"]["id"]
+                self.wait_task(owner, revised, "failed")
+                revision_path = "/api/staged/" + revised
+                status, response, _ = self.request(revision_path + "/resume", {}, owner)
+                self.assertEqual(status, 202)
+                task = response["task"]
+                self.assertEqual((task["state"], task["reason"], task["resumable"]),
+                                 ("unsupported", reason, False))
+                self.assertIn(guidance, task["guidance"])
+                self.assertEqual(self.request(revision_path + "/resume", {}, owner)[1]["task"], task)
+                self.assertEqual(self.request(revision_path + "/candidate", {}, owner)[0], 409)
+                current = self.request(tool, auth=owner)[1]
+                self.assertEqual((current["version"], current["entries"]), (1, entries))
+                balance = self.request("/api/trial", auth=owner)[1]["generation"]
+                self.assertEqual((balance["used"], balance["totalUsed"]), (before["used"], before["totalUsed"] + index))
 
     def test_script_revision_rechecks_record_free_snapshot_at_confirmation(self):
         owner = self.account("stateless-script-revision")

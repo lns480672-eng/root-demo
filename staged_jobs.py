@@ -421,7 +421,7 @@ class StagedJobs:
             if row["fence"]:
                 self.recover(db, row)
                 row = self.row(db, identifier)
-                if row["state"] == "complete":
+                if row["next_stage"] >= len(self.steps(row)):
                     return None
             elif row["head"] == ZERO:
                 self.repo(row).mkdir(parents=True, mode=0o700, exist_ok=True)
