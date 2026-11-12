@@ -123,6 +123,28 @@ class RuntimeVerifierTests(unittest.TestCase):
             });
         </script>""").encode(), [], website=True)
 
+    def test_website_tabs_can_rerender_and_update_panels_asynchronously(self):
+        source = artifact("""
+            const host = document.createElement('div');
+            document.body.append(host);
+            const render = selected => {
+                host.innerHTML = '<div role="tablist">' + ['a', 'b'].map(id =>
+                    '<button id="' + id + '" role="tab" aria-controls="shared panel-' + id +
+                    '" aria-selected="' + (id === selected) + '">' + id + '</button>').join('') +
+                    '</div><p id="shared">共同说明</p><p id="panel-a">内容 A</p><p id="panel-b">内容 B</p>';
+                for (const tab of host.querySelectorAll('button')) tab.onclick = () => render(tab.id);
+                setTimeout(() => {
+                    host.querySelector('#panel-a').hidden = selected !== 'a';
+                    host.querySelector('#panel-b').hidden = selected !== 'b';
+                }, 60);
+            };
+            render('a');
+        """)
+        verify(source, [], website=True)
+
+    def test_website_without_custom_tabs_keeps_native_controls(self):
+        verify(b'<!doctype html><details><summary>FAQ</summary><p>Answer</p></details>', [], website=True)
+
     def test_missing_browser_cannot_authorize_a_candidate(self):
         with patch.dict(os.environ, {"ROOT_VERIFY_CHROME": "/path/to/nonexistent/chromium"}), \
                 self.assertRaises(ApiError) as result:

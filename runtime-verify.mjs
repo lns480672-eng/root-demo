@@ -186,41 +186,56 @@ async function candidateFrame() {
 }
 
 async function verifyWebsiteTabs() {
-  const visible = node => node?.checkVisibility({visibilityProperty:true}) && node.getClientRects().length > 0;
+  const groupSelector = '[role="tablist"]';
+  const visible = node => node?.checkVisibility({visibilityProperty:true});
   const tabs = group => [...group.querySelectorAll('[role="tab"]')].filter(
-    tab => tab.closest('[role="tablist"]') === group && visible(tab)
+    tab => tab.closest(groupSelector) === group && visible(tab)
       && !tab.matches(':disabled, [aria-disabled="true"]'),
   );
-  const selected = group => tabs(group).filter(tab => tab.getAttribute('aria-selected') === 'true');
-  let remaining = 8;
-  for (const group of document.querySelectorAll('[role="tablist"]')) {
-    const items = tabs(group);
+  const selected = items => items.filter(tab => tab.getAttribute('aria-selected') === 'true');
+  const panelIds = tab => (tab.getAttribute('aria-controls') || '').trim().split(/\s+/).filter(Boolean);
+  const panelsMatch = (group, items, active) => {
+    const activePanels = new Set(panelIds(active));
+    for (const id of new Set(items.flatMap(panelIds))) {
+      const panel = document.getElementById(id);
+      if (!panel || panel.contains(group) || visible(panel) !== activePanels.has(id)) return false;
+    }
+    return true;
+  };
+  const budget = performance.now() + 2500;
+  for (const [position, original] of [...document.querySelectorAll(groupSelector)].entries()) {
+    const findGroup = () => original.id
+      ? document.getElementById(original.id)
+      : document.querySelectorAll(groupSelector)[position];
+    const items = tabs(original);
     if (items.length < 2) continue;
-    const initial = selected(group);
+    const initial = selected(items);
     if (initial.length !== 1) return false;
     const first = items.indexOf(initial[0]);
-    for (let step = 1; step <= items.length && remaining > 0; step++) {
+    for (let step = 1; step <= items.length; step++) {
+      if (performance.now() >= budget) return false;
       const index = (first + step) % items.length;
-      const target = tabs(group)[index];
-      if (!target || target.getAttribute('aria-selected') === 'true') continue;
-      remaining--;
+      const findTab = current => items[index].id
+        ? current.find(tab => tab.id === items[index].id)
+        : current[index];
+      const group = findGroup();
+      const target = group && findTab(tabs(group));
+      if (!target) return false;
       target.click();
-      const deadline = performance.now() + 200;
-      let active;
-      do {
-        active = selected(group);
-        if (active.length === 1 && active[0] === tabs(group)[index]) break;
+      const changed = () => {
+        const currentGroup = findGroup();
+        if (!currentGroup) return false;
+        const current = tabs(currentGroup);
+        const active = selected(current);
+        return active.length === 1 && active[0] === findTab(current)
+          && panelsMatch(currentGroup, current, active[0]);
+      };
+      const deadline = Math.min(budget, performance.now() + 200);
+      while (!changed() && performance.now() < deadline) {
         await new Promise(resolve => setTimeout(resolve, 25));
-      } while (performance.now() < deadline);
-      if (active.length !== 1 || active[0] !== tabs(group)[index]) return false;
-      const activePanel = active[0].getAttribute('aria-controls');
-      if (activePanel && !visible(document.getElementById(activePanel))) return false;
-      for (const tab of tabs(group)) {
-        const controls = tab.getAttribute('aria-controls');
-        if (controls && controls !== activePanel && visible(document.getElementById(controls))) return false;
       }
+      if (!changed()) return false;
     }
-    if (remaining === 0) break;
   }
   return true;
 }
