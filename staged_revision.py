@@ -346,16 +346,37 @@ def apply_code_edits(implementation, edits):
 
 TIME_FIELD_QUESTION = "这个时间字段要记录日期、持续时长，还是几点几分？请明确含义后再生成修改方案。"
 TIME_LABEL = re.compile(r"时间|时刻|时长|日期|\b(?:time|date|timestamp|duration)\b", re.I)
-AMBIGUOUS_TIME = re.compile(r"时间|时刻|time field|timestamp", re.I)
+AMBIGUOUS_TIME = re.compile(r"时间|时刻|时点|\b(?:time|timestamp)\b", re.I)
 EXPLICIT_TIME = re.compile(
-    r"日期|年月日|哪[一]?天|哪[一]?日|时长|耗时|用时|分钟|小时|秒钟|几点|时分|时:分|文本|"
-    r"\b(?:date|duration|minutes?|hours?|text)\b", re.I,
+    r"日期|年月日|哪[一]?天|哪[一]?日|时长|耗时|用时|分钟|小时|秒钟|几点|时分字段|时:分|文本|"
+    r"(?<![A-Za-z])(?:date|duration|minutes?|hours?|text)(?![A-Za-z])", re.I,
 )
+FIELD_ADDITION = re.compile(r"新增|添加|增加|补充|加(?:上|入)?|\badd\b", re.I)
+FIELD_CLAUSE = re.compile(
+    r"[，,。；;！？!?\n]+|(?:再|并且|并|同时|另外)\s*(?=把|将|新增|添加|增加|加|改|删除|移除)"
+)
+FIELD_DETAIL = re.compile(r"^(?:记录|保存|填写|用|按|类型|格式|叫|名为|称为|日期|时长|具体几点|in |as )", re.I)
+
+
+def unresolved_time_field(requirement):
+    descriptions = []
+    active = False
+    for clause in FIELD_CLAUSE.split(requirement):
+        clause = clause.strip()
+        if action := FIELD_ADDITION.search(clause):
+            descriptions.append(clause[action.end():])
+            active = True
+        elif active and FIELD_DETAIL.match(clause):
+            descriptions[-1] += "，" + clause
+        elif clause:
+            active = False
+    return any(AMBIGUOUS_TIME.search(text) and not EXPLICIT_TIME.search(text)
+               for text in (descriptions or [requirement]))
 
 
 def time_field_question(plan, requirement):
     """Require the user's meaning before applying a model-inferred time field type."""
-    if not isinstance(plan, dict) or not AMBIGUOUS_TIME.search(requirement) or EXPLICIT_TIME.search(requirement):
+    if not isinstance(plan, dict) or not unresolved_time_field(requirement):
         return None
     if plan.get("status") == "clarify" and plan.keys() == {"status", "question"}:
         message = plan["question"]
