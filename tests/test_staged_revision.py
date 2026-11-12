@@ -120,6 +120,24 @@ class RevisionContextTests(unittest.TestCase):
             with self.subTest(edit=edit), self.assertRaises(ValueError):
                 revision.check_plan(encode({"status": "proposed", "text_edit": edit}), base)
 
+    def test_website_style_revision_accepts_valid_self_closing_void_elements(self):
+        spec = {"kind": "website", "layout": "landing", "title": "课程介绍", "goal": "展示课程"}
+        code = {
+            "format": "website-code-v1",
+            "markup": '<main><h1>课程介绍</h1><p>课表<br/>地点</p><input type="text"/></main>',
+            "style": "h1 { color: red; }",
+            "script": "void 0;",
+        }
+        base = revision.prepare({"spec.json": encode(spec), "implementation.json": encode(code)})
+        plan = {"status": "proposed", "edits": [
+            {"part": "style", "before": "color: red", "after": "color: blue"},
+        ]}
+        with patch.object(assistant_model, "_exchange", return_value=envelope(json.dumps(plan))):
+            payload = revision.provide("revision-plan", "把主标题文字颜色换成蓝色", {}, "fixture-key",
+                                       Mock(), None, base=base)
+        actual = json.loads(revision.plan_artifacts(payload, base)["implementation"])
+        self.assertEqual(actual, {**code, "style": "h1 { color: blue; }"})
+
     def test_stateless_script_edit_blocks_existing_records_before_confirmation(self):
         spec = {"kind": "program", "title": "分账计算", "goal": "平均分摊", "storage": "none"}
         code = {"markup": "<output id='result'></output>",

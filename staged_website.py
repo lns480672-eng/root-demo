@@ -65,6 +65,10 @@ class TextTargetParser(HTMLParser):
         descriptor = f"{tag} [{label[:40]}]" if label else tag
         self.stack.append((tag, descriptor, self.source_offset() + len(self.get_starttag_text())))
 
+    def handle_startendtag(self, tag, attrs):
+        if tag not in staged_program.VOID_ELEMENTS:
+            raise ValueError("bad_website_text_target")
+
     def handle_endtag(self, tag):
         if not self.stack or self.stack[-1][0] != tag:
             raise ValueError("bad_website_text_target")
