@@ -6,6 +6,10 @@ import assistant_model
 import staged_blueprint
 
 
+RECOVERY_REQUIREMENT = "做一个单页官网原型，有上午和下午可切换的日程。"
+recovery_generated = False
+
+
 def website_code(layout):
     navigation = ""
     if layout == "brand":
@@ -60,6 +64,28 @@ def demo_site_provider(stage, requirement, prior, key, admit, record, *, categor
     assert layout in {"landing", "brand"}
     spec = {"kind": "website", "layout": layout, "title": "山野咖啡", "goal": "品牌介绍和咖啡菜单"}
     content = {"spec": spec, "implementation": website_code(layout)}[stage]
+    if stage == "implementation" and requirement == RECOVERY_REQUIREMENT:
+        global recovery_generated
+        content["markup"] += """
+<div role="tablist">
+  <button id="morning-tab" role="tab" aria-selected="true" aria-controls="morning">上午</button>
+  <button id="afternoon-tab" role="tab" aria-selected="false" aria-controls="afternoon">下午</button>
+</div>
+<p id="morning" role="tabpanel">签到</p>
+<p id="afternoon" role="tabpanel" hidden>制作</p>"""
+        if recovery_generated:
+            content["script"] += """
+const tabs = root.querySelectorAll('[role=tab]');
+for (const tab of tabs) tab.addEventListener('click', () => {
+  for (const item of tabs) {
+    item.setAttribute('aria-selected', String(item === tab));
+    document.getElementById(item.getAttribute('aria-controls')).hidden = item !== tab;
+  }
+});
+"""
+        else:
+            content["script"] = "void 0;"
+            recovery_generated = True
 
     def exchange(payload, reserve, **_):
         reserve()
