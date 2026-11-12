@@ -566,6 +566,17 @@ export async function verifyStagedCalculator(ctx) {
   evidence.tests.push('统一生成任务走两次真实模型调用并发布，100℃→212℉ 和 32℉→0℃ 均正确');
   await screenshot('staged-calculator');
   if (process.env.ROOT_STAGED_SCRIPT_REVISION === '1') {
+    await evaluate(`window.addEventListener('message', event => {
+      if (event.data?.type === 'stateless-test-received') window.statelessTestReceived = true;
+    })`);
+    await evaluate(`(() => {
+      const token = document.scripts[0].textContent.match(/[0-9a-f-]{36}/)?.[0];
+      if (!token) throw new Error('missing bootstrap token');
+      parent.postMessage({ type:'storage', token, entries:[['forged','record']] }, '*');
+      parent.postMessage({ type:'stateless-test-received' }, '*');
+    })()`, tool.context);
+    await until(() => evaluate('window.statelessTestReceived === true'));
+    assert.deepEqual((await appRequest('/api/tools/' + tool.id)).body.entries, []);
     const requirement = '改实际换算逻辑，摄氏和华氏的结果都只保留一位小数。保留所有输入与操作。';
     await click('#revise-tool');
     await generate(requirement);
