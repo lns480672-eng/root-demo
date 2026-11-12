@@ -129,6 +129,9 @@ class RevisionContextTests(unittest.TestCase):
         }}
         cases = (
             ("给观察台账加一个观测时间", "clarify"),
+            ("增加一个可空时间字段", "clarify"),
+            ("加一个选填的时间字段", "clarify"),
+            ("新增必填时间字段", "clarify"),
             ("给观察台账加一个日期字段，叫观测时间", "proposed"),
         )
         for requirement, status in cases:

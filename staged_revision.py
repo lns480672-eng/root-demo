@@ -348,7 +348,7 @@ TIME_FIELD_QUESTION = "这个时间字段要记录日期、持续时长，还是
 TIME_LABEL = re.compile(r"时间|时刻|时长|日期|\b(?:time|date|timestamp|duration)\b", re.I)
 AMBIGUOUS_TIME = re.compile(r"时间|时刻|time field|timestamp", re.I)
 EXPLICIT_TIME = re.compile(
-    r"日期|年月日|哪[一]?天|哪[一]?日|时长|耗时|用时|分钟|小时|秒钟|几点|时分|时:分|文本|时间型|(?:可空|选填|必填)(?:的)?\s*时间字段|"
+    r"日期|年月日|哪[一]?天|哪[一]?日|时长|耗时|用时|分钟|小时|秒钟|几点|时分|时:分|文本|"
     r"\b(?:date|duration|minutes?|hours?|text)\b", re.I,
 )
 
