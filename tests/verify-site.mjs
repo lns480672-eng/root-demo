@@ -234,7 +234,7 @@ try {
   await cdp('Network.enable');
   await until(() => evaluate('document.readyState === "complete"'));
 
-  for (const width of [1360, 390, 320]) {
+  for (const width of [1920, 1440, 1024, 1023, 761, 760, 390, 320]) {
     await cdp('Emulation.setDeviceMetricsOverride', { width, height: 850, deviceScaleFactor: 1, mobile: false });
     const layout = await evaluate(`(() => {
       window.scrollTo({top: 0, behavior: 'instant'});
@@ -245,6 +245,41 @@ try {
         ['需求助手', '直接开发', '我的工具'].every(name => document.body.textContent.includes(name))];
     })()`);
     assert.deepEqual(layout, [workbench + '/', workbench + '/', true, true, true]);
+    const geometry = await evaluate(`(() => {
+      const bounds = selector => document.querySelector(selector).getBoundingClientRect();
+      const bands = [...document.querySelectorAll('.page, .intro, .chapter, .site-footer')];
+      const content = ['.intro > header', '.hero > div', '.pipeline', '#root-site-about > div',
+        '.site-footer > .brand'].map(selector => bounds(selector).left);
+      const columns = selector => getComputedStyle(document.querySelector(selector))
+        .gridTemplateColumns.split(' ').map(parseFloat);
+      return {
+        fullWidth: bands.every(band => {
+          const {left, right} = band.getBoundingClientRect();
+          return Math.abs(left) < 1 && Math.abs(right - innerWidth) < 1;
+        }),
+        inset: Math.round(content[0]),
+        aligned: content.every(left => Math.abs(left - content[0]) < 1),
+        hero: columns('.hero'),
+        trial: columns('.pipeline'),
+        about: columns('#root-site-about'),
+        trialLabel: document.querySelector('.hero .primary').textContent.trim(),
+        trialAnswer: document.querySelector('.faq details p').textContent,
+      };
+    })()`);
+    assert.ok(geometry.fullWidth, `${width} px 的背景和章节分隔应铺满视口`);
+    assert.ok(geometry.aligned, `${width} px 的导航、首屏、试玩、关于和页脚应对齐`);
+    const expectedInset = {1920: 128, 1440: 102, 390: 23}[width];
+    if (expectedInset) assert.equal(geometry.inset, expectedInset);
+    const columns = width <= 760 ? 1 : 2;
+    assert.equal(geometry.hero.length, columns);
+    assert.equal(geometry.trial.length, columns);
+    assert.equal(geometry.about.length, columns);
+    if (width >= 1024) {
+      const [left, right] = geometry.hero;
+      assert.ok(Math.abs(left / (left + right) - 0.45) < 0.01, '宽屏首屏应按约 45:55 排列');
+    }
+    assert.equal(geometry.trialLabel, '试用示例');
+    assert.match(geometry.trialAnswer, /点击「试用示例」即可在本页操作交付跟进板，无需登录/);
     const announcement = await evaluate(`(() => {
       const notice = document.querySelector('#root-site-roadmap');
       if (!notice?.checkVisibility()) return null;
@@ -323,6 +358,16 @@ try {
   assert.deepEqual([sample.focused, sample.filtered, sample.remaining, sample.faqOpened, sample.storage],
     [true, 2, '还有 1 项未完成', true, 0]);
   assert.ok(sample.resources.every(url => url === site + '/favicon.ico'), '试用不得请求模型或账号接口');
+  for (const width of [390, 760, 761, 1023, 1024, 1440, 1920]) {
+    await cdp('Emulation.setDeviceMetricsOverride', { width, height: 850, deviceScaleFactor: 1, mobile: false });
+    const state = await evaluate(`[
+      document.querySelector('[data-count]').textContent,
+      document.querySelectorAll('[data-item]:not([hidden])').length,
+      document.querySelectorAll('[data-item] input:checked').length,
+      document.querySelector('.faq details').open
+    ]`);
+    assert.deepEqual(state, ['还有 1 项未完成', 1, 2, true], `${width} px 重排应保留试玩和问答状态`);
+  }
   assert.equal(await browser.reloadCookieCheck(site + '/'), false, '未登录的官网对照请求不带工作台会话');
   await until(() => evaluate('document.querySelector("[data-count]")?.textContent === "还有 2 项未完成"'));
 
@@ -432,7 +477,7 @@ try {
     assert.match(await returnPage.evaluate('document.querySelector("#list").textContent', restored.context), new RegExp(record));
     console.log('TEST-003 local HTTPS passed · one-off invitation · proxy boundaries and large CSV save · browser generated, operated and restored one tool');
   }
-  console.log('TEST-014 passed · capability FAQ at 1360/390/320 px · guest trial · anonymous and returning entry · workbench session absent from both site document requests');
+  console.log('TEST-014 passed · full-width layout and FAQ at 1920/1440/1024/1023/761/760/390/320 px · trial state across resize · anonymous and returning entry · workbench session absent from both site document requests');
 } finally {
   for (const socket of sockets) socket.close();
   await Promise.all(children.map(async child => {
