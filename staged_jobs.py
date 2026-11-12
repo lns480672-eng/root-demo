@@ -137,6 +137,9 @@ class StagedJobs:
         guidance = REVISION_GUIDANCE.get(row["failure"])
         if state == "unsupported" and guidance:
             result["guidance"] = guidance
+        if state == "unsupported" and steps == ("revision-plan",) and done:
+            decision = json.loads(self.read(row, row["head"], "revision-plan.json"))
+            result["guidance"] = decision.get("question") or decision["reason"]
         if row["category"] != "auto":
             result["category"] = row["category"]
         if db is not None:
@@ -189,11 +192,12 @@ class StagedJobs:
                 row = self.store.owned_tool(db, {"id":owner}, tool_id)
                 self.store.require_version(version, row["version"])
                 repo_id, head, source_digest, context = self.revision_source(db, row)
+            steps = json.dumps(["revision-plan"]) if tool_id and context["kind"] in ("program", "website") else None
             db.execute("""
-                INSERT INTO staged_jobs(id,owner,request_id,requirement,head,expires,updated_at,repo_id,category)
-                VALUES (?,?,?,?,?,?,?,?,?)
+                INSERT INTO staged_jobs(id,owner,request_id,requirement,head,expires,updated_at,repo_id,category,plan)
+                VALUES (?,?,?,?,?,?,?,?,?,?)
             """, (identifier, owner, request_id, requirement, head,
-                  self.clock() + self.retain_seconds, self.clock(), repo_id, category))
+                  self.clock() + self.retain_seconds, self.clock(), repo_id, category, steps))
             if tool_id:
                 db.execute("INSERT INTO staged_revisions VALUES (?,?,?,?,?)",
                            (identifier, tool_id, version, source_digest, encoded(context).decode()))
@@ -299,6 +303,7 @@ class StagedJobs:
         try:
             if source:
                 files = self.files(source)
+                files.pop("revision-plan.json", None)
                 require_digest = digest(files["app.html"])
                 if require_digest != source["digest"]:
                     raise ValueError("revision source mismatch")
@@ -350,16 +355,33 @@ class StagedJobs:
 
     def advance_row(self, db, row, oid, stage, content):
         next_stage = row["next_stage"] + 1
-        steps = self.blueprint.stage_plan(content) if stage == "spec" else self.steps(row)
-        complete = stage == "assemble"
-        db.execute("UPDATE staged_jobs SET next_stage=?,head=?,state=?,lease_until=?,updated_at=?,plan=? WHERE id=?",
-                   (next_stage, oid, "complete" if complete else "running",
-                    0 if complete else self.clock() + self.lease_seconds, self.clock(), json.dumps(steps), row["id"]))
+        steps = self.steps(row)
+        state = "complete" if stage == "assemble" else "running"
+        failure = None
+        if stage == "revision-plan":
+            decision = json.loads(content)["status"]
+            if decision == "proposed":
+                steps = ("revision-plan", "spec", "implementation", "assemble")
+            else:
+                state = "unsupported"
+                failure = "revision_clarification_required" if decision == "clarify" else "staged_unsupported"
+        elif stage == "spec":
+            stages = self.blueprint.stage_plan(content)
+            steps = ("revision-plan", *stages) if steps[0] == "revision-plan" else stages
+        db.execute("UPDATE staged_jobs SET next_stage=?,head=?,state=?,lease_until=?,updated_at=?,plan=?,failure=? WHERE id=?",
+                   (next_stage, oid, state, self.clock() + self.lease_seconds if state == "running" else 0,
+                    self.clock(), json.dumps(steps), failure, row["id"]))
 
     def check_revision(self, db, row, stage, content, prior):
         revision = self.revision_record(db, row["id"])
         if revision:
-            self.revision.check(stage, content, json.loads(revision["context"]), row["requirement"], previous=prior)
+            context = json.loads(revision["context"])
+            if stage == "revision-plan":
+                self.revision.check_code_plan(content, context)
+            elif "revision-plan.json" in prior:
+                self.revision.check_planned_code(stage, content, context, prior)
+            else:
+                self.revision.check(stage, content, context, row["requirement"], previous=prior)
         elif stage == "spec" and self.revision is not None:
             if self.blueprint.stage_plan(content) == self.blueprint.TABLE_PLAN:
                 raise ValueError("unexpected table specification")
@@ -374,7 +396,8 @@ class StagedJobs:
         prior = self.files(row)
         name = filename(stage)
         content = self.read(row, tip, name)
-        self.blueprint.validate(stage, content, prior)
+        if stage != "revision-plan":
+            self.blueprint.validate(stage, content, prior)
         self.check_revision(db, row, stage, content, prior)
         parent = [] if row["head"] == ZERO else [row["head"]]
         parents = self.git(row, "rev-list", "--parents", "-n", "1", tip).decode().split()[1:]
@@ -425,7 +448,8 @@ class StagedJobs:
             db.execute("INSERT INTO staged_dispatches VALUES (?,?,?,?)", (dispatch_id, identifier, index, fence))
 
     def checkpoint(self, identifier, fence, index, stage, content, prior):
-        self.blueprint.validate(stage, content, prior)
+        if stage != "revision-plan":
+            self.blueprint.validate(stage, content, prior)
         with self.store.connection(write=True) as db:
             row = self.worker(db, identifier, fence, index)
             self.check_revision(db, row, stage, content, prior)
@@ -466,7 +490,7 @@ class StagedJobs:
                     content = provider(stage, row["requirement"], prior,
                                        lambda: self.dispatch(identifier, fence, index, dispatch_id), record)
                 self.checkpoint(identifier, fence, index, stage, content, prior)
-                if stage == "assemble":
+                if stage == "assemble" or (stage == "revision-plan" and json.loads(content)["status"] != "proposed"):
                     return
                 index += 1
         except (ApiError, OSError, ValueError, subprocess.SubprocessError, sqlite3.Error) as error:
@@ -572,9 +596,13 @@ class StagedJobs:
 
     def check_revision_candidate(self, row, revision, html):
         context = json.loads(revision["context"])
+        files = self.files(row)
+        if "revision-plan.json" in files:
+            self.revision.check_planned_code("assemble", html, context, files)
+            return
         local = self.revision.planned_local_revision(context, row["requirement"])
         if local or context["kind"] == "ledger":
-            self.revision.check("assemble", html, context, row["requirement"], previous=self.files(row))
+            self.revision.check("assemble", html, context, row["requirement"], previous=files)
         elif context["kind"] == "table":
             self.revision.check("spec", self.files(row)["spec.json"], context, row["requirement"])
 

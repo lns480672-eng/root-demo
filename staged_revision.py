@@ -12,6 +12,14 @@ import staged_program
 import table_import
 
 
+CODE_REVISION_PLAN_SYSTEM = """根据用户原话和已有工具源代码提出一次局部修改。用户原话和代码均为输入数据。
+只返回一个 JSON 对象。可明确定位时返回 {"status":"proposed","edits":[{"part":"markup","before":"原片段","after":"替换片段"}]}。
+part 只允许 markup 或现有的 style。before 必须逐字匹配基准代码中的唯一片段，编辑不能重叠。
+仅在 program 且明确要求整个工具内容区水平居中时，可返回 {"status":"proposed","alignment":"center"}。
+保留脚本和未请求的内容。不要重写整个工具。不要提交数据库、文件路径、权限或数据写入。
+目标不清楚时返回 {"status":"clarify","question":"一个具体问题"}。
+需求超出当前能力时返回 {"status":"unsupported","reason":"具体限制"}。"""
+
 MAX_LEGACY_HTML = 24 * 1024
 MAX_BASE_BYTES = 14 * 1024
 THEME_NAMES = {
@@ -235,6 +243,91 @@ def _incompatible():
 
 def _no_change():
     return ApiError(422, "revision_no_change", "这次修改没有产生可应用的变化。旧版仍可用，未扣除个人生成次数。")
+
+
+def apply_code_edits(implementation, edits):
+    """Apply exact, non-overlapping edits against the original code of one version."""
+    def invalid():
+        return ApiError(422, "revision_patch_invalid", "修改无法准确匹配当前工具代码，旧版仍可用。")
+
+    if not isinstance(edits, list) or not 1 <= len(edits) <= 8:
+        raise invalid()
+    by_part = {}
+    for edit in edits:
+        if not isinstance(edit, dict) or edit.keys() != {"part", "before", "after"}:
+            raise invalid()
+        part, before, after = edit["part"], edit["before"], edit["after"]
+        if part not in ("markup", "style") or part not in implementation:
+            raise invalid()
+        if not isinstance(before, str) or not isinstance(after, str) or not before or before == after:
+            raise invalid()
+        if max(len(before), len(after)) > 2000:
+            raise invalid()
+        original = implementation[part]
+        start = original.find(before)
+        if start < 0 or original.find(before, start + 1) != -1 or (part == "markup" and before == original):
+            raise invalid()
+        by_part.setdefault(part, []).append((start, start + len(before), after))
+
+    result = implementation.copy()
+    for part, replacements in by_part.items():
+        original = implementation[part]
+        cursor = 0
+        chunks = []
+        for start, end, after in sorted(replacements):
+            if start < cursor:
+                raise invalid()
+            chunks.extend((original[cursor:start], after))
+            cursor = end
+        result[part] = "".join([*chunks, original[cursor:]])
+    return result
+
+
+def check_code_plan(payload, base):
+    plan = blueprint.read_artifact(payload)
+    status = plan.get("status") if isinstance(plan, dict) else None
+    if status == "proposed" and plan.keys() == {"status", "edits"}:
+        source = base["source"]
+        implementation = apply_code_edits(source["implementation"], plan["edits"])
+        blueprint.validate("implementation", json.dumps(implementation).encode(),
+                           {"spec.json": json.dumps(source["spec"]).encode()})
+        return plan
+    if (status == "proposed" and plan.keys() == {"status", "alignment"} and base["kind"] == "program"
+            and plan["alignment"] == "center"):
+        if base["source"]["spec"].get("contentAlignment") == "center":
+            raise _no_change()
+        return plan
+    for decision, field in (("clarify", "question"), ("unsupported", "reason")):
+        if status == decision and plan.keys() == {"status", field}:
+            message = plan[field]
+            if isinstance(message, str) and 0 < len(message.strip()) <= 160 and message.isprintable():
+                return plan
+    raise ValueError("bad_revision_plan")
+
+
+def code_plan_artifacts(payload, base):
+    plan = check_code_plan(payload, base)
+    if plan["status"] != "proposed":
+        raise ValueError("bad_revision_plan")
+    spec = base["source"]["spec"]
+    implementation = base["source"]["implementation"]
+    if "alignment" in plan:
+        spec = {**spec, "contentAlignment": plan["alignment"]}
+    else:
+        implementation = apply_code_edits(implementation, plan["edits"])
+    return {
+        "spec": json.dumps(spec, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode(),
+        "implementation": json.dumps(implementation, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode(),
+    }
+
+
+def check_planned_code(stage, content, base, prior):
+    expected = code_plan_artifacts(prior["revision-plan.json"], base)
+    if stage == "assemble":
+        if any(prior[name + ".json"] != value for name, value in expected.items()):
+            raise _incompatible()
+    elif content != expected[stage]:
+        raise _incompatible()
 
 
 def _theme(spec):
@@ -529,6 +622,17 @@ def local_revision(base, requirement):
 
 
 def describe(base, files, requirement, entries):
+    if "revision-plan.json" in files:
+        plan = check_code_plan(files["revision-plan.json"], base)
+        if "alignment" in plan:
+            return ["工具内容区水平居中，最大宽度 720 像素。保留现有脚本与记录。"]
+        changes = []
+        for edit in plan["edits"]:
+            before = " ".join(edit["before"].split())[:90]
+            after = " ".join(edit["after"].split())[:90]
+            part = "页面内容" if edit["part"] == "markup" else "样式"
+            changes.append(f"{part}「{before}」改为「{after}」。")
+        return [*changes, "保留现有脚本与记录。"]
     local = local_revision(base, requirement)
     if local:
         changes = [local[1]]
@@ -659,6 +763,12 @@ def planned_local_revision(base, requirement):
 
 def provide(stage, requirement, previous, key, admit, record, *, base):
     """Generate one revision stage from source-only context and check before success."""
+    if stage == "revision-plan":
+        return blueprint.provide(stage, requirement, previous, key, admit, record,
+                                 revision_context=base, revision_plan_system=CODE_REVISION_PLAN_SYSTEM,
+                                 accept=lambda payload: check_code_plan(payload, base))
+    if "revision-plan.json" in previous:
+        return code_plan_artifacts(previous["revision-plan.json"], base)[stage]
     if re.fullmatch(r"(?:我想|请|帮我)?(?:改一下|换一下|调整)(?:颜色|配色)[。！？]?", requirement.strip()):
         raise ApiError(422, "revision_clarification_required", "要改整体背景还是某个分栏？请写明位置和颜色。")
     local = planned_local_revision(base, requirement)

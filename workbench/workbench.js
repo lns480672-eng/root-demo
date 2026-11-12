@@ -44,7 +44,7 @@ let trial = null;
 let trialRequest = 0;
 const validStagedId = id => typeof id === 'string' && /^[a-f0-9]{32}$/.test(id);
 const stagedStepLabels = {
-  spec: '理解需求', implementation: '生成工具', entry: '设计录入和明细',
+  'revision-plan': '理解修改', spec: '理解需求', implementation: '生成工具', entry: '设计录入和明细',
   filters: '设计筛选', summary: '设计统计', export: '设计导出', assemble: '组装工具',
 };
 const stagedStates = {

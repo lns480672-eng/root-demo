@@ -123,6 +123,25 @@ if len(sys.argv) == 2 or sys.argv[2] == "bootstrap":
     store.register({"username":"staged-operator","password":"test-only-password","invite":store.create_invite()})
 def revise(stage, requirement, prior, key, admit, record, *, base):
     assert "persisted-marker" not in json.dumps(base, ensure_ascii=False)
+    if stage == "revision-plan":
+        def exchange(payload, dispatch, **kwargs):
+            request = json.loads(json.loads(payload)["body"]["messages"][1]["content"])
+            assert request["requirement"] == requirement
+            assert "persisted-marker" not in json.dumps(request, ensure_ascii=False)
+            dispatch()
+            if "垂直居中" in requirement:
+                plan = {"status":"unsupported","reason":"目前支持整个内容区水平居中。"}
+            elif "水平居中" in requirement and "工具内容区" in requirement or "左右居中" in requirement:
+                plan = {"status":"proposed","alignment":"center"}
+            elif "居中" in requirement:
+                plan = {"status":"clarify","question":"要把工具内容区水平居中，还是移动某个控件？"}
+            else:
+                plan = {"status":"proposed","edits":[{"part":"markup","before":">相加<","after":">两数之和<"}]}
+            return {"status": 200, "body": json.dumps({"choices": [
+                {"finish_reason": "stop", "message": {"content": json.dumps(plan, ensure_ascii=False)}}
+            ]})}
+        with patch.object(assistant_model, "_exchange", exchange):
+            return staged_revision.provide(stage, requirement, prior, key, admit, record, base=base)
     if base["kind"] == "table":
         def exchange(payload, dispatch, **kwargs):
             message = json.loads(payload)["body"]["messages"][-1]["content"]
@@ -729,9 +748,9 @@ class StagedHTTP(StagedHTTPFixture):
             ("登记读书清单", "增加一个阅读时间", "revision_field_clarification_required",
              "新增可空整数型字段「阅读时长（分钟）」", "可空整数", "新增可空时间字段「阅读时间」",
              "revision_field_type_unsupported", "时分"),
-            ("计算分账", "那个页面居中", "revision_alignment_clarification_required",
+            ("计算分账", "那个页面居中", "revision_clarification_required",
              "把工具内容区水平居中", "水平居中", "把工具内容区垂直居中",
-             "revision_alignment_unsupported", "水平居中"),
+             "staged_unsupported", "水平居中"),
         )
         for index, (request, original, reason, clarified, change, unsupported, limit_reason, limit_copy) in enumerate(cases):
             with self.subTest(original=original):
@@ -766,7 +785,9 @@ class StagedHTTP(StagedHTTPFixture):
                 _, outside = revise(unsupported, "unsupported")
                 self.assertEqual(outside["reason"], limit_reason)
                 self.assertIn(limit_copy, outside["guidance"])
-                self.assertEqual(self.request("/api/trial", auth=owner)[1]["generation"], quota)
+                after_questions = self.request("/api/trial", auth=owner)[1]["generation"]
+                self.assertEqual(after_questions["used"], quota["used"])
+                self.assertEqual(after_questions["totalUsed"] - quota["totalUsed"], 0 if index == 0 else 5)
                 self.assertEqual(self.request(tool, auth=owner)[1]["entries"], entries)
                 explicit = (clarified,) if index == 0 else (
                     clarified, "我想把工具内容区水平居中", "把页面内容区左右居中",
@@ -784,7 +805,9 @@ class StagedHTTP(StagedHTTPFixture):
                 self.assertEqual((status, denied["code"]), (409, "revision_confirmation_required"))
                 unchanged = self.request(tool, auth=owner)[1]
                 self.assertEqual((unchanged["version"], unchanged["entries"]), (1, entries))
-                self.assertEqual(self.request("/api/trial", auth=owner)[1]["generation"], quota)
+                before_confirm = self.request("/api/trial", auth=owner)[1]["generation"]
+                self.assertEqual(before_confirm["used"], quota["used"])
+                self.assertEqual(before_confirm["totalUsed"] - after_questions["totalUsed"], 0 if index == 0 else len(explicit))
                 self.confirm_revision(path, payload, owner)
                 self.assert_preview_verified(path, payload, owner)
                 status, saved, _ = self.request(path + "/publish", payload, owner)
@@ -792,7 +815,7 @@ class StagedHTTP(StagedHTTPFixture):
                 self.assertEqual((saved["id"], saved["version"], saved["entries"]), (initial["id"], 2, entries))
                 self.assertEqual(self.request(path + "/publish", payload, owner)[1], saved)
                 after = self.request("/api/trial", auth=owner)[1]["generation"]
-                self.assertEqual((after["used"], after["totalUsed"]), (quota["used"] + 1, quota["totalUsed"]))
+                self.assertEqual((after["used"], after["totalUsed"]), (quota["used"] + 1, before_confirm["totalUsed"]))
                 if index == 0:
                     config = json.loads(re.search(r"<script>const config = ([^\n]+);", saved["html"])[1])
                     field = next(field for field in config["spec"]["fields"] if field["label"] == "阅读时长（分钟）")
@@ -824,7 +847,7 @@ if (fields.result.textContent !== '40.00') process.exit(1);
         self.assert_preview_verified(path, initial, owner)
         self.assertEqual(self.request(path + "/publish", initial, owner)[0], 200)
         tool = "/api/tools/" + candidate["id"]
-        data = {"requirement":"把页面文案「相加」改为「两数之和」", "version":1, "requestId":uuid4().hex}
+        data = {"requirement":"用户先看明白输出的数字是两数之和", "version":1, "requestId":uuid4().hex}
         code, result, _ = self.request(tool + "/revise", data, owner)
         self.assertEqual(code, 202)
         revision = result["task"]["id"]

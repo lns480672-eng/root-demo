@@ -413,9 +413,10 @@ def _decode_response(envelope, key, evidence, *, limit=MAX_ARTIFACT_BYTES):
 
 
 def provide(stage, requirement, previous, key, admit, record=None, *, revision_context=None, accept=None,
-            spec_patch=None, category="auto"):
+            spec_patch=None, category="auto", revision_plan_system=None):
     """Request one stage, admitting its usage immediately before dispatch."""
-    if stage not in RULES and stage != "implementation":
+    planning_revision = stage == "revision-plan" and revision_plan_system is not None
+    if not planning_revision and stage not in RULES and stage != "implementation":
         raise ValueError("unexpected_stage")
     evidence = {"stage": stage, "requested_model": MODEL, "dispatched": False}
     started = time.monotonic()
@@ -433,7 +434,7 @@ def provide(stage, requirement, previous, key, admit, record=None, *, revision_c
         request = {"requirement": requirement, "current_stage": stage}
         if stage == "spec" and category != "auto":
             request["generation_category"] = category
-        if stage != "spec":
+        if stage != "spec" and not planning_revision:
             spec_bytes = previous.get("spec.json")
             require(stage in stage_plan(spec_bytes)[1:-1], "unexpected_stage")
             spec = read_artifact(spec_bytes)
@@ -461,7 +462,9 @@ def provide(stage, requirement, previous, key, admit, record=None, *, revision_c
         text = json.dumps(request, ensure_ascii=False)
         if key in text:
             raise ApiError(400, "invalid_staged_requirement", "请输入有效需求并移除凭据。")
-        if stage == "implementation":
+        if planning_revision:
+            system, tokens, output_limit = revision_plan_system, 1800, MAX_ARTIFACT_BYTES
+        elif stage == "implementation":
             system, tokens, output_limit = IMPLEMENTATION_SYSTEM, 3200, staged_program.MAX_ARTIFACT_BYTES
             if spec.get("kind") == "website":
                 system = staged_website.SYSTEM + "\n" + markup_rules(staged_website.ELEMENTS)
@@ -470,9 +473,9 @@ def provide(stage, requirement, previous, key, admit, record=None, *, revision_c
             system, tokens, output_limit = RULES["spec"], 1200, MAX_ARTIFACT_BYTES
         else:
             system, tokens, output_limit = SYSTEM + "\n" + RULES[stage], 550, MAX_ARTIFACT_BYTES
-        if revision_context is not None and revision_context["kind"] == "table":
+        if not planning_revision and revision_context is not None and revision_context["kind"] == "table":
             system, tokens = TABLE_REVISION_SYSTEM, 220
-        elif revision_context is not None:
+        elif not planning_revision and revision_context is not None:
             system += ("\n这是修改现有工具。保持 revision_source.kind 对应的计划类型。"
                        "只修改需求指定的行为，沿用旧配置与实现中其余功能和数据格式。"
                        "台账规格以 revision_source.active_modules 为基础，只按修改需求增减模块。"
@@ -513,7 +516,8 @@ def provide(stage, requirement, previous, key, admit, record=None, *, revision_c
         result = _decode_response(envelope, key, evidence, limit=output_limit)
         if spec_patch is not None:
             result = spec_patch(result)
-        validate(stage, result, previous)
+        if not planning_revision:
+            validate(stage, result, previous)
         if stage == "spec":
             spec = read_artifact(result)
             validate_category(spec, category)

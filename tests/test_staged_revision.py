@@ -29,6 +29,38 @@ def encode(value):
 
 
 class RevisionContextTests(unittest.TestCase):
+    def test_generated_revision_patch_applies_to_fixed_code_without_replacing_other_parts(self):
+        source = {"markup": "<label>原价</label><button>计算</button>", "script": "void 0;"}
+        edits = [{"part": "markup", "before": ">原价<", "after": ">原始金额<"}]
+        patched = revision.apply_code_edits(source, edits)
+        self.assertEqual(patched, {**source, "markup": "<label>原始金额</label><button>计算</button>"})
+        self.assertEqual(source["markup"], "<label>原价</label><button>计算</button>")
+
+        for rejected in (
+            [{"part": "markup", "before": ">不存在<", "after": ">原始金额<"}],
+            [{"part": "markup", "before": ">", "after": " invalid>"}],
+            edits + [{"part": "markup", "before": "原价</label>", "after": "冲突</label>"}],
+            [{"part": "markup", "before": source["markup"], "after": "<p>整体重写</p>"}],
+            [{"part": "storage", "before": "one", "after": "two"}],
+        ):
+            with self.subTest(rejected=rejected), self.assertRaises(ApiError):
+                revision.apply_code_edits(source, rejected)
+
+    def test_revision_plan_sends_original_requirement_and_fixed_source_to_model(self):
+        spec = {"kind": "program", "title": "分账计算", "goal": "平均分摊"}
+        code = {"markup": "<label>原价</label><button>计算</button>", "script": "void 0;"}
+        base = revision.prepare({"spec.json": encode(spec), "implementation.json": encode(code)})
+        requirement = "帮使用者看到输入框就知道填的是起始金额"
+        plan = {"status": "proposed", "edits": [
+            {"part": "markup", "before": ">原价<", "after": ">起始金额<"},
+        ]}
+        with patch.object(assistant_model, "_exchange", return_value=envelope(json.dumps(plan))) as exchange:
+            artifact = revision.provide("revision-plan", requirement, {}, "fixture-key", Mock(), None, base=base)
+        self.assertEqual(json.loads(artifact), plan)
+        request = json.loads(json.loads(exchange.call_args.args[0])["body"]["messages"][1]["content"])
+        self.assertEqual(request["requirement"], requirement)
+        self.assertEqual(request["revision_source"]["source"]["implementation"], code)
+
     def test_title_and_csv_patches_reuse_unmodified_checkpoint_artifacts(self):
         original = artifacts()
         base = revision.prepare(original)
