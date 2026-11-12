@@ -14,7 +14,7 @@ from accounts import ApiError, TABLE_STORAGE_BYTES, TOOL_STORAGE_BYTES, pack_ent
 from staged_revision import REVISION_GUIDANCE
 
 MAX_ATTEMPTS = 8
-RUNTIME_PROOF_VERSION = 1
+RUNTIME_PROOF_VERSION = 2
 LEASE_SECONDS = 90
 RETAIN_SECONDS = 48 * 60 * 60
 ZERO = "0" * 40
@@ -693,7 +693,9 @@ class StagedJobs:
                 return
         if self.runtime_verifier is None:
             raise ApiError(503, "staged_verifier_unavailable", "运行检查暂不可用，请稍后重新检查预览。")
-        self.runtime_verifier(html, data["entries"], backup=self.permits_backup(row), storage_limit=limit)
+        spec = self.blueprint.read_artifact(self.read(row, identity["commit"], "spec.json"))
+        self.runtime_verifier(html, data["entries"], backup=self.permits_backup(row), storage_limit=limit,
+                              website=spec.get("kind") == "website")
         with self.store.connection(write=True) as db:
             row, _, revision, result_id = self.publication_binding(db, token, marker, identifier, identity, data)
             if row["state"] == "published":
