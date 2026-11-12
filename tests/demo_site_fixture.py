@@ -27,7 +27,9 @@ def website_code(layout):
 <article data-item-filter="hot">手冲咖啡</article></section>
 <section id="site-faq" data-page="faq"{hidden}><h2>常见问题</h2>
 <details><summary>可以选咖啡豆吗？</summary><p>手冲咖啡可选当日豆单。</p></details></section>""",
-        "style": "body { margin: 0; } main { padding: 16px; } button { margin: 4px; }",
+        "style": ("body { margin: 0; } main { padding: 16px; } button { margin: 4px; } "
+                  "#root-website [data-item-filter] { display: flex !important; } "
+                  "#root-website [data-page] { display: grid; }"),
         "script": """
 const root = document.getElementById('root-website');
 const navigation = root.querySelectorAll('[data-route]');

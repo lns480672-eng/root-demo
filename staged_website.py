@@ -11,6 +11,8 @@ LAYOUTS = ("landing", "brand")
 FORMAT = "website-code-v1"
 ELEMENTS = staged_program.ELEMENTS | {"h1", "main", "nav"}
 MAX_STYLE_BYTES = 4 * 1024
+# A layered important rule takes precedence over unlayered generated styles.
+HIDDEN_STYLE = "@layer root-invariants { #root-website [hidden] { display: none !important; } }"
 UNSAFE_STYLE = re.compile(
     r"<|\\|/\*|@(?!media\b)|\b(?:url|src|(?:-webkit-)?image-set)\s*\(",
     re.IGNORECASE,
@@ -97,7 +99,7 @@ def assemble(spec, value):
     markup, style, script = value["markup"], value["style"], value["script"]
     return f"""<!doctype html>{staged_program.NO_STORAGE_MARKER}<html lang="zh-CN"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{title}</title><style>{style}</style></head><body>
+<title>{title}</title><style>{HIDDEN_STYLE}</style><style>{style}</style></head><body>
 <div id="root-website" data-layout="{layout}">{markup}</div>
 <script>
 (() => {{
