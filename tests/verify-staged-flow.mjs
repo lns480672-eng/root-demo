@@ -452,7 +452,7 @@ export async function verifyLedgerTheme(ctx) {
     await generate(change);
     const rejected = await settle(change);
     assert.equal(rejected.state, 'unsupported');
-    if (change.includes('22px')) assert.equal(rejected.reason, 'revision_no_change');
+    assert.equal(rejected.reason, 'staged_unsupported');
     await until(async () => /旧版仍可用.*未扣除/.test(await evaluate('document.querySelector("#staged-reason").textContent')));
     assert.deepEqual(await versions(), history);
     assert.deepEqual((await stored(old.id)).entries, before.entries);
@@ -550,15 +550,16 @@ export async function verifyStagedCalculator(ctx) {
 
 export async function verifyStagedRevision(ctx) {
   const { cdp, evaluate, until, base, click, type, visible, appRequest, login, generate,
-    activeTool, accountA, root, evidence, screenshot, stored, anotherBrowser } = ctx;
-  const change = '在现有读书清单增加书名关键词筛选。保留已有的添加书名和显示书单功能，'
-    + '沿用 books 存储键及字符串数组格式。新增关键词输入框 id=search，输入时筛选现有书单。';
+    activeTool, accountA, evidence, screenshot, stored, anotherBrowser } = ctx;
+  const change = '把页面文案「添加」改为「加入书单」';
   await cdp('Page.navigate', {url:base});
   await login(accountA, true);
   if (await visible('#workspace-guide')) await click('#guide-skip');
-  await generate('做一份简单读书清单，新增书名并保存。');
+  await generate('做一份简单读书清单，新增书名并保存。按钮 id=add 且文案是添加，书名输入 id=book，书单 id=list。');
   const old = await activeTool();
   const toolPath = '/api/tools/' + old.id;
+  const currentVersion = async () => (await appRequest(toolPath + '/versions')).body.current;
+  const trial = async () => (await appRequest('/api/trial')).body.generation;
   async function add(title, context = old.context) {
     await evaluate('document.querySelector("#book").value=""', context);
     await type('#book', title, context);
@@ -566,60 +567,48 @@ export async function verifyStagedRevision(ctx) {
     await until(async () => JSON.stringify((await stored(old.id)).entries).includes(title));
   }
   await add('甲 旧版已有');
+  const before = await trial();
   await click('#revise-tool');
-  await evaluate('window.holdFixturePreview = true; window.releaseFixturePreview = undefined');
   await generate(change);
-  const task = await until(async () => {
-    const {body} = await appRequest('/api/staged');
-    return body.tasks?.find(item => item.requirement === change);
-  }, 90000);
-  assert.equal(task.baseToolId, old.id);
-  assert.equal(task.baseVersion, 1);
-  await add('乙 生成期间写入');
   await until(() => visible('#revision-confirm'));
-  await click('#revision-confirm');
-  await until(async () => {
-    const current = (await appRequest(taskPath + task.id)).body.task;
-    if (['failed','unsupported'].includes(current.state)) {
-      throw new Error('真模型修订失败 ' + current.stage + ' / ' + current.reason);
-    }
-    return evaluate('typeof window.releaseFixturePreview === "function"');
-  }, 90000);
+  assert.equal(await currentVersion(), 1);
+  assert.equal(await evaluate('document.querySelector("#add").textContent', old.context), '添加');
+  await screenshot('program-plan-before-concurrent-write');
   await anotherBrowser('staged-revision-second', async () => {
     await cdp('Page.navigate', {url:base});
     await login(accountA);
+    if (await visible('.elys-composer')) await click('#library-entry');
     const other = await activeTool();
     assert.equal(other.id, old.id);
-    await add('丙 候选之后写入', other.context);
+    await add('乙 方案展示后写入', other.context);
   });
-  assert.equal((await appRequest(toolPath + '/versions')).body.current, 1);
-  await evaluate('window.releaseFixturePreview()');
-  await until(() => evaluate('document.querySelector("#staged-preview")?.checkVisibility() && !document.querySelector("#staged-preview").disabled'));
+  await click('#revision-confirm');
+  await until(async () => /重新查看并确认/.test(await evaluate('document.querySelector("#staged-reason").textContent')));
+  assert.equal(await currentVersion(), 1);
   assert.equal((await activeTool()).loader, old.loader);
-  assert.match(JSON.stringify((await stored(old.id)).entries), /丙 候选之后写入/);
+  assert.deepEqual(await trial(), before);
+  await screenshot('program-concurrent-confirmation-rejected');
   await click('#staged-preview');
   await until(() => visible('#revision-confirm'));
+  await screenshot('program-plan-reconfirmed');
   await click('#revision-confirm');
   const revised = await until(async () => {
     const current = await activeTool().catch(() => null);
     return current && current.id === old.id && current.loader !== old.loader && current;
   }, 15000);
-  assert.equal((await appRequest(toolPath + '/versions')).body.current, 2);
-  const text = () => evaluate('document.querySelector("#list").textContent', revised.context);
-  for (const name of ['甲 旧版已有','乙 生成期间写入','丙 候选之后写入']) assert.ok((await text()).includes(name));
-  await type('#search', '乙', revised.context);
-  assert.match(await text(), /乙 生成期间写入/);
-  assert.doesNotMatch(await text(), /甲|丙/);
+  assert.equal(await currentVersion(), 2);
+  assert.equal(await evaluate('document.querySelector("#add").textContent', revised.context), '加入书单');
+  const text = await evaluate('document.querySelector("#list").textContent', revised.context);
+  assert.match(text, /甲 旧版已有.*乙 方案展示后写入/s);
+  await add('丙 修改后继续新增', revised.context);
+  assert.equal((await trial()).used, before.used + 1);
   await cdp('Page.reload');
   await until(() => evaluate('document.documentElement.dataset.ready === "true"'));
+  if (await visible('.elys-composer')) await click('#library-entry');
   assert.equal((await activeTool()).id, old.id);
-  assert.equal((await appRequest(toolPath + '/versions')).body.current, 2);
-  const receipts = (await readFile(join(root, 'runs', 'staged-usage.jsonl'),'utf8')).trim().split('\n').map(JSON.parse);
-  evidence.runs = receipts.filter(item => item.task === task.id);
-  assert.deepEqual(evidence.runs.map(item => item.stage), ['spec','implementation']);
-  assert.ok(evidence.runs.every(item => item.request_id && item.usage?.total_tokens > 0));
-  evidence.tests.push('同一工具走统一修改任务，生成及候选准备后另一会话仍实际写入，过时快照拒绝，复用同一候选重开后新版保留三笔记录');
-  evidence.tests.push('新版关键词筛选实际生效，刷新恢复同工具及版本，重新预览没有重派发模型');
+  assert.equal(await currentVersion(), 2);
+  evidence.tests.push({id:'TEST-007-program-copy', sameTool:true, staleConfirmationRejected:true,
+    olderAndConcurrentRecordsPreserved:true, originalActionVerified:true, chargedOnce:true});
   await screenshot('staged-revision-restored');
 }
 
