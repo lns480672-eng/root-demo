@@ -719,10 +719,12 @@ class StagedHTTP(StagedHTTPFixture):
                     task = response["task"]["id"]
                     return "/api/staged/" + task, self.wait_task(owner, task, state)
 
-                rejected, question = revise(original, "unsupported")
-                self.assertEqual(question["reason"], reason)
-                self.assertIn("？", question["guidance"])
-                self.assertEqual(self.request(rejected + "/candidate", {}, owner)[0], 409)
+                for ambiguous in (original, f"  {original} ！ "):
+                    rejected, question = revise(ambiguous, "unsupported")
+                    self.assertEqual(question["reason"], reason)
+                    self.assertIn("？", question["guidance"])
+                    self.assertFalse(question["resumable"])
+                    self.assertEqual(self.request(rejected + "/candidate", {}, owner)[0], 409)
                 _, outside = revise(unsupported, "unsupported")
                 self.assertEqual(outside["reason"], limit_reason)
                 self.assertIn(limit_copy, outside["guidance"])

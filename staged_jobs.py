@@ -11,6 +11,7 @@ import time
 import uuid
 
 from accounts import ApiError, TABLE_STORAGE_BYTES, TOOL_STORAGE_BYTES, pack_entries
+from staged_revision import REVISION_GUIDANCE
 
 MAX_ATTEMPTS = 8
 RUNTIME_PROOF_VERSION = 1
@@ -133,7 +134,7 @@ class StagedJobs:
                   "steps":list(steps), "completed":list(steps[:done]), "stage":steps[done] if done < len(steps) else None,
                   "issue":row["issue"], "reason":row["failure"],
                   "resumable":state in ("queued", "failed", "interrupted")}
-        guidance = getattr(self.revision, "REVISION_GUIDANCE", {}).get(row["failure"])
+        guidance = REVISION_GUIDANCE.get(row["failure"])
         if state == "unsupported" and guidance:
             result["guidance"] = guidance
         if row["category"] != "auto":
@@ -474,7 +475,7 @@ class StagedJobs:
             state = {"staged_exhausted":"exhausted", "staged_unsupported":"unsupported",
                      "revision_no_change":"unsupported", "revision_risky":"unsupported",
                      "revision_clarification_required":"unsupported"}.get(code, "failed")
-            if code in getattr(self.revision, "REVISION_GUIDANCE", {}):
+            if code in REVISION_GUIDANCE:
                 state = "unsupported"
             with self.store.connection(write=True) as db:
                 db.execute("""UPDATE staged_jobs SET state=?,lease_until=0,issue=?,failure=?,updated_at=?
