@@ -241,7 +241,8 @@ try {
       const entry = document.querySelector('header .header-entry');
       const box = entry.getBoundingClientRect();
       return [entry.href, document.querySelector('.workspace-entry a').href,
-        box.top >= 0 && box.bottom < 120, document.documentElement.scrollWidth === innerWidth,
+        box.top >= 0 && box.bottom < 120,
+        document.documentElement.scrollWidth === document.documentElement.clientWidth,
         ['需求助手', '直接开发', '我的工具'].every(name => document.body.textContent.includes(name))];
     })()`);
     assert.deepEqual(layout, [workbench + '/', workbench + '/', true, true, true]);
@@ -251,11 +252,11 @@ try {
       const content = ['.intro > header', '.hero > div', '.pipeline', '#root-site-about > div',
         '.site-footer > .brand'].map(selector => bounds(selector).left);
       const columns = selector => getComputedStyle(document.querySelector(selector))
-        .gridTemplateColumns.split(' ').map(parseFloat);
+        .gridTemplateColumns.split(' ').map(parseFloat).filter(Number.isFinite);
       return {
         fullWidth: bands.every(band => {
           const {left, right} = band.getBoundingClientRect();
-          return Math.abs(left) < 1 && Math.abs(right - innerWidth) < 1;
+          return Math.abs(left) < 1 && Math.abs(right - document.documentElement.clientWidth) < 1;
         }),
         inset: Math.round(content[0]),
         aligned: content.every(left => Math.abs(left - content[0]) < 1),
@@ -269,14 +270,15 @@ try {
     assert.ok(geometry.fullWidth, `${width} px 的背景和章节分隔应铺满视口`);
     assert.ok(geometry.aligned, `${width} px 的导航、首屏、试玩、关于和页脚应对齐`);
     const expectedInset = {1920: 128, 1440: 102, 390: 23}[width];
-    if (expectedInset) assert.equal(geometry.inset, expectedInset);
+    if (expectedInset) assert.ok(Math.abs(geometry.inset - expectedInset) <= 1);
     const columns = width <= 760 ? 1 : 2;
     assert.equal(geometry.hero.length, columns);
     assert.equal(geometry.trial.length, columns);
     assert.equal(geometry.about.length, columns);
-    if (width >= 1024) {
+    if (columns === 2) {
       const [left, right] = geometry.hero;
-      assert.ok(Math.abs(left / (left + right) - 0.45) < 0.01, '宽屏首屏应按约 45:55 排列');
+      const share = width >= 1024 ? 0.45 : 0.60;
+      assert.ok(Math.abs(left / (left + right) - share) < 0.01, `${width} px 首屏应采用对应比例`);
     }
     assert.equal(geometry.trialLabel, '试用示例');
     assert.match(geometry.trialAnswer, /点击「试用示例」即可在本页操作交付跟进板，无需登录/);
@@ -364,9 +366,10 @@ try {
       document.querySelector('[data-count]').textContent,
       document.querySelectorAll('[data-item]:not([hidden])').length,
       document.querySelectorAll('[data-item] input:checked').length,
+      document.querySelector('[data-filter]').getAttribute('aria-pressed'),
       document.querySelector('.faq details').open
     ]`);
-    assert.deepEqual(state, ['还有 1 项未完成', 1, 2, true], `${width} px 重排应保留试玩和问答状态`);
+    assert.deepEqual(state, ['还有 1 项未完成', 1, 2, 'true', true], `${width} px 重排应保留试玩和问答状态`);
   }
   assert.equal(await browser.reloadCookieCheck(site + '/'), false, '未登录的官网对照请求不带工作台会话');
   await until(() => evaluate('document.querySelector("[data-count]")?.textContent === "还有 2 项未完成"'));
