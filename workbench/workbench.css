@@ -1,6 +1,12 @@
 html { background: #fafafe; }
 body { margin: 0; padding: clamp(10px, 2vw, 24px); }
 .elys-product { max-width: 1350px; margin-inline: auto; }
+body:has(#workspace:not([hidden])) { padding-inline: 0; }
+.elys-product:has(> #workspace:not([hidden])) {
+  max-width: none;
+  padding-inline: 0;
+  border-radius: 0;
+}
 button:enabled { cursor: pointer; }
   .elys-product {
     color-scheme: light;

@@ -615,6 +615,28 @@ try {
     assert.equal(await visible('.elys-preview'), false);
     assert.equal(await evaluate('document.querySelector("#generate").textContent'), '开始');
     await screenshot('first-visit');
+    for (const width of [1440, 1920, 390]) {
+      await cdp('Emulation.setDeviceMetricsOverride', {width, height:980, deviceScaleFactor:1, mobile:width === 390});
+      const layout = await evaluate(`(() => {
+        const shell = document.querySelector('.elys-product').getBoundingClientRect();
+        const workspace = document.querySelector('#workspace');
+        const contentLeft = document.querySelector('.workspace-sidebar').getBoundingClientRect().right +
+          parseFloat(getComputedStyle(workspace).columnGap);
+        const input = document.querySelector('#composer').getBoundingClientRect();
+        const contentRight = workspace.getBoundingClientRect().right;
+        return {
+          left: shell.left,
+          right: document.documentElement.clientWidth - shell.right,
+          centerOffset: Math.abs((input.left + input.right - contentLeft - contentRight) / 2),
+          overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
+        };
+      })()`);
+      assert.equal(layout.left, 0, '工作台左侧贴边，视口 ' + width);
+      assert.equal(layout.right, 0, '工作台右侧贴边，视口 ' + width);
+      assert.ok(layout.centerOffset <= 1, '输入区在导航右侧居中，视口 ' + width);
+      assert.equal(layout.overflow, false, '工作台无横向溢出，视口 ' + width);
+      await screenshot('workspace-edge-' + width);
+    }
     await cdp('Emulation.setDeviceMetricsOverride', {width:390,height:844,deviceScaleFactor:1,mobile:true});
     await cdp('Emulation.setEmulatedMedia', {features:[{name:'prefers-reduced-motion',value:'reduce'}]});
     assert.equal(await evaluate('getComputedStyle(document.querySelector("#entry-coachmark")).animationName'), 'none');
@@ -1363,8 +1385,34 @@ try {
     await type('#requirement', custom);
     assert.equal(await evaluate('document.querySelector("#generate").textContent'), '开始');
     assert.deepEqual(await evaluate('window.testGenerationPosts'), []);
+    await cdp('Emulation.setDeviceMetricsOverride', {width:1920,height:980,deviceScaleFactor:1,mobile:false});
+    await evaluate(`(() => {
+      const monitored = window.fetch;
+      window.fetch = (path, options) => String(path).endsWith('/api/generate')
+        ? new Promise(resolve => {
+          window.releaseLayoutGeneration = () => {
+            window.fetch = monitored;
+            resolve(monitored(path, options));
+          };
+        })
+        : monitored(path, options);
+    })()`);
     await click('#generate');
+    await until(() => evaluate('typeof window.releaseLayoutGeneration === "function"'));
+    assert.equal(await evaluate(`(() => {
+      const workspace = document.querySelector('#workspace');
+      const composer = document.querySelector('.elys-composer');
+      const preview = document.querySelector('.elys-preview');
+      const columns = getComputedStyle(workspace).gridTemplateColumns.split(' ').map(parseFloat);
+      return workspace.dataset.mode === 'compose' && columns.length === 3 &&
+        columns[1] > 0 && columns[2] > columns[1] &&
+        getComputedStyle(composer).gridArea === 'composer' && getComputedStyle(preview).gridArea === 'content';
+    })()`), true, '开始后在固定导航右侧分出生成和预览两列');
+    assert.equal(await visible('.elys-preview'), false);
+    await screenshot('workspace-generation-1920');
+    await evaluate('window.releaseLayoutGeneration(); void 0');
     const directTool = await activeTool(previous);
+    await cdp('Emulation.setDeviceMetricsOverride', {width:1360,height:980,deviceScaleFactor:1,mobile:false});
     await recordRun(directTool);
     assert.deepEqual(await evaluate('window.testGenerationPosts'), [custom]);
     assert.equal((await library()).items.length, before.length + 1);
