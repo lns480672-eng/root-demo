@@ -142,6 +142,37 @@ class RuntimeVerifierTests(unittest.TestCase):
         """)
         verify(source, [], website=True)
 
+    def test_website_tabs_without_distinct_panels_must_change_visible_content(self):
+        for controls in ("", ' aria-controls="detail"'):
+            markup = (
+                '<!doctype html><section><div role="tablist">'
+                f'<button role="tab" aria-selected="true"{controls}>第一档</button>'
+                f'<button role="tab" aria-selected="false"{controls}>第二档</button>'
+                '</div><article id="detail">集合时间</article></section>'
+            )
+            handlers = """
+                for (const tab of document.querySelectorAll('button')) {
+                    tab.onclick = () => {
+                        for (const other of document.querySelectorAll('button')) {
+                            other.setAttribute('aria-selected', String(other === tab));
+                        }
+                        ACTION
+                    };
+                }
+            """
+            with self.subTest(controls=controls):
+                noop = handlers.replace("ACTION", "tab.textContent += '已选';")
+                with self.assertRaises(ApiError) as result:
+                    verify((markup + "<script>" + noop + "</script>").encode(), [], website=True)
+                self.assertEqual(result.exception.code, "staged_runtime_failed")
+                working = handlers.replace("ACTION", """
+                    setTimeout(() => {
+                        document.querySelector('#detail').textContent =
+                            tab.textContent === '第一档' ? '集合时间' : '观测地点';
+                    }, 40);
+                """)
+                verify((markup + "<script>" + working + "</script>").encode(), [], website=True)
+
     def test_website_without_custom_tabs_keeps_native_controls(self):
         verify(b'<!doctype html><details><summary>FAQ</summary><p>Answer</p></details>', [], website=True)
 
