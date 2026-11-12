@@ -1,6 +1,6 @@
 'use strict';
 
-function setupTableImport({ request, generate, onGuideUpdate, onExit }) {
+function setupTableImport({ request, generate, onExit }) {
   const panel = document.getElementById('table-panel');
   const previewLimit = 6;
   const fieldTypes = new Map([
@@ -79,7 +79,6 @@ function setupTableImport({ request, generate, onGuideUpdate, onExit }) {
     review.hidden = true;
     panel.setAttribute('aria-labelledby', 'table-heading');
     fileInput.value = '';
-    onGuideUpdate();
   }
 
   function setBusy(busy) {
@@ -174,7 +173,6 @@ function setupTableImport({ request, generate, onGuideUpdate, onExit }) {
     review.hidden = false;
     panel.setAttribute('aria-labelledby', 'table-review-title');
     find('#table-review-title').focus();
-    onGuideUpdate();
   }
 
   function readWorkbook(file) {

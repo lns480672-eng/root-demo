@@ -253,32 +253,6 @@ button:enabled { cursor: pointer; }
   justify-content: space-between;
   gap: 8px;
 }
-#workspace-guide {
-  grid-area: content; align-self: start; padding: clamp(16px, 4vw, 34px);
-  border: 1px solid var(--elys-line); border-radius: 20px; background: #f9f9fd;
-}
-#guide-title:focus { outline: none; }
-#workspace-guide h1 { margin-block: 6px 14px; font: 600 clamp(25px, 4vw, 38px)/1.2 var(--elys-serif); }
-.welcome-routes { display: grid; gap: 8px; margin-block: 16px; }
-.welcome-routes button { text-align: start; min-height: 44px; border-radius: 8px; background: var(--elys-white); }
-#workspace-guide .guide-hint button { display: none; }
-.welcome-routes small { display: block; color: var(--elys-muted); }
-.elys-workspace:has(> #workspace-guide:not([hidden])) :is(.elys-preview, .elys-composer) { display: none; }
-.guide-hint {
-  display: flex; align-items: center; flex-wrap: wrap; gap: 6px 10px; flex-basis: 100%;
-  margin-block: 6px; padding: 7px 9px; border: 1px solid #c7d0f1; border-radius: 8px;
-  background: #edf0fb; font-size: 13px; animation: guide-fade 160ms ease-out;
-}
-.guide-hint p { flex: 1 1 10rem; }
-.guide-hint button { font-size: 12px; }
-.elys-product [data-guide-target] {
-  outline: 2px solid #506bb7; outline-offset: 2px; animation: guide-pulse 720ms ease-out 2;
-}
-@keyframes guide-pulse { from { box-shadow: 0 0 0 0 #6883d065; } to { box-shadow: 0 0 0 7px #6883d000; } }
-@keyframes guide-fade { from { opacity: 0; } to { opacity: 1; } }
-@media (prefers-reduced-motion: reduce) {
-  .elys-product [data-guide-target], .guide-hint { animation: none; }
-}
 .publish-lock {
   flex-basis: 100%;
   justify-content: flex-start;
@@ -392,14 +366,98 @@ button:enabled { cursor: pointer; }
 #auth-status:empty { display: none; }
 .elys-product :is(#auth-submit, #auth-mode, #new-tool, #tool-list button) { border-radius: 8px; }
 #auth-mode { margin-top: 12px; background: var(--elys-white); color: var(--elys-ink); }
-.workspace-sidebar { grid-area: sidebar; min-width: 0; }
-.workspace-navigation, .workspace-navigation nav { display: grid; gap: 4px; min-width: 0; }
-.workspace-navigation button { min-height: 44px; text-align: start; border-radius: 8px; }
-.workspace-navigation nav button { background: transparent; border-color: transparent; }
-.workspace-navigation button[aria-current="page"] { color: #38539c; background: var(--elys-white); font-weight: 650; }
-#new-tool { margin-block-end: 4px; }
-#new-tool span { margin-inline-end: 4px; color: #506bb7; }
-.elys-composer { margin-block-start: 14px; padding-block-start: 14px; border-top: 1px solid var(--elys-line); }
+/* Keep the same navigation rail across the entry, assistant, and tool views. */
+.elys-workspace {
+  grid-template-columns: 158px minmax(240px, .4fr) minmax(0, .6fr);
+  grid-template-areas: "sidebar composer content";
+  gap: clamp(12px, 2vw, 28px);
+  min-height: 68vh;
+}
+.elys-workspace:is([data-mode="start"], [data-mode="browse"], :has(> #assistant-panel:not([hidden]))) {
+  grid-template-columns: 158px minmax(0, 1fr);
+  grid-template-areas: "sidebar content";
+}
+.workspace-sidebar {
+  grid-area: sidebar;
+  position: sticky;
+  top: 12px;
+  align-self: start;
+  min-width: 0;
+  max-height: calc(100dvh - 24px);
+  overflow: auto;
+  padding: 2px 5px;
+}
+.workspace-navigation nav { display: grid; gap: 4px; }
+.workspace-navigation nav button {
+  min-height: 44px;
+  text-align: start;
+  background: transparent;
+  border-color: transparent;
+  border-radius: 8px;
+}
+.workspace-navigation nav button[aria-current="page"] {
+  color: #38539c;
+  background: #e4e8fc;
+  font-weight: 650;
+}
+.elys-composer { grid-area: composer; }
+.elys-workspace[data-mode="start"] .elys-composer {
+  grid-area: content;
+  width: min(100%, 660px);
+  margin: clamp(42px, 11vh, 124px) auto 32px;
+}
+.elys-workspace[data-mode="start"] #composer-title {
+  margin-bottom: 20px;
+  text-align: center;
+  font-size: clamp(25px, 4vw, 46px);
+}
+#composer { position: relative; }
+.elys-workspace[data-mode="start"] #composer {
+  padding: 12px;
+  border: 1px solid var(--elys-line);
+  border-radius: 18px;
+  background: var(--elys-white);
+  box-shadow: 0 12px 28px #313e6210;
+}
+.elys-workspace[data-mode="start"] #requirement { min-height: 115px; }
+.elys-workspace[data-mode="start"] .elys-requirement { margin-block-start: 10px; }
+.elys-workspace[data-mode="start"] #return-to-library { display: none; }
+.mode-cards { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 9px; margin-top: 16px; }
+.elys-product .mode-cards button {
+  min-width: 0;
+  min-height: 74px;
+  padding: 8px;
+  border-radius: 12px;
+  text-align: start;
+  color: #243971;
+  background: var(--elys-white);
+}
+.mode-cards button:hover { border-color: #6883d0; }
+.mode-cards span { display: block; margin-top: 3px; color: var(--elys-muted); font-size: 12px; }
+#composer[data-guided] { outline: 2px solid #6883d0; outline-offset: 4px; }
+.entry-coachmark {
+  position: absolute;
+  z-index: 1;
+  bottom: 48px;
+  left: 12px;
+  pointer-events: none;
+  padding: 7px 10px;
+  border-radius: 9px;
+  background: #314b92;
+  color: white;
+  font-size: 13px;
+  animation: entry-point 750ms 2 ease-in-out;
+}
+.entry-coachmark::before {
+  content: "";
+  position: absolute;
+  bottom: 100%;
+  left: 15px;
+  border: 6px solid transparent;
+  border-bottom-color: #314b92;
+}
+@keyframes entry-point { 50% { transform: translateY(-4px); } }
+@media (prefers-reduced-motion: reduce) { .entry-coachmark { animation: none; } }
 .tool-library { min-width: 0; margin: 5px 0 0 13px; padding-inline-start: 9px; border-inline-start: 1px solid var(--elys-line); }
 #library-empty { margin-top: .75rem; color: var(--elys-muted); }
 #tool-list { list-style: none; padding: 0; margin: 0; display: grid; grid-template-columns: minmax(0, 1fr); gap: 4px; }
@@ -451,10 +509,24 @@ button:enabled { cursor: pointer; }
   .auth-layout { grid-template-columns: minmax(0, 1fr); gap: 17px; padding: 23px 0 0; }
   .auth-intro h1 { margin: 8px 0; }
   .auth-illustration { display: none; }
-  .elys-workspace { grid-template-areas: "sidebar" "content"; gap: 17px; }
-  .workspace-navigation, .workspace-navigation nav { display: flex; gap: 4px; flex-wrap: wrap; }
-  .workspace-navigation button { padding-inline: 8px; }
-  #new-tool { margin-block-end: 0; }
+  .elys-workspace, .elys-workspace:is([data-mode="start"], [data-mode="browse"], :has(> #assistant-panel:not([hidden]))) {
+    grid-template-columns: 70px minmax(0, 1fr);
+    grid-template-areas: "sidebar composer" "sidebar content";
+    grid-template-rows: auto 1fr;
+    gap: 8px;
+  }
+  .elys-workspace:is([data-mode="start"], [data-mode="browse"], :has(> #assistant-panel:not([hidden]))) {
+    grid-template-areas: "sidebar content";
+    grid-template-rows: 1fr;
+  }
+  .workspace-sidebar { padding: 2px; }
+  .workspace-navigation nav button { padding: 5px 3px; font-size: 12px; text-align: center; }
+  .tool-library { margin-inline-start: 0; padding-inline-start: 0; border: 0; }
+  #tool-list button { padding: 4px; display: block; overflow: hidden; font-size: 11px; }
+  #tool-list button > span { display: block; }
+  #tool-list button::after { display: block; }
+  .mode-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .elys-workspace[data-mode="start"] .elys-composer { margin-block-start: 36px; }
   .elys-masthead { padding: 5px 12px; border-radius: 18px; }
 }
 @media (pointer: coarse) {

@@ -77,9 +77,10 @@
     <div id="workspace" class="elys-workspace" hidden>
       <aside class="workspace-sidebar" aria-label="工作台侧栏">
         <div class="workspace-navigation">
-          <button id="new-tool" type="button"><span aria-hidden="true">＋</span>新建工具</button>
           <nav aria-label="工作台栏目">
+            <button id="new-tool" type="button">新建工具</button>
             <button id="idea-entry" type="button">需求助手</button>
+            <button id="drafts-entry" type="button">我的需求</button>
             <button id="library-entry" type="button" aria-controls="saved-tools" aria-expanded="false">我的工具</button>
           </nav>
         </div>
@@ -87,16 +88,9 @@
           <p id="library-empty">成功生成的工具会显示在这里。</p>
           <ul id="tool-list" aria-label="已保存的工具"></ul>
         </section>
-        <section class="elys-composer" aria-labelledby="composer-title">
+      </aside>
+      <section class="elys-composer" aria-labelledby="composer-title">
           <h2 id="composer-title">你想做什么工具？</h2>
-          <div id="new-tool-options">
-            <p class="elys-intro">描述工具的用途、操作和要保存的数据。</p>
-            <nav class="entry-actions" aria-label="开始方式">
-              <button id="quick-entry" type="button" aria-pressed="false" aria-controls="quick-panel">快速体验</button>
-              <button id="direct-entry" type="button" aria-pressed="true">直接开发</button>
-              <button id="table-entry" type="button" aria-pressed="false" aria-controls="table-panel">从表格生成</button>
-            </nav>
-          </div>
           <section id="quick-panel" class="quick-panel" aria-labelledby="quick-title" hidden>
             <h3 id="quick-title">先试一个模板</h3>
             <div class="entry-actions" aria-label="可选模板">
@@ -140,6 +134,12 @@
             </div>
             <p id="generation-retry-note" class="auth-muted" hidden>生成失败不扣个人次数。</p>
           </form>
+          <nav id="new-tool-options" class="mode-cards" aria-label="新建方式">
+            <button id="quick-entry" type="button" aria-pressed="false" aria-controls="quick-panel"><strong>快速体验</strong><span>先试一个现成示例</span></button>
+            <button id="direct-entry" type="button" aria-pressed="true"><strong>直接开发</strong><span>写下明确的需求</span></button>
+            <button id="assistant-entry" type="button"><strong>需求助手</strong><span>把想法梳理成需求</span></button>
+            <button id="table-entry" type="button" aria-pressed="false" aria-controls="table-panel"><strong>从表格生成</strong><span>用现有数据开始</span></button>
+          </nav>
           <section id="staged-panel" class="staged-panel" aria-labelledby="staged-title" hidden>
             <h3 id="staged-title">生成任务</h3>
             <p id="staged-list-status" class="auth-muted" role="status"></p>
@@ -184,22 +184,8 @@
           <div class="entry-actions">
             <button id="return-to-library" type="button" hidden>返回我的工具</button>
           </div>
-        </section>
-      </aside>
-      <section id="workspace-guide" class="workspace-guide" aria-labelledby="guide-title" hidden>
-        <p class="auth-eyebrow">欢迎使用 ROOT</p>
-        <h1 id="guide-title" tabindex="-1">选一个方式开始</h1>
-        <div class="welcome-routes">
-          <button id="welcome-fast" type="button">快速体验 <small>选一个模板，用示例需求生成并试用</small></button>
-          <button id="welcome-direct" type="button">直接开发 <small>输入自己的需求，或从一份表格开始</small></button>
-          <button id="welcome-idea" type="button">需求助手 <small>先梳理想法，再保存或带入开发</small></button>
-        </div>
-        <button id="guide-skip" type="button">跳过引导</button>
       </section>
-      <div id="guide-hint" class="guide-hint" hidden>
-        <p id="guide-hint-text" role="status"></p>
-        <button id="guide-dismiss" type="button">跳过引导</button>
-      </div>
+      <p id="entry-coachmark" class="entry-coachmark" hidden>点这里，写下你想做的工具</p>
       <section id="assistant-panel" hidden></section>
       <section class="elys-preview" aria-labelledby="preview-title">
         <header class="elys-preview-header">

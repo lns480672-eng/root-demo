@@ -11,7 +11,6 @@ export async function verifyTableJourney({
   await cdp('Emulation.setDeviceMetricsOverride', {width:1360,height:900,deviceScaleFactor:1,mobile:false});
   await cdp('Page.navigate', {url:base});
   await login(accountA, true);
-  await click('#welcome-direct');
   await click('#table-entry');
   await evaluate(`(() => {
     const input = document.querySelector('#table-file');
@@ -49,8 +48,6 @@ export async function verifyTableJourney({
 
   async function revise(requirement, expectedVersion) {
     await click('#revise-tool');
-    const reopenGuide = !live && expectedVersion === 2;
-    if (reopenGuide) await evaluate('window.holdTableTaskList = true');
     const loader = tool.loader;
     await generate(requirement);
     const task = await until(async () => {
@@ -61,15 +58,7 @@ export async function verifyTableJourney({
     });
     assert.equal(task?.baseToolId, id, '修改任务绑定导入的同一工具');
     taskIds.push(task.id);
-    if (reopenGuide) {
-      await until(() => evaluate('window.tableTaskListHeld && phase === "idle"'));
-      await click('#account-name');
-      await click('#guide-start');
-      assert.equal(await visible('#workspace-guide'), true);
-      await evaluate('window.holdTableTaskList = false; window.resumeTableTaskList()');
-    }
     const taskPath = '/api/staged/' + task.id;
-    if (reopenGuide) await click('#guide-skip');
     let confirmed = false;
     await until(async () => {
       if (!confirmed && await visible('#revision-confirm')) {
@@ -89,7 +78,6 @@ export async function verifyTableJourney({
         return current?.id === id && current.loader !== loader && current;
       });
       assert.equal((await appRequest(toolPath + '/versions')).body.items[0].note, requirement);
-      if (reopenGuide) assert.equal(await visible('#workspace-guide'), false);
     }
   }
 
@@ -149,6 +137,8 @@ export async function verifyTableJourney({
   const navigation = await evaluate('performance.timeOrigin');
   await cdp('Page.reload', {ignoreCache:true});
   await until(() => evaluate(`performance.timeOrigin !== ${navigation} && document.documentElement.dataset.ready === 'true'`));
+  await click('#library-entry');
+  await until(() => evaluate('document.querySelector("#tool-list button[aria-current=true]")?.checkVisibility()'));
   assert.equal(await evaluate('document.querySelector("#library-entry").getAttribute("aria-current")'), 'page');
   assert.match(await evaluate('document.querySelector("#tool-list button[aria-current=true]").dataset.version'), /^v3$/);
   tool = await activeTool();

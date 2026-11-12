@@ -358,13 +358,22 @@ try {
   }
 
   const visible = selector => evaluate(`Boolean(document.querySelector(${JSON.stringify(selector)})?.checkVisibility())`);
-  const guideAt = selector => until(async () => await visible('#guide-hint') &&
-    await evaluate(`document.querySelector(${JSON.stringify(selector)})?.hasAttribute("data-guide-target")`));
+  async function escapeCoachmark() {
+    await cdp('Input.dispatchKeyEvent', {type:'rawKeyDown',key:'Escape',code:'Escape',windowsVirtualKeyCode:27});
+    await cdp('Input.dispatchKeyEvent', {type:'keyUp',key:'Escape',code:'Escape',windowsVirtualKeyCode:27});
+    assert.equal(await visible('#entry-coachmark'), false);
+  }
+
   async function openGuide() {
     await click('#account-name');
-    assert.equal(await visible('#guide-start'), true);
     await click('#guide-start');
-    await guideAt('#welcome-fast');
+    await until(() => visible('#entry-coachmark'));
+  }
+
+  async function openLatest() {
+    await until(() => evaluate('document.documentElement.dataset.ready === "true"'));
+    await click('#library-entry');
+    return activeTool();
   }
 
   async function monitorGeneration() {
@@ -597,66 +606,61 @@ try {
   }
   if (!live) await screenshot('initial');
   if (entryFlow) {
-    stage = 'TEST-016-03 first visit shows the approved entry choices';
-    for (const id of ['welcome-fast', 'welcome-direct', 'welcome-idea', 'guide-skip']) assert.equal(await visible('#' + id), true);
-    assert.equal(await visible('#requirement'), false);
-    await guideAt('#welcome-fast');
-    assert.equal(await evaluate('document.activeElement.id'), 'guide-title');
-    for (const target of ['welcome-fast', 'welcome-direct']) {
-      await cdp('Input.dispatchKeyEvent', {type:'rawKeyDown',key:'Tab',code:'Tab',windowsVirtualKeyCode:9});
-      await cdp('Input.dispatchKeyEvent', {type:'keyUp',key:'Tab',code:'Tab',windowsVirtualKeyCode:9});
-      assert.equal(await evaluate('document.activeElement.id'), target);
-    }
+    stage = 'TEST-011/016 registration, navigation, and centered entry';
+    const navOrder = ['新建工具', '需求助手', '我的需求', '我的工具'];
+    assert.deepEqual(await evaluate('Array.from(document.querySelectorAll(".workspace-navigation nav button"), button => button.textContent)'), navOrder);
+    assert.equal(await visible('#requirement'), true);
+    assert.equal(await visible('#entry-coachmark'), true);
+    assert.equal(await visible('.elys-preview'), false);
+    assert.equal(await evaluate('document.querySelector("#generate").textContent'), '开始');
     await screenshot('first-visit');
-    await click('#welcome-direct');
-    await guideAt('#requirement');
-    await type('#requirement', '引导关闭后保留输入');
-    await guideAt('#generate');
     await cdp('Emulation.setDeviceMetricsOverride', {width:390,height:844,deviceScaleFactor:1,mobile:true});
     await cdp('Emulation.setEmulatedMedia', {features:[{name:'prefers-reduced-motion',value:'reduce'}]});
-    assert.equal(await evaluate('getComputedStyle(document.querySelector("[data-guide-target]")).animationName'), 'none');
+    assert.equal(await evaluate('getComputedStyle(document.querySelector("#entry-coachmark")).animationName'), 'none');
     assert.equal(await evaluate('document.documentElement.scrollWidth <= innerWidth'), true);
+    assert.equal(await evaluate(`(() => {
+      const nav = document.querySelector('.workspace-sidebar').getBoundingClientRect();
+      const prompt = document.querySelector('#composer').getBoundingClientRect();
+      return nav.right <= prompt.left && getComputedStyle(document.querySelector('.mode-cards')).gridTemplateColumns.split(' ').length === 2;
+    })()`), true);
     await screenshot('guide-narrow-reduced-motion');
-    await click('#guide-dismiss');
-    assert.equal(await visible('#guide-hint'), false);
+    await escapeCoachmark();
+    await openGuide();
+    await type('#requirement', '引导关闭后保留输入');
+    assert.equal(await visible('#entry-coachmark'), false);
     assert.equal(await evaluate('document.querySelector("#requirement").value'), '引导关闭后保留输入');
     await cdp('Emulation.setEmulatedMedia', {features:[]});
     await cdp('Emulation.setDeviceMetricsOverride', {width:1360,height:980,deviceScaleFactor:1,mobile:false});
 
-    stage = 'guide opens only after registration or manually';
+    stage = 'returning account uses the same page without an automatic coachmark';
     await sampleCoverage();
     const navigation = await evaluate('performance.timeOrigin');
     await cdp('Page.reload', { ignoreCache: true });
     await until(() => evaluate(`performance.timeOrigin !== ${navigation} && document.documentElement.dataset.ready === "true"`));
-    assert.equal(await visible('#workspace-guide'), false);
-    assert.equal(await visible('#requirement'), true, '无工具的回访进入普通新建页');
+    assert.equal(await visible('#entry-coachmark'), false);
+    assert.equal(await visible('#requirement'), true);
     const primary = socket;
     socket = await connectBrowser(join(root, 'chrome-guide-independent'));
     await startCoverage();
     await cdp('Page.enable');
     await cdp('Page.navigate', { url: base });
     await login(accountA);
-    assert.equal(await visible('#workspace-guide'), false);
-    await openGuide();
+    assert.equal(await visible('#entry-coachmark'), false);
     await logout();
     await login(accountB, true);
-    assert.equal(await visible('#welcome-direct'), true);
-    await click('#guide-skip');
-    assert.equal(await visible('#workspace-guide'), false);
-    assert.equal(await visible('#guide-hint'), false);
+    assert.equal(await visible('#entry-coachmark'), true);
+    await escapeCoachmark();
     await sampleCoverage();
     socket = primary;
-    await openGuide();
 
     stage = 'three local samples are usable without upstream calls or saved tools';
     const generatedDirectories = async () => (await readdir(join(root, 'runs'))).filter(name => name.startsWith('run-')).sort();
     const before = await generatedDirectories();
     assert.deepEqual((await library()).items, []);
     await monitorGeneration();
-    await click('#welcome-fast');
-    assert.equal(await visible('#workspace-guide'), false);
+    await click('#quick-entry');
+    assert.equal(await visible('#entry-coachmark'), false);
     assert.equal(await visible('#quick-panel'), true);
-    await guideAt('#template-sample');
     for (const [key, title] of [['board', '交付跟进板'], ['list', '读书清单'], ['budget', 'AA 分账']]) {
       await click(`[data-entry-template="${key}"]`);
       await click('#template-sample');
@@ -676,7 +680,6 @@ try {
         assert.equal(await evaluate(`document.querySelector(${JSON.stringify(checkbox)}).checked`), !checked);
         assert.notEqual(await evaluate('document.querySelector("#sample-result").textContent'), previous);
       }
-      await guideAt('#template-generate');
       await click('#sample-close');
       assert.equal(await visible('#sample-preview'), false);
     }
@@ -693,11 +696,9 @@ try {
     assert.deepEqual(await evaluate('window.testGenerationPosts'), []);
     await click('#quick-entry');
     await click('[data-entry-template="list"]');
-    await guideAt('#template-sample');
     stage = 'explicit template generation creates one real fixture tool';
     await click('#template-generate');
   } else {
-    if (await visible('#workspace-guide')) await click('#guide-skip');
     assert.equal(await evaluate('document.querySelector("#generate").disabled'), true);
     await type('#requirement', '   ');
     assert.equal(await evaluate('document.querySelector("#generate").disabled'), true);
@@ -719,7 +720,7 @@ try {
     assert.equal(await evaluate('window.testGenerationPosts.length'), 1);
     assert.deepEqual((await library()).items.map(item => item.id), [first.id]);
     stage = 'first tool saved ends guide and publish remains locked';
-    assert.equal(await visible('#guide-hint'), false);
+    assert.equal(await visible('#entry-coachmark'), false);
     assert.equal(await visible('#first-tool-saved'), true);
     assert.equal(await visible('#publish-tool'), true);
     assert.equal(await evaluate('document.querySelector("#publish-tool").disabled'), true);
@@ -745,7 +746,7 @@ try {
     stage = 'first saved tool is available from the library';
     operatedTool = await selectHistory(first.id);
     assert.match(await evaluate('document.querySelector("#list").innerText', operatedTool.context), /星际旅行手记/);
-    assert.equal(await visible('#workspace-guide'), false);
+    assert.equal(await visible('#entry-coachmark'), false);
     await screenshot('entry-guide-completed');
   }
   await screenshot('record-added');
@@ -757,14 +758,16 @@ try {
   stage = 'reload workbench';
   await sampleCoverage();
   await cdp('Page.reload', { ignoreCache: true });
-  await until(() => evaluate('performance.getEntriesByType("navigation")[0]?.type === "reload"'));
-  let restored = await activeTool();
+  await until(() => evaluate('performance.getEntriesByType("navigation")[0]?.type === "reload" && document.documentElement.dataset.ready === "true"'));
+  assert.equal(await visible('#requirement'), true);
+  assert.equal(await visible('.elys-preview'), false);
+  let restored = await openLatest();
   assert.equal(restored.id, first.id);
   assert.notEqual(restored.loader, operatedTool.loader);
   assert.equal(await visible('.elys-composer'), false, '刷新恢复已有工具后隐藏新建区');
   assert.match(await evaluate('document.querySelector("#list").innerText', restored.context), /星际旅行手记/);
   if (entryFlow) {
-    assert.equal(await visible('#workspace-guide'), false, '完成引导后重新进入不应自动打开');
+    assert.equal(await visible('#entry-coachmark'), false, '回访不再自动引导');
     evidence.tests.push({ id: 'TEST-016-03/04', result: 'passed', autoShownOncePerAccountAcrossBrowsers: true,
       secondFreshAccountShown: true, skippedAndReopened: true, sampleUncounted: true, firstSavedEndsGuide: true,
       reducedMotionAndNarrowScreen: true, keyboardPaths: true, skipRetainsInput: true, foundSameTool: true, dismissedAfterReload: true });
@@ -816,7 +819,7 @@ try {
     await screenshot('live-revision');
     await cdp('Page.reload', { ignoreCache: true });
     await until(() => evaluate('document.documentElement.dataset.ready === "true"'));
-    updated = await activeTool();
+    updated = await openLatest();
     assert.equal(updated.id, first.id);
     assert.match(await evaluate(books, updated.context), /星际旅行手记/);
     assert.match(await evaluate(books, updated.context), /已读：设计中的设计/);
@@ -849,7 +852,8 @@ try {
   async function assertOldTool() {
     assert.equal(await evaluate('document.querySelector("#preview iframe[data-tool]").dataset.tool'), restored.id);
     assert.equal((await library()).latest, restored.id);
-    assert.equal(await evaluate('document.querySelector("#preview-status").textContent'), '上次工具仍可用');
+    assert.equal(await visible('.elys-preview'), false, '新建时预览为空');
+    assert.equal(await evaluate('document.querySelector("#workspace").dataset.mode'), 'compose');
     assert.equal(await evaluate('document.querySelector("#requirement").value'), requirements[1]);
     assert.match(await evaluate('document.querySelector("#list").innerText', restored.context), /星际旅行手记/);
   }
@@ -865,8 +869,8 @@ try {
 
   async function addOldRecord(name) {
     await type('#book', name, restored.context);
-    await pointerClick('form button', restored.context);
-    assert.ok(await evaluate('document.querySelector("#list").innerText.includes(' + JSON.stringify(name) + ')', restored.context));
+    await click('form button', restored.context);
+    await until(() => evaluate('document.querySelector("#list").innerText.includes(' + JSON.stringify(name) + ')', restored.context));
     await until(async () => JSON.stringify((await stored(restored.id)).entries).includes(name));
   }
 
@@ -986,7 +990,7 @@ try {
     await addOldRecord('手动同步后保存');
     await cdp('Page.reload', { ignoreCache: true });
     await until(() => evaluate('document.documentElement.dataset.ready === "true"'));
-    const refreshed = await activeTool();
+    const refreshed = await openLatest();
     assert.match(await historyVersion(), /v4 ·/);
     assert.match(await evaluate('document.querySelector("#list").innerText', refreshed.context), /手动同步后保存/);
     evidence.tests.push({ id: 'ROOT-S3-IA-02', result: 'passed', rejectedBeforeCommit: true,
@@ -1001,6 +1005,7 @@ try {
     if (!live) {
       stage = 'model failure retains editable old tool';
       await assertFailure(/模型输出不完整/);
+      restored = await openLatest();
       await addOldRecord('失败后新增的书');
       await screenshot('failure-with-old-tool');
 
@@ -1009,7 +1014,7 @@ try {
       const previousLoader = restored.loader;
       await cdp('Page.reload', { ignoreCache: true });
       await until(() => evaluate('performance.getEntriesByType("navigation")[0]?.type === "reload"'));
-      restored = await activeTool();
+      restored = await openLatest();
       assert.equal(restored.id, first.id);
       assert.notEqual(restored.loader, previousLoader);
       const afterFailure = await evaluate('document.querySelector("#list").innerText', restored.context);
@@ -1036,7 +1041,7 @@ try {
       await assertFailure(/无法保存工具/);
       await evaluate('window.restoreFixtureStorage()');
 
-      stage = 'retry keeps old tool usable in both phases';
+      stage = 'retry keeps the new preview empty in both phases';
       await evaluate('window.holdFixturePreview = true');
       await click('#generate');
       await until(() => evaluate('document.querySelector("#phase").textContent === "正在等待 DeepSeek 响应"'));
@@ -1048,18 +1053,16 @@ try {
       assert.equal(duplicate.status, 409);
       assert.equal(duplicate.body.code, 'busy');
       evidence.tests.push({ id: 'concurrent-generation', result: 'passed', secondRequestStatus: 409 });
-      await addOldRecord('等待模型时新增的书');
       await writeFile(join(root, 'release-model'), '');
       stage = 'wait for candidate preview phase';
       await until(() => evaluate('document.querySelector("#phase").textContent === "正在准备预览"'));
       assert.equal(await evaluate('document.querySelector("#generate").disabled'), true);
       await assertOldTool();
       assert.equal(await evaluate('document.querySelectorAll("#preview iframe").length'), 2);
-      stage = 'add during candidate preview';
-      await addOldRecord('准备预览时新增的书');
+      stage = 'reject storage messages from the hidden preview';
       const beforeForgery = await stored(restored.id);
       await evaluate(`(() => {
-        const previous = window.fixtureLastStorage;
+        const previous = {source: active.iframe.contentWindow, token: active.token};
         const payload = { type: 'storage', token: previous.token, entries: [['books', 'forged']] };
         const attempts = [
           { source: previous.source, origin: location.origin, data: payload },
@@ -1076,7 +1079,7 @@ try {
       evidence.tests.push({ id: 'failure-and-retry', result: 'passed',
         preserved: ['requirement', 'active tool', 'existing and newly added records'],
         failures: ['incomplete output', 'preview initialization', 'browser persistence'],
-        interaction: ['after failure', 'waiting for model', 'preparing candidate'] });
+        interaction: ['old tool reopened after failure'], emptyNewPreview: true });
     }
 
     stage = 'switch to ready budget tool and calculate';
@@ -1098,7 +1101,7 @@ try {
     if (!live) {
       assert.equal(await evaluate('document.body.dataset.readingData', second.context), 'absent');
       const oldData = JSON.stringify((await stored(first.id)).entries);
-      for (const record of ['失败后新增的书', '等待模型时新增的书', '准备预览时新增的书']) {
+      for (const record of ['星际旅行手记', '失败后新增的书']) {
         assert.ok(oldData.includes(record));
       }
       await until(async () => (await stored(second.id)).entries.some(([key]) => key === 'budget-values'));
@@ -1137,8 +1140,8 @@ try {
         assert.match(await evaluate('document.querySelector("#tool-list button[aria-current=true]").dataset.version'), /^v\d+$/);
         assert.equal(await evaluate('document.documentElement.scrollWidth > document.documentElement.clientWidth'), false);
         if (width === 390) {
-          assert.equal(await evaluate(`document.querySelector('.elys-preview').getBoundingClientRect().top >
-            document.querySelector('.tool-library').getBoundingClientRect().bottom`), true);
+          assert.equal(await evaluate(`document.querySelector('.elys-preview').getBoundingClientRect().left >=
+            document.querySelector('.workspace-sidebar').getBoundingClientRect().right`), true);
         }
         await screenshot('library-' + width);
 
@@ -1147,15 +1150,16 @@ try {
         assert.equal(await visible('#idea-entry'), true);
         assert.equal(await evaluate('document.activeElement.id'), 'requirement');
         assert.equal((await activeTool()).loader, second.loader);
-        await click('#return-to-library');
+        assert.equal(await visible('.elys-preview'), false);
+        await click('#library-entry');
         assert.equal(await visible('.elys-composer'), false);
-        assert.equal(await evaluate('document.activeElement.id'), 'new-tool');
+        assert.equal(await evaluate('document.activeElement.id'), 'library-entry');
 
         await click('#revise-tool');
         assert.equal(await visible('#requirement'), true);
         assert.equal(await evaluate('document.activeElement.id'), 'requirement');
         assert.match(await evaluate('document.querySelector("#composer-title").textContent'), /修改/);
-        for (const id of ['quick-entry', 'direct-entry', 'table-entry', 'guide-start', 'staged-task-list']) {
+        for (const id of ['quick-entry', 'direct-entry', 'table-entry', 'staged-task-list']) {
           assert.equal(await visible('#' + id), false, '修改时隐藏 ' + id);
         }
         await screenshot('revision-' + width);
@@ -1174,7 +1178,7 @@ try {
         await cdp('Page.reload', { ignoreCache: true });
         await until(() => evaluate(`performance.timeOrigin !== ${previousNavigation} &&
           document.documentElement.dataset.ready === "true"`));
-        const reopened = await activeTool();
+        const reopened = await openLatest();
         assert.equal(reopened.id, second.id);
         second.loader = reopened.loader;
         second.context = reopened.context;
@@ -1199,7 +1203,7 @@ try {
       await cdp('Page.enable');
       await cdp('Page.navigate', { url: base });
       await login(accountA);
-      let tool = await activeTool();
+      let tool = await openLatest();
       assert.equal(tool.id, second.id);
       assert.equal(await evaluate('document.querySelector("#total").innerText.trim()', tool.context), '405');
       tool = await selectHistory(first.id);
@@ -1219,9 +1223,9 @@ try {
       await cdp('Page.reload', {ignoreCache: true});
       await until(() => evaluate(`performance.timeOrigin !== ${beforeReturn} &&
         document.documentElement.dataset.ready === "true"`));
-      restored = await activeTool();
+      restored = await openLatest();
       assert.equal(restored.id, first.id);
-      assert.equal(await visible('#workspace-guide'), false);
+      assert.equal(await visible('#entry-coachmark'), false);
       assert.equal(await evaluate('document.querySelector("#library-entry").getAttribute("aria-current")'), 'page');
       assert.match(await evaluate('document.querySelector("#list").innerText', restored.context), /独立浏览器保存的书/);
       evidence.tests.push({id: 'TEST-006-03', result: 'passed', lastToolSharedByAccount: true, savedRecordRecovered: true});
@@ -1285,7 +1289,7 @@ try {
       assert.deepEqual((await appRequest(versionPath)).body, history);
       await logout();
       await login(accountA);
-      tool = await activeTool();
+      tool = await openLatest();
       assert.equal(tool.id, first.id);
       assert.match(await evaluate('document.querySelector("#list").innerText', tool.context), /独立浏览器保存的书/);
       assert.match(await evaluate(books, tool.context), /已读：并发新增记录/);
@@ -1343,7 +1347,7 @@ try {
     await evaluate('document.querySelector("#requirement").value = ""');
     const custom = '做一个夜读笔记的读书清单，支持新增书名并保存。';
     await type('#requirement', custom);
-    assert.equal(await evaluate('document.querySelector("#generate").textContent'), '直接生成');
+    assert.equal(await evaluate('document.querySelector("#generate").textContent'), '开始');
     assert.deepEqual(await evaluate('window.testGenerationPosts'), []);
     await click('#generate');
     const directTool = await activeTool(previous);
@@ -1360,35 +1364,44 @@ try {
       await login('qa-guide-' + path + '-' + Date.now().toString(36), true);
       const narrow = path !== 'direct';
       await cdp('Emulation.setDeviceMetricsOverride', {width:narrow ? 390 : 1360,height:844,deviceScaleFactor:1,mobile:narrow});
-      await guideAt('#welcome-fast');
       if (path === 'assistant') {
-        await click('#welcome-idea');
-        await guideAt('#assistant-idea-text');
+        await click('#assistant-entry');
+        assert.equal(await evaluate('document.querySelector("#idea-entry").getAttribute("aria-current")'), 'page');
         await type('#assistant-idea-text', '做一个读书清单，可以新增书名并保存。');
         await click('#assistant-analyze button');
-        await guideAt('#assistant-build');
+        await until(() => visible('#assistant-build'));
+        await click('#assistant-save');
+        await until(async () => (await evaluate('document.querySelector("#assistant-status")?.textContent || ""')).includes('已保存'));
+        await click('#drafts-entry');
+        await until(() => evaluate('document.querySelector(".assistant-draft-list button")?.checkVisibility()'));
+        await click('#idea-entry');
+        assert.equal(await evaluate('document.querySelector("#idea-entry").getAttribute("aria-current")'), 'page');
+        await click('#drafts-entry');
+        await until(() => evaluate('document.querySelector(".assistant-draft-list button")?.checkVisibility()'));
+        assert.equal(await evaluate('document.querySelector("#drafts-entry").getAttribute("aria-current")'), 'page');
+        await click('.assistant-draft-list button');
+        await until(() => visible('#assistant-build'));
+        await screenshot('saved-draft-from-left-navigation');
         await click('#assistant-build');
-        await guideAt('#generate');
+        assert.equal(await evaluate('document.querySelector("#new-tool").getAttribute("aria-current")'), 'page');
+        assert.equal(await evaluate('document.querySelector("#requirement").readOnly'), false);
         await click('#generate');
       } else {
-        await click('#welcome-direct');
-        await guideAt('#requirement');
+        await click('#direct-entry');
         if (path === 'table') {
           await click('#table-entry');
-          await guideAt('#table-file');
           await click('#table-example');
-          await guideAt('#table-confirm');
+          await until(() => evaluate('document.querySelector("#table-confirm")?.checkVisibility() && !document.querySelector("#table-confirm").disabled'));
           await click('#table-confirm');
         } else {
           await generate('回归：强制新建失败');
           await until(async () => (await evaluate('document.querySelector("#error").textContent')).length > 0);
           assert.equal((await library()).items.length, 0);
-          await guideAt('#generate');
           await generate(requirements[0]);
         }
       }
       await activeTool();
-      assert.equal(await visible('#guide-hint'), false);
+      assert.equal(await visible('#entry-coachmark'), false);
       assert.equal(await visible('#first-tool-saved'), true);
       assert.equal(await evaluate('document.documentElement.scrollWidth <= innerWidth'), true);
       await screenshot('first-saved-' + path);

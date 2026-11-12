@@ -10,7 +10,10 @@ const preview = byId('preview');
 const workspace = byId('workspace');
 const composer = form.closest('section');
 const library = byId('saved-tools');
-const welcome = byId('workspace-guide');
+const previewSection = preview.closest('section');
+const coachmark = byId('entry-coachmark');
+const primaryNavigation = ['new-tool', 'idea-entry', 'drafts-entry', 'library-entry'];
+form.append(coachmark);
 const toolHistory = byId('tool-version-panel');
 const restoreDialog = byId('restore-version-dialog');
 const maxStorageBytes = 256 * 1024;
@@ -36,8 +39,7 @@ let pendingPublication = null;
 let entryMode = 'direct';
 let templateKey = 'board';
 let sampleTemplate = null;
-let guideActive = false;
-let guideTarget = null;
+let assistantDestination = 'idea-entry';
 let trial = null;
 let trialRequest = 0;
 const validStagedId = id => typeof id === 'string' && /^[a-f0-9]{32}$/.test(id);
@@ -108,22 +110,21 @@ function render() {
   const showingSample = Boolean(sampleTemplate);
   const showingTool = Boolean(active) && !showingSample;
   product.dataset.state = pending ? 'loading' : failure ? 'failure' : active ? 'success' : 'initial';
-  generate.textContent = pending ? '生成中…' : failure ? '重试' : editing && stagedEnabled ? '查看修改方案' : editing ? '生成新版' : '直接生成';
+  const atStart = workspace.dataset.mode === 'start';
+  generate.textContent = pending ? '生成中…' : failure ? '重试' : editing && stagedEnabled ? '查看修改方案' : editing ? '生成新版' : atStart ? '开始' : '直接生成';
   generate.disabled = !session || !configured || !networkIsolated || phase === 'startup' || blocked ||
     tableMode || returning || Boolean(pendingRevision) || !requirement.value.trim();
   requirement.readOnly = blocked;
   byId('generation-scope').hidden = !stagedEnabled || editing || tableMode;
   generationCategory.disabled = blocked;
-  byId('new-tool').disabled = byId('idea-entry').disabled = byId('library-entry').disabled = blocked;
   const assistantOpen = !byId('assistant-panel').hidden;
-  const browsing = workspace.dataset.mode === 'browse' && !assistantOpen && welcome.hidden;
+  const browsing = !assistantOpen && (workspace.dataset.mode === 'browse' || editing);
   library.hidden = !browsing;
   byId('library-entry').setAttribute('aria-expanded', String(browsing));
-  if (browsing) byId('library-entry').setAttribute('aria-current', 'page');
-  else byId('library-entry').removeAttribute('aria-current');
-  if (assistantOpen) byId('idea-entry').setAttribute('aria-current', 'page');
-  else byId('idea-entry').removeAttribute('aria-current');
-  byId('new-tool-options').hidden = editing;
+  markNavigation(assistantOpen ? assistantDestination : browsing ? 'library-entry' : 'new-tool');
+  for (const id of primaryNavigation) byId(id).disabled = blocked;
+  byId('new-tool-options').hidden = !atStart && !['fast', 'table'].includes(entryMode);
+  previewSection.hidden = !browsing && !editing && !showingSample && !syncing && !stagedPendingId;
   const returnToLibrary = byId('return-to-library');
   returnToLibrary.hidden = !active;
   returnToLibrary.disabled = blocked;
@@ -138,10 +139,11 @@ function render() {
     }
   }
   byId('preview-title').textContent = showingSample ? quickTemplates[sampleTemplate].title : currentTitle;
-  byId('composer-title').textContent = editing ? '要怎样修改这个工具？' : '你想做什么工具？';
+  byId('composer-title').textContent = editing ? '要怎样修改这个工具？' :
+    atStart || entryMode !== 'direct' ? '你想做什么工具？' : '生成工具';
   byId('requirement-label').textContent = editing ? '修改「' + currentTitle + '」' : '工具需求';
   requirement.placeholder = editing ? '例如：增加一个按负责人筛选。'
-    : '例如：做一个读书清单，添加书名后，刷新页面还能看见。';
+    : '描述你想做的工具、怎么用、需要保存哪些数据。';
   byId('revise-tool').hidden = byId('tool-history').hidden = byId('publish-lock').hidden = syncing || !showingTool;
   byId('revise-tool').disabled = blocked || !configured;
   byId('tool-history').textContent = active ? '工具 v' + active.version + ' · 版本历史' : '版本历史';
@@ -199,14 +201,13 @@ function render() {
   byId('quick-entry').setAttribute('aria-pressed', String(fast));
   byId('direct-entry').setAttribute('aria-pressed', String(entryMode === 'direct' && !editing));
   byId('table-entry').setAttribute('aria-pressed', String(tableMode));
-  for (const button of [byId('quick-entry'), byId('direct-entry'), byId('table-entry'), byId('idea-entry'), byId('template-sample'),
+  for (const button of [byId('quick-entry'), byId('direct-entry'), byId('table-entry'), byId('assistant-entry'), byId('template-sample'),
     byId('template-customize'), ...document.querySelectorAll('[data-entry-template]')]) {
     button.disabled = blocked;
   }
   byId('template-generate').disabled = blocked || !configured || !networkIsolated;
   byId('guide-start').disabled = blocked;
   renderStagedTasks(blocked, restriction);
-  renderGuide();
 }
 
 async function api(path, options) {
@@ -625,6 +626,8 @@ function labelTool(button, version) {
   button.setAttribute('aria-label', button.dataset.title + ' · 版本 ' + version);
 }
 
+let latestToolId;
+
 async function loadLibrary(timeout) {
   const { items, latest } = await workspaceApi('/api/tools', undefined, timeout);
   const buttons = items.map(tool => {
@@ -643,79 +646,39 @@ async function loadLibrary(timeout) {
   byId('tool-list').replaceChildren(...buttons);
   byId('library-empty').hidden = items.length > 0;
   render();
+  latestToolId = latest;
   return latest;
 }
 
-function compose(enabled) {
-  workspace.dataset.mode = enabled ? 'compose' : 'browse';
+function compose(enabled, mode = 'compose') {
+  workspace.dataset.mode = enabled ? mode : 'browse';
   composer.hidden = !enabled;
+  if (workspace.dataset.mode !== 'start') dismissCoachmark();
 }
 
-function chooseWelcomePath() {
-  welcome.hidden = true;
+function markNavigation(current) {
+  for (const id of primaryNavigation) {
+    if (id === current) byId(id).setAttribute('aria-current', 'page');
+    else byId(id).removeAttribute('aria-current');
+  }
 }
 
-function showWelcome() {
-  guideActive = true;
-  requirementAssistant.close();
-  welcome.hidden = false;
-  render();
-  byId('guide-title').focus();
+function dismissCoachmark() {
+  coachmark.hidden = true;
+  form.removeAttribute('data-guided');
+  requirement.removeAttribute('aria-describedby');
 }
 
-function guideStep() {
-  const visible = id => byId(id)?.checkVisibility();
-  if (!welcome.hidden) return ['welcome-fast', '可以快速试一个模板，也可以直接开发或先梳理需求。'];
-  if (!byId('assistant-panel').hidden) {
-    if (visible('assistant-idea-text')) {
-      return ['assistant-idea-text', '写下你想解决的问题，再点「分析我的想法」。'];
-    }
-    if (visible('assistant-directions')) {
-      return ['#assistant-directions [data-direction]', '选择与你的问题最贴近的方向。'];
-    }
-    if (visible('assistant-questions')) {
-      const first = [...byId('assistant-questions').querySelectorAll('select')].find(input => !input.value);
-      return first ? [first.id, '选择适合你的答案。'] : ['assistant-organize', '把选好的答案整理成需求草稿。'];
-    }
-    if (visible('assistant-draft-editor')) return ['assistant-build', '检查草稿，可以保存，也可以带到直接开发。'];
-    return ['assistant-drafts-back', '从列表打开已保存的需求，或回到上一步。'];
-  }
-  if (composer.hidden) return ['new-tool', '点「新建工具」，选择一种方式开始。'];
-  if (entryMode === 'table') {
-    return visible('table-review') ? ['table-confirm', '核对文件、字段和记录后再生成。']
-      : ['table-file', '选一份带表头的 CSV 或 XLSX。'];
-  }
-  if (entryMode === 'fast') {
-    return sampleTemplate ? ['template-generate', '样例可以直接试用。要保存自己的工具，请用这个模板生成。']
-      : ['template-sample', '先试样例，或用当前模板生成自己的工具。'];
-  }
-  if (requirement.value.trim()) return ['generate', '需求填好后，点这里开始生成。'];
-  return ['requirement', '写清工具要做什么、要记录哪些内容。也可以从表格开始。'];
+function showCoachmark() {
+  coachmark.hidden = false;
+  form.setAttribute('data-guided', '');
+  requirement.setAttribute('aria-describedby', coachmark.id);
 }
 
-function renderGuide() {
-  const hint = byId('guide-hint');
-  const [selector, copy] = guideActive ? guideStep() : [];
-  const target = selector && (selector.startsWith('#') ? document.querySelector(selector) : byId(selector));
-  if (guideTarget !== target) {
-    if (guideTarget) {
-      guideTarget.removeAttribute('data-guide-target');
-      const descriptions = (guideTarget.getAttribute('aria-describedby') || '').split(' ')
-        .filter(id => id && id !== 'guide-hint-text');
-      if (descriptions.length) guideTarget.setAttribute('aria-describedby', descriptions.join(' '));
-      else guideTarget.removeAttribute('aria-describedby');
-    }
-    guideTarget = target;
-    if (target) {
-      target.setAttribute('data-guide-target', '');
-      const description = target.getAttribute('aria-describedby');
-      target.setAttribute('aria-describedby', [description, 'guide-hint-text'].filter(Boolean).join(' '));
-      target.after(hint);
-    }
-  }
-  hint.hidden = !target;
-  if (target && byId('guide-hint-text').textContent !== copy) byId('guide-hint-text').textContent = copy;
-}
+requirement.addEventListener('focus', dismissCoachmark);
+document.addEventListener('keydown', event => {
+  if (event.key === 'Escape' && !coachmark.hidden) dismissCoachmark();
+});
 
 function hideSample() {
   if (!sampleTemplate) return;
@@ -739,18 +702,20 @@ function enterQuickExperience() {
 const tableImport = setupTableImport({
   request: workspaceApi,
   generate: generateTable,
-  onGuideUpdate: renderGuide,
   onExit: () => beginComposition(false, requirement.value),
 });
 const requirementAssistant = setupRequirementAssistant({
   request: workspaceApi,
   offerStorageKey: () => 'root:assistant-offer:' + session.marker,
-  onGuideUpdate: renderGuide,
+  onViewChange: view => {
+    if (view === 'drafts') assistantDestination = 'drafts-entry';
+    else if (view === 'idea') assistantDestination = 'idea-entry';
+    if (!byId('assistant-panel').hidden) markNavigation(assistantDestination);
+  },
   onBuild: text => beginComposition(false, text),
   onExit: () => {
-    requirementAssistant.close();
-    render();
-    byId('idea-entry').focus();
+    beginComposition(false, requirement.value, byId('generation-category').value, false);
+    byId('new-tool').focus();
   },
 });
 
@@ -766,38 +731,23 @@ byId('table-entry').addEventListener('click', () => {
   render();
   tableImport.open();
 });
-function openAssistant() {
-  chooseWelcomePath();
+function openAssistant(destination) {
+  dismissCoachmark();
   hideSample();
-  requirementAssistant.open();
+  requirementAssistant.open(destination);
+  assistantDestination = destination === 'drafts' ? 'drafts-entry' : 'idea-entry';
   render();
 }
 
-byId('idea-entry').addEventListener('click', openAssistant);
+byId('idea-entry').addEventListener('click', () => openAssistant());
+byId('assistant-entry').addEventListener('click', () => openAssistant());
+byId('drafts-entry').addEventListener('click', () => openAssistant('drafts'));
 byId('guide-start').addEventListener('click', () => {
   if (phase !== 'idle' || pendingPublication || stagedPendingId) return;
   byId('account').open = false;
-  showWelcome();
-});
-byId('welcome-fast').addEventListener('click', () => {
-  chooseWelcomePath();
-  enterQuickExperience();
-});
-byId('welcome-direct').addEventListener('click', () => beginComposition(false));
-byId('welcome-idea').addEventListener('click', openAssistant);
-byId('guide-skip').addEventListener('click', () => {
-  guideActive = false;
-  chooseWelcomePath();
-  render();
+  beginComposition(false, requirement.value, byId('generation-category').value, false);
   byId('new-tool').focus();
-});
-byId('guide-dismiss').addEventListener('click', () => {
-  const target = guideTarget;
-  guideActive = false;
-  if (!welcome.hidden) chooseWelcomePath();
-  render();
-  if (target?.checkVisibility() && !target.disabled) target.focus();
-  else byId('new-tool').focus();
+  showCoachmark();
 });
 for (const button of document.querySelectorAll('[data-entry-template]')) {
   button.addEventListener('click', () => {
@@ -913,10 +863,7 @@ function loadReleases() {
 
 function renderRoute(focus = false) {
   const updates = location.pathname === '/updates';
-  if (updates) {
-    guideActive = false;
-    chooseWelcomePath();
-  }
+  if (updates) dismissCoachmark();
   byId('updates').hidden = byId('updates-back').hidden = !updates;
   byId('account').open = false;
   byId('auth').hidden = updates || !identityResolved || Boolean(session);
@@ -1575,11 +1522,7 @@ example.addEventListener('click', () => {
   render();
 });
 function finishComposition(saved = false) {
-  if (saved && guideActive) {
-    guideActive = false;
-    chooseWelcomePath();
-    byId('first-tool-saved').hidden = false;
-  }
+  if (saved) byId('first-tool-saved').hidden = false;
   editing = false;
   entryMode = 'direct';
   requirement.value = '';
@@ -1704,8 +1647,7 @@ async function selectTool(id, source) {
   }
 }
 
-function beginComposition(revise, value = '', category = 'auto') {
-  chooseWelcomePath();
+function beginComposition(revise, value = '', category = 'auto', focus = true) {
   requirementAssistant.close();
   byId('first-tool-saved').hidden = true;
   clearStagedSelection();
@@ -1713,17 +1655,16 @@ function beginComposition(revise, value = '', category = 'auto') {
   if (entryMode === 'table') tableImport.close();
   editing = revise;
   entryMode = 'direct';
-  compose(true);
+  compose(true, revise ? 'compose' : 'start');
   requirement.value = value;
   byId('generation-category').value = category;
   failure = '';
   render();
-  requirement.focus();
+  if (focus) requirement.focus();
 }
 byId('new-tool').addEventListener('click', () => beginComposition(false));
 byId('revise-tool').addEventListener('click', () => beginComposition(true));
 function browseLibrary(focus) {
-  chooseWelcomePath();
   requirementAssistant.close();
   const trigger = byId(focus);
   byId('first-tool-saved').hidden = true;
@@ -1734,6 +1675,7 @@ function browseLibrary(focus) {
   finishComposition();
   render();
   trigger.focus();
+  if (!active && latestToolId) selectTool(latestToolId);
 }
 byId('return-to-library').addEventListener('click', () => browseLibrary(editing ? 'revise-tool' : 'new-tool'));
 byId('library-entry').addEventListener('click', () => browseLibrary('library-entry'));
@@ -1852,7 +1794,7 @@ window.addEventListener('focus', async () => {
 async function start(registration = null) {
   phase = 'startup';
   try {
-    compose(true);
+    compose(true, 'start');
     renderEntryTemplate(templateKey);
     loadReleases();
     renderRoute();
@@ -1883,11 +1825,11 @@ async function start(registration = null) {
         await synchronizePublication();
       } else {
         const previousStagePublication = stagedEnabled ? restoredStagedPublication() : null;
-        if (latest) {
-          phase = 'idle';
-          await selectTool(latest);
-        }
         if (previousStagePublication) {
+          if (latest) {
+            phase = 'idle';
+            await selectTool(latest);
+          }
           rememberStagedPublication(previousStagePublication.id, previousStagePublication.nonce);
           selectedStagedId = previousStagePublication.id;
           compose(true);
@@ -1901,7 +1843,7 @@ async function start(registration = null) {
     }
     if (stagedEnabled) await refreshStagedTasks();
     if (registration && location.pathname !== '/updates') {
-      showWelcome();
+      showCoachmark();
     }
   } catch (error) {
     if (!session) {

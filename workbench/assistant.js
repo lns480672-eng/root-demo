@@ -1,6 +1,6 @@
 'use strict';
 
-function setupRequirementAssistant({request, offerStorageKey, onGuideUpdate, onBuild, onExit}) {
+function setupRequirementAssistant({request, offerStorageKey, onViewChange, onBuild, onExit}) {
   const panel = document.getElementById('assistant-panel');
   const draftsPath = '/api/requirement-drafts';
   const maxIdea = 1200;
@@ -136,7 +136,7 @@ function setupRequirementAssistant({request, offerStorageKey, onGuideUpdate, onB
     build.disabled = !isText(editor.value, maxDraft);
     retryList.disabled = pending;
     dirty.hidden = !editor.value || editor.value === draft?.savedText;
-    onGuideUpdate();
+    onViewChange(view);
   }
 
   function invalidate() {
@@ -374,7 +374,7 @@ function setupRequirementAssistant({request, offerStorageKey, onGuideUpdate, onB
 
   refresh();
   return {
-    open() {
+    open(destination) {
       panel.hidden = false;
       try {
         pendingOffer ??= sessionStorage.getItem(offerStorageKey());
@@ -382,7 +382,9 @@ function setupRequirementAssistant({request, offerStorageKey, onGuideUpdate, onB
         // Session storage is optional.
       }
       refresh();
-      views[view].querySelector('h2').focus();
+      if (destination === 'drafts') openDrafts();
+      else if (view === 'drafts') show(previousView);
+      else views[view].querySelector('h2').focus();
     },
     close() {
       invalidate();
