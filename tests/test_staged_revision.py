@@ -97,14 +97,10 @@ class RevisionContextTests(unittest.TestCase):
         with self.assertRaises(ApiError):
             revision.check("assemble", blueprint.assemble(changed), base, "增加设备精确筛选", previous=changed)
 
-    def test_website_revision_preserves_the_template_layout(self):
+    def test_website_revision_preserves_the_layout(self):
         spec = {"kind": "website", "layout": "brand", "title": "山野咖啡", "goal": "品牌和菜单"}
-        content = {
-            "intro": {"heading": "山野咖啡", "body": "品牌介绍"},
-            "catalog": {"title": "菜单", "filters": [],
-                        "items": [{"name": "山野冷萃", "description": "冷饮", "filter": None}]},
-            "faq": [{"question": "可堂食吗？", "answer": "可以。"}],
-        }
+        content = {"format": "website-code-v1", "markup": "<h1>山野咖啡</h1><p>品牌介绍</p>",
+                   "style": "", "script": "void 0;"}
         source = {"spec.json": encode(spec), "implementation.json": encode(content)}
         base = revision.prepare(source)
         self.assertEqual(base["kind"], "website")
@@ -116,9 +112,9 @@ class RevisionContextTests(unittest.TestCase):
         with self.assertRaises(ApiError) as unchanged:
             revision.check("assemble", blueprint.assemble(source), base, previous=source)
         self.assertEqual(unchanged.exception.code, "revision_no_change")
-        revised = {**source, "implementation.json": encode({**content, "intro": {
-            **content["intro"], "body": "新的品牌介绍",
-        }})}
+        revised = {**source, "implementation.json": encode({
+            **content, "markup": "<h1>山野咖啡</h1><p>新的品牌介绍</p>",
+        })}
         revision.check("assemble", blueprint.assemble(revised), base, previous=revised)
 
     def test_ledger_color_rejects_model_substitution_for_unsupported_request(self):

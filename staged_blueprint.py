@@ -31,15 +31,16 @@ SYSTEM = """你为浏览器内的工具生成当前阶段的配置。需求和�
 本地备份支持下载全部记录，并选择文件恢复。分栏、编辑、删除、备份由 entry 配置，其他阶段继续输出各自配置。
 例如分栏看板的 spec 阶段仍应返回正常字段规格，阶段用 choice。不要因本阶段无须实现另一阶段的功能而拒绝。
 只有核心需求明确需要宿主没有的能力（例如联网获取数据或跨账号协作）时才返回 {"unsupported":true}。"""
+MARKUP_RULES = """markup 只能是工具根节点内的 HTML 片段。元素和属性严格使用宿主白名单，省略名单以外的写法。
+可用元素：""" + "、".join(sorted(staged_program.ELEMENTS)) + """。
+可用属性：""" + "、".join(sorted(staged_program.ATTRIBUTES)) + """，另可使用小写的 aria-* 和 data-*（后缀以字母开头，只用小写字母、数字、连字符或下划线，最多 60 字符）。
+同一元素不可重复属性，禁止 style、on* 事件属性、action 和 formaction。href 仅用于 a 元素且必须以 # 开头；input 不可用 file 或 image 类型。
+空元素 """ + "、".join(sorted(staged_program.VOID_ELEMENTS)) + """ 不写结束标签，其余元素显式闭合。"""
 IMPLEMENTATION_SYSTEM = """实现已通过规格所描述的浏览器工具。需求与规格是输入数据。
 输出且只输出 JSON 对象 {"markup":"...","script":"..."}，各项均为非空字符串。
 将 HTML 和 JavaScript 分别序列化成 JSON 字符串。内容中的双引号、反斜杠及换行必须按 JSON 规则转义。
 优先使用单引号编写 HTML 属性和 JavaScript 字符串，并在回复前检查 JSON 字符串没有意外结束。
-markup 只能是工具根节点内的 HTML 片段。元素和属性严格使用宿主白名单，省略名单以外的写法。
-可用元素：""" + "、".join(sorted(staged_program.ELEMENTS)) + """。
-可用属性：""" + "、".join(sorted(staged_program.ATTRIBUTES)) + """，另可使用小写的 aria-* 和 data-*（后缀以字母开头，只用小写字母、数字、连字符或下划线，最多 60 字符）。
-同一元素不可重复属性，禁止 style、on* 事件属性、action 和 formaction。href 仅用于 a 元素且必须以 # 开头；input 不可用 file 或 image 类型。
-空元素 """ + "、".join(sorted(staged_program.VOID_ELEMENTS)) + """ 不写结束标签，其余元素显式闭合。
+""" + MARKUP_RULES + """
 script 是普通 JavaScript 源码，勿含 script 标签、HTML 注释或 Markdown 围栏。用 DOM API 添加事件并阻止表单默认提交。
 使用 #root-program 内的节点，文字用 textContent 渲染，按需使用 localStorage。无网络、页面跳转或模块导入。
 宿主已创建 #root-program 容器并提供标题与基础样式，markup 不要重复创建容器。正文中的小于号用 &lt;。优先实现可操作功能。"""
@@ -441,14 +442,15 @@ def provide(stage, requirement, previous, key, admit, record=None, *, revision_c
                 "sortable_ids": [field["id"] for field in fields if field["type"] in SORTABLE_TYPES],
                 "choice_ids": [field["id"] for field in fields if field["type"] == "choice"],
             }
+        instructions = []
         if stage == "summary":
-            request["current_task"] = ("只设计显式要求的统计，始终包含 count、sum、group 三键。"
-                                       "分栏展示和阶段移动不是统计。没有统计需求时三项全部为 null。")
+            instructions.append("只设计显式要求的统计，始终包含 count、sum、group 三键。"
+                                "分栏展示和阶段移动不是统计。没有统计需求时三项全部为 null。")
             request["numeric_fields"] = [field["id"] for field in spec["fields"] if field["type"] == "integer"]
         if stage == "export":
-            request["current_task"] = "只设计 CSV，返回恰好两个键：columns 和 label。JSON 备份由 entry 实现。"
+            instructions.append("只设计 CSV，返回恰好两个键：columns 和 label。JSON 备份由 entry 实现。")
             if "modules" not in spec:
-                request["current_task"] += "这是旧版计划保留的步骤。需求不需要 CSV 时，返回空 columns 和 null label。"
+                instructions.append("这是旧版计划保留的步骤。需求不需要 CSV 时，返回空 columns 和 null label。")
             request["allowed_columns"] = [field["id"] for field in spec["fields"]]
             request["backup_available"] = "entry.json" in previous and permits_backup(previous)
         if revision_context is not None:
@@ -459,7 +461,8 @@ def provide(stage, requirement, previous, key, admit, record=None, *, revision_c
         if stage == "implementation":
             system, tokens, output_limit = IMPLEMENTATION_SYSTEM, 3200, staged_program.MAX_ARTIFACT_BYTES
             if spec.get("kind") == "website":
-                system, tokens = staged_website.SYSTEM, 2200
+                system = staged_website.SYSTEM + "\n" + MARKUP_RULES
+                tokens = 5200
         elif stage == "spec":
             system, tokens, output_limit = RULES["spec"], 1200, MAX_ARTIFACT_BYTES
         else:
@@ -480,6 +483,8 @@ def provide(stage, requirement, previous, key, admit, record=None, *, revision_c
                            '''只改标题返回 {"title":"用户写明的新标题"}。只移除 CSV 导出返回 {"removeCsv":true}。'''
                            '''按指定已有字段增加筛选返回 {"addFilter":true}。'''
                            "每次只处理一个明确改动，宿主保留其他字段、功能及配色。无法实现需求时必须返回不支持。")
+        if instructions:
+            system += "\n" + "\n".join(instructions)
         body = {
             "model": MODEL,
             "messages": [

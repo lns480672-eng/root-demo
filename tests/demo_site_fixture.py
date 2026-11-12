@@ -6,19 +6,47 @@ import assistant_model
 import staged_blueprint
 
 
-COFFEE = {
-    "intro": {"heading": "山野咖啡", "body": "从山野选豆，在城市分享新鲜烘焙的咖啡。"},
-    "catalog": {
-        "title": "咖啡菜单",
-        "filters": [{"id": "cold", "label": "冷饮"}, {"id": "hot", "label": "热饮"}],
-        "items": [
-            {"name": "山野冷萃", "description": "低温浸萃，清爽回甘。", "filter": "cold"},
-            {"name": "燕麦冰拿铁", "description": "轻柔燕麦与浓缩咖啡。", "filter": "cold"},
-            {"name": "手冲咖啡", "description": "小批次烘焙，现磨现冲。", "filter": "hot"},
-        ],
-    },
-    "faq": [{"question": "可以选咖啡豆吗？", "answer": "手冲咖啡可选当日豆单。"}],
+def website_code(layout):
+    navigation = ""
+    if layout == "brand":
+        navigation = """<nav aria-label="网站导航">
+<button data-route="home" aria-current="page">首页</button>
+<button data-route="catalog">菜单</button>
+<button data-route="faq">问答</button>
+</nav>"""
+    hidden = " hidden" if layout == "brand" else ""
+    return {
+        "format": "website-code-v1",
+        "markup": f"""{navigation}
+<section data-page="home"><h1>山野咖啡</h1><p>从山野选豆，在城市分享咖啡。</p></section>
+<section id="site-catalog" data-page="catalog"{hidden}>
+<h2>咖啡菜单</h2><div id="site-filters">
+<button data-filter="cold">冷饮</button><button data-filter="hot">热饮</button>
+</div><article data-item-filter="cold">山野冷萃</article>
+<article data-item-filter="cold">燕麦冰拿铁</article>
+<article data-item-filter="hot">手冲咖啡</article></section>
+<section id="site-faq" data-page="faq"{hidden}><h2>常见问题</h2>
+<details><summary>可以选咖啡豆吗？</summary><p>手冲咖啡可选当日豆单。</p></details></section>""",
+        "style": "body { margin: 0; } main { padding: 16px; } button { margin: 4px; }",
+        "script": """
+const root = document.getElementById('root-website');
+const navigation = root.querySelectorAll('[data-route]');
+const pages = root.querySelectorAll('[data-page]');
+for (const button of navigation) {
+  button.addEventListener('click', () => {
+    for (const page of pages) page.hidden = page.dataset.page !== button.dataset.route;
+    for (const item of navigation) item.removeAttribute('aria-current');
+    button.setAttribute('aria-current', 'page');
+  });
 }
+const items = root.querySelectorAll('[data-item-filter]');
+for (const button of root.querySelectorAll('#site-filters button')) {
+  button.addEventListener('click', () => {
+    for (const item of items) item.hidden = item.dataset.itemFilter !== button.dataset.filter;
+  });
+}
+""",
+    }
 
 
 def demo_site_provider(stage, requirement, prior, key, admit, record, *, category="auto"):
@@ -29,7 +57,7 @@ def demo_site_provider(stage, requirement, prior, key, admit, record, *, categor
         layout = category
     assert layout in {"landing", "brand"}
     spec = {"kind": "website", "layout": layout, "title": "山野咖啡", "goal": "品牌介绍和咖啡菜单"}
-    content = {"spec": spec, "implementation": COFFEE}[stage]
+    content = {"spec": spec, "implementation": website_code(layout)}[stage]
 
     def exchange(payload, reserve, **_):
         reserve()

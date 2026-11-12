@@ -455,11 +455,18 @@ def local_revision(base, requirement):
         return source, f"页面文案「{before}」改为「{after}」。脚本与存储保持。"
     if kind == "website" and (match := WEBSITE_HEADING.fullmatch(text)):
         source = deepcopy(base["source"])
-        heading = source["implementation"]["intro"]
-        before, after = heading["heading"], match[1]
-        if not blueprint.label(after) or before == after:
+        markup = source["implementation"]["markup"]
+        headings = list(re.finditer(r"(<h1(?:\s[^>]*)?>)([^<>]+)(</h1>)", markup, re.IGNORECASE))
+        after = match[1]
+        if len(headings) != 1 or not blueprint.label(after):
             raise _out_of_scope()
-        heading["heading"] = after
+        heading = headings[0]
+        before = html.unescape(heading[2])
+        if before == after:
+            raise _no_change()
+        source["implementation"]["markup"] = (
+            markup[:heading.start(2)] + html.escape(after, quote=False) + markup[heading.end(2):]
+        )
         return source, f"首页主标题「{before}」改为「{after}」。导航、目录和问答保持。"
     if kind != "ledger":
         return None

@@ -62,11 +62,20 @@ modules = {
 }
 
 failed = set()
-def stages(stage, requirement, prior, key, admit, record):
+def stages(stage, requirement, prior, key, admit, record, *, category="auto"):
     admit()
     if requirement.startswith("超出"):
         record({"stage":stage,"status":"staged_unsupported","dispatched":True})
         raise ApiError(422, "staged_unsupported", "固定替身表示不支持")
+    if requirement.startswith("官网"):
+        content = {"kind":"website","layout":"brand","title":"风筝工坊","goal":"展示课程"}
+        if stage == "implementation":
+            content = ({"intro":{"heading":"旧模板"}} if requirement.endswith("无效") else {
+                "format":"website-code-v1", "markup":"<h1>候选唯一标记</h1>",
+                "style":"h1 { margin: 1rem; }", "script":"void 0;",
+            })
+        record({"stage":stage,"status":"ok","dispatched":True})
+        return json.dumps(content, ensure_ascii=False).encode()
     if requirement.startswith("计算"):
         content = {"kind":"program","title":"加法计算器","goal":"计算两数和"} if stage == "spec" else {
             "markup":'<p id="answer"></p><p id="caption">相加</p>', "script":'document.querySelector("#answer").textContent="5";'}
@@ -329,6 +338,33 @@ class StagedHTTP(StagedHTTPFixture):
             html = response.read().decode()
             self.assertIn('id="back-to-workbench" class="workbench-link" href="/workbench"', html)
             self.assertNotIn('id="admin-login-form"', html)
+
+    def test_website_code_saves_and_reopens_and_invalid_output_has_no_candidate(self):
+        owner = self.account("website-code-owner")
+        before = self.request("/api/trial", auth=owner)[1]["generation"]["used"]
+        for requirement in ("官网代码无效", "官网代码有效"):
+            status, response, _ = self.request("/api/generate", {
+                "requirement": requirement, "requestId": uuid4().hex, "category": "brand",
+            }, owner)
+            self.assertEqual(status, 202)
+            task = response["task"]["id"]
+            path = "/api/staged/" + task
+            if requirement.endswith("无效"):
+                self.wait_task(owner, task, "failed")
+                self.assertEqual(self.request(path + "/candidate", {}, owner)[0], 409)
+                self.assertEqual(self.request("/api/trial", auth=owner)[1]["generation"]["used"], before)
+                continue
+            self.wait_task(owner, task, "complete")
+            status, candidate, _ = self.request(path + "/candidate", {}, owner)
+            self.assertEqual(status, 200)
+            self.assertIn("<h1>候选唯一标记</h1>", candidate["html"])
+            payload = {**candidate["staged"], "toolId": candidate["id"], "entries": []}
+            self.assert_preview_verified(path, payload, owner)
+            self.assertEqual(self.request(path + "/publish", payload, owner)[0], 200)
+            status, reopened, _ = self.request("/api/tools/" + candidate["id"], auth=owner)
+            self.assertEqual(status, 200)
+            self.assertEqual(reopened["html"], candidate["html"])
+        self.assertEqual(self.request("/api/trial", auth=owner)[1]["generation"]["used"], before + 1)
 
     def test_runtime_proof_is_bound_to_the_candidate_snapshot_and_nonce(self):
         owner = self.account("runtime-proof-owner")

@@ -12,7 +12,7 @@ MAX_ARTIFACT_BYTES = 24 * 1024
 VOID_ELEMENTS = frozenset("br col hr input wbr".split())
 ELEMENTS = VOID_ELEMENTS | frozenset("""
 a abbr article aside b blockquote button canvas caption code colgroup dd details div dl dt em fieldset
-footer form h2 h3 h4 h5 h6 header i kbd label legend li mark meter ol optgroup option output p pre
+footer form h1 h2 h3 h4 h5 h6 header i kbd label legend li main mark meter nav ol optgroup option output p pre
 progress s samp section select small span strong sub summary sup table tbody td textarea tfoot th
 thead time tr u ul var
 """.split())

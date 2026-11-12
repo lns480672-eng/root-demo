@@ -194,29 +194,41 @@ class StageProviderTests(unittest.TestCase):
             with self.assertRaises(ApiError):
                 blueprint.provide("spec", "山野咖啡官网", {}, "fixture-key", Mock(), category="brand")
 
-    def test_website_output_uses_validated_data_and_safe_template_navigation(self):
-        spec = {"kind": "website", "layout": "brand", "title": "山野咖啡", "goal": "品牌介绍与菜单"}
-        body = {
-            "intro": {"heading": "山野咖啡", "body": "<script>unsafe</script>"},
-            "catalog": {"title": "咖啡菜单", "filters": [{"id": "cold", "label": "冷饮"}],
-                        "items": [{"name": "山野冷萃", "description": "冷萃咖啡", "filter": "cold"}]},
-            "faq": [{"question": "有冷饮吗？", "answer": "有。"}],
-        }
+    def test_new_website_uses_model_code_instead_of_a_content_template(self):
+        spec = {"kind": "website", "layout": "brand", "title": "风筝工坊", "goal": "展示工坊和课程"}
         previous = {"spec.json": json.dumps(spec).encode()}
-        with patch.object(assistant_model, "_exchange", return_value=envelope(json.dumps(body))):
+        model_code = {
+            "format": "website-code-v1",
+            "markup": "<main id='workshop'><h1>独立生成标记</h1></main>",
+            "style": "#workshop { padding: 16px; }",
+            "script": "document.getElementById('workshop').hidden = false;",
+        }
+        with patch.object(assistant_model, "_exchange", return_value=envelope(json.dumps(model_code))):
             previous["implementation.json"] = blueprint.provide(
-                "implementation", "品牌官网", previous, "fixture-key", Mock(), category="brand")
+                "implementation", "生成有课程介绍的风筝工坊官网", previous, "fixture-key", Mock(), category="brand")
         app = blueprint.assemble(previous).decode()
-        self.assertIn('data-layout="brand"', app)
-        self.assertIn('data-route="catalog"', app)
-        self.assertIn('data-page="faq" hidden', app)
-        self.assertIn('data-item-filter="cold"', app)
-        self.assertIn("<details>", app)
-        self.assertIn("&lt;script&gt;unsafe&lt;/script&gt;", app)
-        self.assertNotIn("<script>unsafe</script>", app)
-        body["catalog"]["items"][0]["filter"] = "unlisted"
-        with self.assertRaises(ValueError):
-            blueprint.validate("implementation", json.dumps(body).encode(), previous)
+        self.assertIn(model_code["markup"], app)
+        self.assertIn(model_code["style"], app)
+        self.assertIn(model_code["script"], app)
+
+    def test_new_website_rejects_template_content_and_external_css(self):
+        spec = {"kind": "website", "layout": "brand", "title": "风筝工坊", "goal": "品牌和课程"}
+        previous = {"spec.json": json.dumps(spec).encode()}
+        code = {"format": "website-code-v1", "markup": "<h1>风筝工坊</h1>", "script": "void 0;"}
+        invalid = [
+            {"intro": {"heading": "旧格式"}},
+            {**code, "style": "@import 'https://example.invalid/style.css';"},
+            {**code, "style": "h1 { background: url(https://example.invalid/image); }"},
+            {**code, "style": "h1 { background: u" + chr(92) + "72l(https://example.invalid/image); }"},
+            {**code, "style": "</style><script>void 0;</script>"},
+            {**code, "style": "", "markup": "<iframe src='https://example.invalid'></iframe>"},
+        ]
+        for result in invalid:
+            with self.subTest(result=result), patch.object(
+                assistant_model, "_exchange", return_value=envelope(json.dumps(result))
+            ), self.assertRaises(ApiError) as error:
+                blueprint.provide("implementation", "品牌官网", previous, "fixture-key", Mock(), category="brand")
+            self.assertEqual(error.exception.code, "invalid_staged_result")
 
     def test_provider_and_model_json_failures_have_distinct_sanitized_diagnostics(self):
         for payload, code, finish in (
