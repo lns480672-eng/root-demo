@@ -39,8 +39,12 @@ STRUCTURED_REVISION_PLAN_SYSTEM = """根据用户原话和当前工具结构提�
 表格和台账均可用 {"kind":"title","label":"用户指定的新标题"}。
 导入表格可用 {"kind":"table_filter","column":从零开始的列下标}，按结构中的列顺序定位。
 台账可用 {"kind":"rename_field","field":"已有字段 ID","label":"新显示名"} 或
-{"kind":"add_field","label":"新字段名","type":"text|integer|date"}。新增字段可空，缺少类型且会影响使用时先追问。
-遇到阅读时间、观测时间等含义不明的字段，先问记录日期、持续时长还是几点几分。不要猜测类型。时分与小数类型当前不支持。已有字段 ID、值和类型都不能改。
+{"kind":"add_field","label":"新字段名","type":"text|integer|date"}。新增字段可空。
+先判断用户要求这个新字段保存什么值，再决定类型。字段名本身不等于类型。日期表示年月日，整数可表示明确单位的整数量，例如以分钟计的整数时长，文本表示文字。
+若有多个合理解释且会改变字段类型，返回 clarify，询问用户希望填写什么值。列出会影响实现的合理含义。追问只询问真实用途，暂不评价能否实现。
+先检查原话中是否已经说明类型、格式或填入值，说明可能在字段名前或后。用户明确说按某种类型填写、只保留某些日期部分或指定单位时，以该说明为准。
+类型已明确且受支持，就返回 proposed；即使字段名笼统或含「时间」，也不要再追问。仅使用属于同一新增字段的说明。
+若字段用于记录时间但用户未区分日历日期、持续时长或一天中的时刻，追问时同时列出这三种含义。若明确需要时分、日期加时分、小数或必填的新字段，返回 unsupported，除非用户已明确接受受支持的表示。已有字段 ID、值和类型都不能改。
 台账可用 {"kind":"theme","theme":"gray|yellow|blue|green|pink|purple"} 或
 {"kind":"column_theme","option":"真实分栏名称","theme":"gray|yellow|blue|green|pink|purple"}。
 背景色无法用给定配色表达时返回限制。只说改色、未指定对象或配色时先追问。
@@ -354,62 +358,6 @@ def apply_code_edits(implementation, edits):
     return result
 
 
-TIME_FIELD_QUESTION = "这个时间字段要记录日期、持续时长，还是几点几分？请明确含义后再生成修改方案。"
-TIME_LABEL = re.compile(r"时间|时刻|时长|日期|\b(?:time|date|timestamp|duration)\b", re.I)
-AMBIGUOUS_TIME = re.compile(r"时间|时刻|时点|\b(?:time|timestamp)\b", re.I)
-EXPLICIT_TIME = re.compile(
-    r"日期|年月日|哪[一]?天|哪[一]?日|时长|耗时|用时|分钟|小时|秒钟|几点|时分字段|时:分|文本|"
-    r"(?<![A-Za-z])(?:date|duration|minutes?|hours?|text)(?![A-Za-z])", re.I,
-)
-FIELD_ADDITION = re.compile(r"新增|添加|增加|补充|加(?:上|入)?|\badd\b", re.I)
-FIELD_CLAUSE = re.compile(
-    r"[，,。；;！？!?\n]+|(?:再|并且|并|同时|另外)\s*(?=把|将|新增|添加|增加|加|改|删除|移除)"
-)
-FIELD_DETAIL = re.compile(r"^(?:记录|保存|填写|用|按|类型|格式|叫|名为|称为|日期|时长|具体几点|in |as )", re.I)
-
-
-def unresolved_time_field(requirement):
-    descriptions = []
-    active = False
-    for clause in FIELD_CLAUSE.split(requirement):
-        clause = clause.strip()
-        if action := FIELD_ADDITION.search(clause):
-            descriptions.append(clause[action.end():])
-            active = True
-        elif active and FIELD_DETAIL.match(clause):
-            descriptions[-1] += "，" + clause
-        elif clause:
-            active = False
-    return any(AMBIGUOUS_TIME.search(text) and not EXPLICIT_TIME.search(text)
-               for text in (descriptions or [requirement]))
-
-
-def time_field_question(plan, requirement):
-    """Require the user's meaning before applying a model-inferred time field type."""
-    if not isinstance(plan, dict) or not unresolved_time_field(requirement):
-        return None
-    if plan.get("status") == "clarify" and plan.keys() == {"status", "question"}:
-        message = plan["question"]
-        if isinstance(message, str) and (TIME_LABEL.search(message) or re.search(r"几点|时分", message)):
-            return TIME_FIELD_QUESTION
-    operation = plan.get("operation")
-    if (plan.get("status") == "proposed" and plan.keys() == {"status", "operation"}
-            and isinstance(operation, dict) and operation.keys() == {"kind", "label", "type"}
-            and operation["kind"] == "add_field" and operation["type"] in ("date", "integer", "text")
-            and isinstance(operation["label"], str)
-            and (operation["type"] == "date" or TIME_LABEL.search(operation["label"]))):
-        return TIME_FIELD_QUESTION
-    return None
-
-
-def ground_plan(payload, requirement):
-    plan = blueprint.read_artifact(payload)
-    question = time_field_question(plan, requirement)
-    if question:
-        return json.dumps({"status": "clarify", "question": question}, ensure_ascii=False).encode()
-    return payload
-
-
 def website_text_edit(implementation, edit):
     if not isinstance(edit, dict) or edit.keys() != {"target", "text"}:
         raise ValueError("bad_website_text_edit")
@@ -442,8 +390,6 @@ def check_plan(payload, base, requirement=None):
 def _check_plan(payload, base, requirement):
     plan = blueprint.read_artifact(payload)
     status = plan.get("status") if isinstance(plan, dict) else None
-    if status == "proposed" and requirement is not None and time_field_question(plan, requirement):
-        raise ValueError("ungrounded_time_field")
     if status == "proposed" and plan.keys() == {"status", "operation"} and base["kind"] in ("ledger", "table"):
         operation = plan["operation"]
         source, _ = structured_operation(base, operation)
@@ -1099,7 +1045,6 @@ def provide(stage, requirement, previous, key, admit, record, *, base):
             system = CODE_REVISION_PLAN_SYSTEM
         return blueprint.provide(stage, requirement, previous, key, admit, record,
                                  revision_context=context, revision_plan_system=system,
-                                 spec_patch=lambda payload: ground_plan(payload, requirement),
                                  accept=lambda payload: check_plan(payload, base, requirement))
     if "revision-plan.json" in previous:
         return plan_artifacts(previous["revision-plan.json"], base)[stage]

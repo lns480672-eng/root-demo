@@ -220,35 +220,27 @@ class RevisionContextTests(unittest.TestCase):
             revision.provide("revision-plan", "把原价改为起始金额", {}, "fixture-key", Mock(), None, base=base)
         self.assertIn("b" * 11000, json.loads(exchange.call_args.args[0])["body"]["messages"][1]["content"])
 
-    def test_ambiguous_time_field_requires_clarification_even_when_model_guesses_date(self):
+    def test_revision_uses_model_field_type_and_clarification_decisions(self):
         base = revision.prepare(artifacts())
-        plan = {"status": "proposed", "operation": {
-            "kind": "add_field", "label": "观测日期", "type": "date",
+        proposed = {"status": "proposed", "operation": {
+            "kind": "add_field", "label": "观测时间", "type": "date",
         }}
+        clarify = {"status": "clarify", "question": "是记下哪一天，还是记下用了多久或具体时刻？"}
         cases = (
-            ("给观察台账加一个观测时间", "clarify"),
-            ("增加一个可空时间字段", "clarify"),
-            ("加一个选填的时间字段", "clarify"),
-            ("新增必填时间字段", "clarify"),
-            ("把开始日期改成必填，再加一个时间字段", "clarify"),
-            ("在备注文本后面加一个时间字段", "clarify"),
-            ("加一个时间字段，同时分到第二组", "clarify"),
-            ("加一个日期字段，再加一个时间字段", "clarify"),
-            ("给观察台账加一个观测时间，记录日期", "proposed"),
-            ("给观察台账加一个日期字段，叫观测时间", "proposed"),
+            ("用日期类型加一个观测时间", proposed),
+            ("按日期加一个观测时间字段", proposed),
+            ("加一个观测时间，只要年月日", proposed),
+            ("加一个时间字段，填日期", {**proposed, "operation": {**proposed["operation"], "label": "时间"}}),
+            ("给观察台账加一个观测时间", clarify),
+            ("Add a field for when this was observed", clarify),
         )
-        for requirement, status in cases:
+        for requirement, plan in cases:
             with self.subTest(requirement=requirement), patch.object(
                 assistant_model, "_exchange", return_value=envelope(json.dumps(plan))
             ) as exchange:
                 payload = revision.provide("revision-plan", requirement, {}, "fixture-key", Mock(), None, base=base)
                 exchange.assert_called_once()
-                result = json.loads(payload)
-                self.assertEqual(result["status"], status)
-                if status == "clarify":
-                    self.assertIn("日期", result["question"])
-                    self.assertIn("时长", result["question"])
-                    self.assertIn("几点", result["question"])
+                self.assertEqual(json.loads(payload), plan)
 
     def test_model_adds_nullable_field_using_host_identity_and_impact(self):
         base = revision.prepare(artifacts())

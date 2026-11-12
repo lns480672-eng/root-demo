@@ -168,12 +168,14 @@ def revise(stage, requirement, prior, key, admit, record, *, base):
         elif base["kind"] == "ledger":
             if "验收改为白色" in requirement:
                 plan = {"status":"clarify","question":"要改分栏背景还是字段显示名？"}
-            elif "时分" in requirement or "可空时间字段" in requirement:
+            elif "具体时分" in requirement:
                 plan = {"status":"unsupported","reason":"当前字段类型不支持具体时分。"}
+            elif requirement == "按日期加一个观测时间字段":
+                plan["operation"] = {"kind":"add_field","label":"观测时间","type":"date"}
             elif "观测时间" in requirement:
-                plan["operation"] = {"kind":"add_field","label":"观测日期","type":"date"}
-            elif "阅读时间" in requirement:
-                plan = {"status":"clarify","question":"要记录阅读日期、阅读时长，还是具体时分？"}
+                plan = {"status":"clarify","question":"观测时间要记日期、持续时长还是几点几分？"}
+            elif "阅读时间" in requirement or "可空时间字段" in requirement:
+                plan = {"status":"clarify","question":"要记录阅读日期、阅读时长，还是几点几分？"}
             elif "删除项目" in requirement:
                 plan = {"status":"unsupported","reason":"不能删除字段或已有记录。"}
             elif "错删功能" in requirement:
@@ -883,20 +885,23 @@ class StagedHTTP(StagedHTTPFixture):
     def test_online_revision_requests_clarify_then_apply_only_after_confirmation(self):
         cases = (
             ("登记读书清单", "增加一个阅读时间", "revision_clarification_required",
-             "新增可空整数型字段「阅读时长（分钟）」", "可空整数", "新增可空时间字段「阅读时间」",
-             "staged_unsupported", "时分"),
+             "新增可空整数型字段「阅读时长（分钟）」", "可空整数", "新增可空字段「阅读时间」，需要填写具体时分",
+             "staged_unsupported", "时分", ("阅读时长（分钟）", "integer")),
+            ("登记植物观察台账", "给观察台账加一个观测时间", "revision_clarification_required",
+             "按日期加一个观测时间字段", "可空日期", "新增字段「观测时间」，需要填写具体时分",
+             "staged_unsupported", "时分", ("观测时间", "date")),
             ("计算分账", "那个页面居中", "revision_clarification_required",
              "把工具内容区水平居中", "水平居中", "把工具内容区垂直居中",
-             "staged_unsupported", "水平居中"),
+             "staged_unsupported", "水平居中", None),
         )
-        for index, (request, original, reason, clarified, change, unsupported, limit_reason, limit_copy) in enumerate(cases):
+        for index, (request, original, reason, clarified, change, unsupported, limit_reason, limit_copy, new_field) in enumerate(cases):
             with self.subTest(original=original):
                 owner = self.account(f"online-revision-{index}")
                 task = self.gen(owner, request)[1]["task"]["id"]
                 self.wait_task(owner, task, "complete")
                 path = "/api/staged/" + task
                 candidate = self.request(path + "/candidate", {}, owner)[1]
-                entries = [["root-structured-records-v1", '[{"id":1,"name":"旧书","count":1,"status":"待处理"}]']] if index == 0 else [["history", "old-calculation"]]
+                entries = [["root-structured-records-v1", '[{"id":1,"name":"旧书","count":1,"status":"待处理"}]']] if new_field else [["history", "old-calculation"]]
                 payload = {**candidate["staged"], "toolId":candidate["id"], "entries":entries}
                 self.assert_preview_verified(path, payload, owner)
                 initial = self.request(path + "/publish", payload, owner)[1]
@@ -911,13 +916,15 @@ class StagedHTTP(StagedHTTPFixture):
                     task = response["task"]["id"]
                     return "/api/staged/" + task, self.wait_task(owner, task, state)
 
-                variants = (("我想加一个阅读时间", "增加一个阅读时间?", "给观察台账加一个观测时间") if index == 0
-                            else ("页面水平居中", "把工具内容区居中"))
+                variants = (
+                    ("我想加一个阅读时间", "增加一个阅读时间?", "新增可空时间字段")
+                    if new_field else ("页面水平居中", "把工具内容区居中")
+                )
                 for ambiguous in (original, f"  {original} ！ ", *variants):
                     rejected, question = revise(ambiguous, "unsupported")
                     self.assertEqual(question["reason"], reason)
                     self.assertIn("？", question["guidance"])
-                    if index == 0:
+                    if new_field:
                         for meaning in ("日期", "时长", "几点"):
                             self.assertIn(meaning, question["guidance"])
                     self.assertFalse(question["resumable"])
@@ -929,7 +936,7 @@ class StagedHTTP(StagedHTTPFixture):
                 self.assertEqual(after_questions["used"], quota["used"])
                 self.assertEqual(after_questions["totalUsed"] - quota["totalUsed"], len(variants) + 3)
                 self.assertEqual(self.request(tool, auth=owner)[1]["entries"], entries)
-                explicit = (clarified,) if index == 0 else (
+                explicit = (clarified,) if new_field else (
                     clarified, "我想把工具内容区水平居中", "把页面内容区左右居中",
                 )
                 for wording in explicit:
@@ -956,10 +963,14 @@ class StagedHTTP(StagedHTTPFixture):
                 self.assertEqual(self.request(path + "/publish", payload, owner)[1], saved)
                 after = self.request("/api/trial", auth=owner)[1]["generation"]
                 self.assertEqual((after["used"], after["totalUsed"]), (quota["used"] + 1, before_confirm["totalUsed"]))
-                if index == 0:
-                    config = json.loads(re.search(r"<script>const config = ([^\n]+);", saved["html"])[1])
-                    field = next(field for field in config["spec"]["fields"] if field["label"] == "阅读时长（分钟）")
-                    self.assertEqual((field["type"], field["required"]), ("integer", False))
+                if new_field:
+                    reopened = self.request(tool, auth=owner)[1]
+                    self.assertEqual((reopened["id"], reopened["version"], reopened["entries"]),
+                                     (initial["id"], 2, entries))
+                    config = json.loads(re.search(r"<script>const config = ([^\n]+);", reopened["html"])[1])
+                    label, field_type = new_field
+                    field = next(field for field in config["spec"]["fields"] if field["label"] == label)
+                    self.assertEqual((field["type"], field["required"]), (field_type, False))
                     self.assertIn(field["id"], config["entry"]["form"])
                 else:
                     self.assertIn("margin-inline:auto", saved["html"])
