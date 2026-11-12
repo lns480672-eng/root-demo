@@ -1305,12 +1305,14 @@ try {
       tool = await selectHistory(second.id);
       assert.equal(await evaluate('document.querySelector("#total").innerText.trim()', tool.context), '405');
 
-      stage = 'failure preserves two tools and editable preview';
+      stage = 'failure preserves two tools that can be reopened';
       await click('#new-tool');
       await generate('回归：强制新建失败');
       await until(() => evaluate('document.querySelector("#error").textContent'));
       assert.equal((await library()).items.length, 2);
-      assert.equal(await evaluate('document.querySelector("#preview iframe[data-tool]").dataset.tool'), second.id);
+      assert.equal(await visible('.elys-preview'), false);
+      tool = await openLatest();
+      assert.equal(tool.id, second.id);
       await evaluate('document.querySelector("#boxes").value = ""', tool.context);
       await type('#boxes', '100', tool.context);
       await click('#calculate', tool.context);

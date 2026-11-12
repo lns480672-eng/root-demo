@@ -30,6 +30,9 @@ export async function verifyStagedFlow(ctx) {
   if (await visible('#workspace-guide')) await click('#guide-skip');
   await generate('做一份简单读书清单，新增书名并保存。');
   const old = await activeTool();
+  await type('#book', '从我的工具找回原记录', old.context);
+  await click('#add', old.context);
+  await until(async () => JSON.stringify((await stored(old.id)).entries).includes('从我的工具找回原记录'));
   const used = async () => (await appRequest('/api/trial')).body.generation.used;
   const before = await used();
   const sandbox = () => evaluate('document.querySelector("#preview iframe[data-tool]").getAttribute("sandbox")');
@@ -56,6 +59,7 @@ export async function verifyStagedFlow(ctx) {
     assert.equal(await used(), before);
     await cdp('Page.reload');
     await until(() => evaluate('document.documentElement.dataset.ready === "true"'));
+    await click('#library-entry');
     assert.equal((await activeTool()).id, old.id);
     for (const width of [1440, 390]) {
       await cdp('Emulation.setDeviceMetricsOverride', {width,height:844,deviceScaleFactor:1,mobile:width===390});
@@ -65,7 +69,7 @@ export async function verifyStagedFlow(ctx) {
       await until(() => visible(selected));
       assert.equal(await evaluate('document.querySelectorAll("#staged-history-list button[data-history-task-id]").length'), 2);
       assert.equal(await evaluate('document.querySelectorAll("#staged-task-list button[data-task-id]").length'), 0);
-      if (width === 1440) await click('#return-to-library');
+      if (width === 1440) await click('#library-entry');
     }
     await cdp('Emulation.setDeviceMetricsOverride', {width:1440,height:1000,deviceScaleFactor:1,mobile:false});
     await click(selected);
@@ -92,10 +96,8 @@ export async function verifyStagedFlow(ctx) {
     return evaluate('typeof window.releaseFixturePreview === "function"');
   }, 120000);
   assert.equal((await library()).items.length, 1);
-  const activeOld = await activeTool();
-  await type('#book', '预览期间仍可保存', activeOld.context);
-  await click('#add', activeOld.context);
-  await until(async () => JSON.stringify((await stored(old.id)).entries).includes('预览期间仍可保存'));
+  assert.equal(await visible('.elys-preview'), false, '新工具在保存前不显示预览');
+  assert.match(JSON.stringify((await stored(old.id)).entries), /从我的工具找回原记录/);
   await evaluate('window.releaseFixturePreview()');
   const board = await until(async () => {
     const current = await activeTool().catch(() => null);
@@ -184,13 +186,14 @@ export async function verifyStagedFlow(ctx) {
   await until(async () => (await count()) === 2);
   assert.match(await status(), /已恢复 2/);
   assert.match(JSON.stringify((await stored(board.id)).entries), /合成乙公司/);
-  evidence.tests.push('同入口真实发布前旧工具能写入；分栏、移动、编辑、删除及实际下载和导入恢复通过；导入无效、取消及服务拒绝均保留数据');
+  evidence.tests.push('新建前写入的旧工具记录在切换后保留；分栏、移动、编辑、删除及实际下载和导入恢复通过；导入无效、取消及服务拒绝均保留数据');
 
   assert.equal(await inBoard('(() => { try { return Boolean(parent.document); } catch { return false; } })()'), false);
   assert.equal(await inBoard('fetch(' + JSON.stringify(probeUrl + '/board-preview') + ',{mode:"no-cors"}).then(() => true, () => false)'), false);
   assert.deepEqual(probeRequests, probeControls);
   await cdp('Page.reload');
   await until(() => evaluate('document.documentElement.dataset.ready === "true"'));
+  await click('#library-entry');
   const restored = await activeTool();
   assert.equal(restored.id, board.id);
   assert.equal(await sandbox(), 'allow-scripts allow-forms allow-downloads');
@@ -282,6 +285,7 @@ export async function verifyStagedRegistration(ctx) {
   await until(async () => JSON.stringify((await stored(tool.id)).entries).includes('QA-伞-001'));
   await cdp('Page.reload');
   await until(() => evaluate('document.documentElement.dataset.ready === "true"'));
+  await click('#library-entry');
   const restored = await activeTool();
   assert.equal(restored.id, tool.id);
   assert.match(await evaluate('document.querySelector("#records tbody").textContent', restored.context), /QA-伞-001/);
@@ -440,6 +444,7 @@ export async function verifyLedgerTheme(ctx) {
   assert.equal((await balance()).totalUsed, beforeBalance.totalUsed + 1);
   await cdp('Page.reload');
   await until(() => evaluate('document.documentElement.dataset.ready === "true"'));
+  await click('#library-entry');
   const restored = await activeTool();
   assert.equal(restored.id, old.id);
   const after = await board(restored);
@@ -489,6 +494,7 @@ export async function verifyLedgerTheme(ctx) {
     assert.equal((await balance()).totalUsed, beforeLocal.totalUsed);
     await cdp('Page.reload');
     await until(() => evaluate('document.documentElement.dataset.ready === "true"'));
+    await click('#library-entry');
     const reopened = await activeTool();
     assert.equal(reopened.id, old.id);
     const finalBoard = await board(reopened);
@@ -655,7 +661,7 @@ export async function verifyStagedHistory(ctx) {
     activeTool, accountA, root, stored, evidence, screenshot } = ctx;
   const initial = '做一份简单读书清单，新增书名并保存。';
   const failedRequirement = '做一个小工具，历史验证首次失败';
-  const revisedRequirement = '修改原工具的说明，历史验证首次失败';
+  const revisedRequirement = '把页面文案「不存在的提示」改为「加入书单」';
   const balance = async () => (await appRequest('/api/trial')).body.generation;
   const waitTask = (id, state) => until(async () => {
     const {body:{task}} = await appRequest(taskPath + id);
@@ -732,7 +738,7 @@ with sqlite3.connect(sys.argv[1]) as db:
   const previous = (await appRequest('/api/tools/' + old.id + '/revise', {
     requirement:revisedRequirement, version:1, requestId:'5'.repeat(32),
   })).body.task;
-  await waitTask(previous.id, 'failed');
+  await waitTask(previous.id, 'unsupported');
   await click('#new-tool');
   const beforeRevise = await balance();
   await bringBack(previous.id);
@@ -755,7 +761,7 @@ with sqlite3.connect(sys.argv[1]) as db:
       return original(path, options);
     };
   })()`);
-  const revised = '修改原工具的说明，历史验证重新提交';
+  const revised = '把页面文案「添加」改为「加入书单」';
   await generate(revised);
   await until(() => visible('#revision-confirm'));
   await click('#revision-confirm');
@@ -776,7 +782,7 @@ with sqlite3.connect(sys.argv[1]) as db:
   assert.equal((await balance()).used, beforeRevise.used + 1);
   const receipts = (await readFile(join(root, 'runs', 'staged-usage.jsonl'), 'utf8')).trim().split('\n').map(JSON.parse);
   assert.deepEqual(receipts.filter(item => item.task === failed.id).map(item => item.stage), ['spec','implementation']);
-  assert.deepEqual(receipts.filter(item => item.task === current.id).map(item => item.stage), ['spec','implementation']);
+  assert.equal(receipts.filter(item => item.task === current.id).length, 0, '定点文案在宿主执行');
   assert.notEqual(tool.id, old.id);
   evidence.tests.push({id:'TEST-018-09', historyLimitSeparate:true, failedPersonalCharge:0,
     newTool:tool.id, revisedTool:old.id, originalRepository:originalRepo, savedOperation:current.id});

@@ -157,8 +157,8 @@ export async function verifyDemoSite(ctx) {
 
   await cdp('Page.reload');
   await until(() => evaluate('document.documentElement.dataset.ready === "true"'));
-  assert.equal((await activeTool()).id, brand.id);
   await click('#library-entry');
+  assert.equal((await activeTool()).id, brand.id);
   await click('#tool-list button[data-id=' + JSON.stringify(landing.id) + ']');
   const restoredLanding = await activeTool(brand.id);
   assert.equal(restoredLanding.id, landing.id);
