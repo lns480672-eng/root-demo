@@ -89,10 +89,15 @@ export async function verifyDemoSite(ctx) {
     for (const filter of [cold, hot]) {
       const selector = '#site-filters button[data-filter=' + JSON.stringify(filter.id) + ']';
       await click(selector, tool.context);
-      const groups = await page(tool, `Array.from(document.querySelectorAll('#site-catalog [data-item-filter]'))
-        .filter(item => item.checkVisibility()).map(item => item.dataset.itemFilter)`);
-      assert.ok(groups.length > 0 && groups.length < cards.length);
-      assert.ok(groups.every(group => group === filter.id));
+      const states = await page(tool, `Array.from(document.querySelectorAll('#site-catalog [data-item-filter]'),
+        item => ({group:item.dataset.itemFilter, hidden:item.hidden,
+          display:getComputedStyle(item).display, visible:item.getClientRects().length > 0}))`);
+      for (const item of states) {
+        const matches = item.group === filter.id;
+        assert.equal(item.hidden, !matches);
+        assert.equal(item.display === 'none', !matches, 'hidden 卡片不可被模型布局样式重新显示');
+        assert.equal(item.visible, matches);
+      }
     }
     return cards;
   }
