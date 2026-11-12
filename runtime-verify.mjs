@@ -207,14 +207,18 @@ async function verifyWebsiteTabs() {
     }
     return true;
   };
-  const contentText = group => {
-    const scope = group.closest('section, article, main') || group.parentElement;
-    const nodes = document.createTreeWalker(scope, NodeFilter.SHOW_TEXT);
+  const contentText = ids => {
+    const scopes = ids.size
+      ? [...ids].map(id => document.getElementById(id)).filter(Boolean)
+      : [document.getElementById('root-website') || document.body];
     const text = [];
-    for (let node; (node = nodes.nextNode());) {
-      const element = node.parentElement;
-      const value = node.textContent.trim();
-      if (value && !element.closest(groupSelector) && visible(element)) text.push(value);
+    for (const scope of scopes) {
+      const nodes = document.createTreeWalker(scope, NodeFilter.SHOW_TEXT);
+      for (let node; (node = nodes.nextNode());) {
+        const element = node.parentElement;
+        const value = node.textContent.trim();
+        if (value && !element.closest(groupSelector) && visible(element)) text.push(value);
+      }
     }
     return text.join(' ').replace(/\s+/g, ' ');
   };
@@ -244,7 +248,8 @@ async function verifyWebsiteTabs() {
       const targetPanels = new Set(panelIds(target));
       const hasDistinctPanels = previousPanels.size && targetPanels.size
         && (previousPanels.size !== targetPanels.size || [...previousPanels].some(id => !targetPanels.has(id)));
-      const before = hasDistinctPanels ? null : contentText(group);
+      const sharedPanels = previousPanels.size && targetPanels.size ? targetPanels : new Set();
+      const before = hasDistinctPanels ? null : contentText(sharedPanels);
       target.click();
       const changed = () => {
         const currentGroup = findGroup();
@@ -253,7 +258,7 @@ async function verifyWebsiteTabs() {
         const active = selected(current);
         return active.length === 1 && active[0] === findTab(current)
           && panelsMatch(currentGroup, current, active[0])
-          && (before === null || contentText(currentGroup) !== before);
+          && (before === null || contentText(sharedPanels) !== before);
       };
       const deadline = Math.min(budget, performance.now() + 200);
       while (!changed() && performance.now() < deadline) {
