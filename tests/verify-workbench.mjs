@@ -888,9 +888,40 @@ try {
     await assertStatus('saved', /已保存.*我的工具/s);
     await screenshot('record-saved-390');
 
-    async function reopen() {
+    async function reopen(delayStartup = false) {
       const before = await evaluate('performance.timeOrigin');
+      let startupScript;
+      if (delayStartup) {
+        startupScript = await cdp('Page.addScriptToEvaluateOnNewDocument', {source: `
+          if (window === top) {
+            const fetchFromWorkbench = window.fetch;
+            window.fetch = async (url, options) => {
+              if (url === '/api/staged' && !window.releaseStartupTasks) {
+                await new Promise(resolve => { window.releaseStartupTasks = resolve; });
+                return new Response(JSON.stringify({tasks:[]}), {
+                  headers:{'Content-Type':'application/json'},
+                });
+              }
+              const response = await fetchFromWorkbench(url, options);
+              if (url !== '/api/config' || !response.ok) return response;
+              return new Response(JSON.stringify({...await response.json(), staged:true}), {
+                headers:{'Content-Type':'application/json'},
+              });
+            };
+          }
+        `});
+      }
       await cdp('Page.reload', {ignoreCache:true});
+      if (startupScript) {
+        await until(() => evaluate('performance.timeOrigin !== ' + before
+          + ' && typeof window.releaseStartupTasks === "function" && Boolean(document.querySelector("#tool-list button"))'));
+        await cdp('Page.removeScriptToEvaluateOnNewDocument', startupScript);
+        assert.equal(await evaluate('document.querySelector("#library-entry").disabled'), true,
+          '启动期间工具列表入口不可提前操作');
+        assert.equal(await evaluate('document.querySelector("#tool-list button").disabled'), true,
+          '启动期间已加载的工具不可提前操作');
+        await evaluate('window.releaseStartupTasks()');
+      }
       await until(() => evaluate('performance.timeOrigin !== ' + before + ' && document.documentElement.dataset.ready === "true"'));
       restored = await openLatest();
       assert.equal(restored.id, first.id);
@@ -899,7 +930,7 @@ try {
       return books;
     }
 
-    await reopen();
+    await reopen(true);
     await intercept();
     await add('明确失败不保留');
     await waitForRequest(1);
