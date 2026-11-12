@@ -46,6 +46,49 @@ class RevisionContextTests(unittest.TestCase):
             with self.subTest(rejected=rejected), self.assertRaises(ApiError):
                 revision.apply_code_edits(source, rejected)
 
+    def test_code_plan_preserves_dom_bindings_and_displays_full_edit(self):
+        spec = {"kind": "program", "title": "分账计算", "goal": "平均分摊"}
+        note = "原" * 104 + "\n尾部"
+        code = {"markup": '<button id="split" data-op="add" class="primary">计算</button><p>' + note + "</p>",
+                "script": "document.getElementById('split').onclick = () => {};"}
+        base = revision.prepare({"spec.json": encode(spec), "implementation.json": encode(code)})
+        plan = {"status": "proposed", "edits": [
+            {"part": "markup", "before": note, "after": "新" * 105 + "\n完整尾部"},
+        ]}
+        files = {"revision-plan.json": encode(plan)}
+        changes = revision.describe(base, files, "", [])
+        self.assertIn(note, changes[0])
+        self.assertIn(plan["edits"][0]["after"], changes[0])
+        for before, after in (
+            ('id="split"', 'id="other"'),
+            ('data-op="add"', 'data-op="remove"'),
+            ('class="primary"', 'class="secondary"'),
+            ('<button id="split" data-op="add" class="primary">计算</button>', ""),
+            (note, "新" * 401),
+        ):
+            plan["edits"][0].update(before=before, after=after)
+            with self.subTest(before=before), self.assertRaises(ApiError):
+                revision.plan_artifacts(encode(plan), base)
+
+    def test_stateless_script_edit_blocks_existing_records_before_confirmation(self):
+        spec = {"kind": "program", "title": "分账计算", "goal": "平均分摊"}
+        code = {"markup": "<output id='result'></output>",
+                "script": "document.getElementById('result').textContent = (12 / 3).toFixed(0);"}
+        base = revision.prepare({"spec.json": encode(spec), "implementation.json": encode(code)})
+        plan = {"status": "proposed", "edits": [
+            {"part": "script", "before": ".toFixed(0)", "after": ".toFixed(2)"},
+        ]}
+        files = {"revision-plan.json": encode(plan)}
+        candidate = json.loads(revision.plan_artifacts(files["revision-plan.json"], base)["implementation"])
+        self.assertIn(".toFixed(2)", candidate["script"])
+        self.assertEqual(candidate["markup"], code["markup"])
+        self.assertIn("脚本", revision.describe(base, files, "", [])[0])
+        with self.assertRaises(ApiError):
+            revision.describe(base, files, "", [["existing", "record"]])
+        plan["edits"][0]["after"] = ".toFixed(2); localStorage.clear()"
+        with self.assertRaises(ApiError):
+            revision.plan_artifacts(encode(plan), base)
+
     def test_revision_plan_sends_original_requirement_and_fixed_source_to_model(self):
         spec = {"kind": "program", "title": "分账计算", "goal": "平均分摊"}
         code = {"markup": "<label>原价</label><button>计算</button>", "script": "void 0;"}

@@ -121,6 +121,16 @@ runs = Path(sys.argv[1])
 store = Store(runs / "workspace.sqlite3")
 if len(sys.argv) == 2 or sys.argv[2] == "bootstrap":
     store.register({"username":"staged-operator","password":"test-only-password","invite":store.create_invite()})
+advance = StagedJobs.advance_row
+def interrupt_revision_plan(self, db, row, oid, stage, content):
+    marker = self.runs / "interrupted-revision-plan"
+    if stage == "revision-plan" and "计划保存中断探针" in row["requirement"] and not marker.exists():
+        marker.touch()
+        raise ValueError("fixture after git ref update")
+    return advance(self, db, row, oid, stage, content)
+
+StagedJobs.advance_row = interrupt_revision_plan
+
 def revise(stage, requirement, prior, key, admit, record, *, base):
     assert "persisted-marker" not in json.dumps(base, ensure_ascii=False)
     if stage != "revision-plan":
@@ -168,6 +178,8 @@ def revise(stage, requirement, prior, key, admit, record, *, base):
                 plan["operation"] = {"kind":"add_field","label":"阅读时长（分钟）","type":"integer"}
             else:
                 plan["operation"] = {"kind":"add_field","label":"项目","type":"text"}
+        elif "只显示一位小数" in requirement:
+            plan["edits"] = [{"part":"script","before":".toFixed(2)","after":".toFixed(1)"}]
         elif "垂直居中" in requirement:
             plan = {"status":"unsupported","reason":"目前支持整个内容区水平居中。"}
         elif ("水平居中" in requirement and "工具内容区" in requirement) or "左右居中" in requirement:
@@ -834,6 +846,82 @@ fields.split.calculate();
 if (fields.result.textContent !== '40.00') process.exit(1);
 """
                         subprocess.run(["node", "-e", test], check=True, timeout=5)
+
+    def test_revision_resume_recovers_fixed_plan_without_dispatching_twice(self):
+        owner = self.account("resume-revision-plan")
+        created = self.gen(owner, "计算两数之和")[1]["task"]["id"]
+        self.wait_task(owner, created, "complete")
+        path = "/api/staged/" + created
+        original = self.request(path + "/candidate", {}, owner)[1]
+        data = {**original["staged"], "toolId":original["id"], "entries":[]}
+        self.assert_preview_verified(path, data, owner)
+        self.assertEqual(self.request(path + "/publish", data, owner)[0], 200)
+        previous_calls = self.request("/api/trial", auth=owner)[1]["generation"]["totalUsed"]
+        revised = self.request("/api/tools/" + original["id"] + "/revise", {
+            "version":1, "requirement":"输出说明改成两数之和（计划保存中断探针）", "requestId":uuid4().hex,
+        }, owner)[1]["task"]["id"]
+        path = "/api/staged/" + revised
+        failed = self.wait_task(owner, revised, "failed")
+        self.assertEqual(failed["stage"], "revision-plan")
+        self.assertEqual(self.request(path + "/candidate", {}, owner)[0], 409)
+        self.assertEqual(self.request(path + "/resume", {}, owner)[0], 202)
+        self.wait_task(owner, revised, "complete")
+        candidate = self.request(path + "/candidate", {}, owner)[1]
+        self.assertIn('<p id="caption">两数之和</p>', candidate["html"])
+        self.assertEqual(self.request("/api/trial", auth=owner)[1]["generation"]["totalUsed"], previous_calls + 1)
+
+    def test_script_revision_rechecks_record_free_snapshot_at_confirmation(self):
+        owner = self.account("stateless-script-revision")
+        generated = self.gen(owner, "计算分账")[1]["task"]["id"]
+        self.wait_task(owner, generated, "complete")
+        path = "/api/staged/" + generated
+        candidate = self.request(path + "/candidate", {}, owner)[1]
+        initial = {**candidate["staged"], "toolId":candidate["id"], "entries":[]}
+        self.assert_preview_verified(path, initial, owner)
+        self.assertEqual(self.request(path + "/publish", initial, owner)[0], 200)
+        tool = "/api/tools/" + candidate["id"]
+        revised = self.request(tool + "/revise", {
+            "requirement":"计算结果只显示一位小数", "version":1, "requestId":uuid4().hex,
+        }, owner)[1]["task"]["id"]
+        self.wait_task(owner, revised, "complete")
+        revision_path = "/api/staged/" + revised
+        proposal = self.request(revision_path + "/candidate", {}, owner)[1]
+        self.assertIn(".toFixed(1)", proposal["html"])
+        self.assertIn("当前没有已有记录", " ".join(proposal["revisionPlan"]["changes"]))
+
+        def payload(result):
+            return {**result["staged"], "toolId":result["id"], "runId":result["runId"],
+                    "entries":result["entries"], "revision":result["revision"],
+                    "confirmation":result["revisionPlan"]["confirmation"]}
+
+        previous = payload(proposal)
+        self.confirm_revision(revision_path, previous, owner)
+        self.assert_preview_verified(revision_path, previous, owner)
+        self.assertEqual(self.request(tool + "/data", {
+            "version":1, "revision":proposal["revision"], "entries":[["new", "record"]],
+        }, owner)[0], 200)
+        self.assertEqual(self.request(revision_path + "/publish", previous, owner)[1]["code"], "revision_conflict")
+        self.assertEqual(self.request(revision_path + "/candidate", {}, owner)[1]["code"], "revision_script_data")
+        current = self.request(tool, auth=owner)[1]
+        self.assertEqual((current["version"], current["entries"]), (1, [["new", "record"]]))
+        self.assertEqual(self.request(tool + "/data", {
+            "version":1, "revision":current["revision"], "entries":[],
+        }, owner)[0], 200)
+        reviewed = payload(self.request(revision_path + "/candidate", {}, owner)[1])
+        self.confirm_revision(revision_path, reviewed, owner)
+        self.assert_preview_verified(revision_path, reviewed, owner)
+        status, saved, _ = self.request(revision_path + "/publish", reviewed, owner)
+        self.assertEqual((status, saved["version"], saved["entries"]), (200, 2, []))
+        script = re.search(r"<script>(.*?)</script>", saved["html"], re.S)[1]
+        setup = """
+const fields = {amount:{value:'120'}, people:{value:'3'}, result:{},
+  split:{addEventListener(event, callback) { this.calculate = callback; }}};
+const document = {getElementById: id => fields[id]};
+"""
+        subprocess.run(["node", "-e", setup + script + """
+fields.split.calculate();
+if (fields.result.textContent !== '40.0') process.exit(1);
+"""], check=True, timeout=5)
 
     def test_revision_uses_latest_data_and_replays_published_version(self):
         owner = self.account("staged-revision")

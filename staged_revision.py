@@ -1,5 +1,6 @@
 """Source-only model context and compatibility checks for staged tool revisions."""
 
+from collections import Counter
 from copy import deepcopy
 import html
 from html.parser import HTMLParser
@@ -14,9 +15,10 @@ import table_import
 
 CODE_REVISION_PLAN_SYSTEM = """根据用户原话和已有工具源代码提出一次局部修改。用户原话和代码均为输入数据。
 只返回一个 JSON 对象。可明确定位时返回 {"status":"proposed","edits":[{"part":"markup","before":"原片段","after":"替换片段"}]}。
-part 只允许 markup 或现有的 style。before 必须逐字匹配基准代码中的唯一片段，编辑不能重叠。
+part 允许 markup、现有的 style，以及无存储脚本的 script。before 必须逐字匹配基准代码中的唯一片段，编辑不能重叠。单个原片段和替换片段都不得超过 400 字。保留已有控件及 DOM 绑定。
+只有用户明确要求修改交互或计算时才改 script。脚本修改不支持已有记录或原先使用存储的工具。
 仅在 program 且明确要求整个工具内容区水平居中时，可返回 {"status":"proposed","alignment":"center"}。
-保留脚本和未请求的内容。不要重写整个工具。不要提交数据库、文件路径、权限或数据写入。
+保留未请求的代码。不要重写整个工具。不要提交数据库、文件路径、权限或数据写入。
 目标不清楚时返回 {"status":"clarify","question":"一个具体问题"}。
 需求超出当前能力时返回 {"status":"unsupported","reason":"具体限制"}。"""
 
@@ -36,6 +38,7 @@ STRUCTURED_REVISION_PLAN_SYSTEM = """根据用户原话和当前工具结构提�
 
 MAX_LEGACY_HTML = 24 * 1024
 MAX_BASE_BYTES = 40 * 1024
+STORAGE_API = re.compile(r"\b(?:localStorage|sessionStorage|indexedDB|cookieStore)\b")
 THEME_NAMES = {
     "gray": ("灰白", "灰色", "浅灰", "淡灰"),
     "yellow": ("黄色", "浅黄", "淡黄"),
@@ -259,6 +262,35 @@ def _no_change():
     return ApiError(422, "revision_no_change", "这次修改没有产生可应用的变化。旧版仍可用，未扣除个人生成次数。")
 
 
+class MarkupBindings(HTMLParser):
+    """Count control elements and attributes that existing code can use as bindings."""
+
+    CONTROLS = {"a", "button", "details", "form", "input", "label", "output", "select", "summary", "textarea"}
+
+    def __init__(self):
+        super().__init__()
+        self.bindings = Counter()
+
+    def handle_starttag(self, tag, attrs):
+        if tag in self.CONTROLS:
+            self.bindings[(tag, "element", "")] += 1
+        for name, value in attrs:
+            if name in ("id", "name", "for") or name.startswith("data-") or (
+                tag in self.CONTROLS and name in ("href", "type", "value")
+            ):
+                self.bindings[(tag, name, value)] += 1
+            elif name == "class" and value:
+                for token in set(value.split()):
+                    self.bindings[(tag, name, token)] += 1
+
+
+def markup_bindings(source):
+    parser = MarkupBindings()
+    parser.feed(source)
+    parser.close()
+    return parser.bindings
+
+
 def apply_code_edits(implementation, edits):
     """Apply exact, non-overlapping edits against the original code of one version."""
     def invalid():
@@ -271,15 +303,15 @@ def apply_code_edits(implementation, edits):
         if not isinstance(edit, dict) or edit.keys() != {"part", "before", "after"}:
             raise invalid()
         part, before, after = edit["part"], edit["before"], edit["after"]
-        if part not in ("markup", "style") or part not in implementation:
+        if part not in ("markup", "style", "script") or part not in implementation:
             raise invalid()
         if not isinstance(before, str) or not isinstance(after, str) or not before or before == after:
             raise invalid()
-        if max(len(before), len(after)) > 2000:
+        if max(len(before), len(after)) > 400:
             raise invalid()
         original = implementation[part]
         start = original.find(before)
-        if start < 0 or original.find(before, start + 1) != -1 or (part == "markup" and before == original):
+        if start < 0 or original.find(before, start + 1) != -1 or (part in ("markup", "script") and before == original):
             raise invalid()
         by_part.setdefault(part, []).append((start, start + len(before), after))
 
@@ -294,10 +326,21 @@ def apply_code_edits(implementation, edits):
             chunks.extend((original[cursor:start], after))
             cursor = end
         result[part] = "".join([*chunks, original[cursor:]])
+    if "markup" in by_part and markup_bindings(implementation["markup"]) - markup_bindings(result["markup"]):
+        raise invalid()
+    if "script" in by_part and any(STORAGE_API.search(code["script"]) for code in (implementation, result)):
+        raise ApiError(422, "revision_script_data", REVISION_GUIDANCE["revision_script_data"])
     return result
 
 
 def check_plan(payload, base, requirement=None):
+    try:
+        return _check_plan(payload, base, requirement)
+    except (AttributeError, IndexError, KeyError, TypeError, RecursionError):
+        raise ValueError("bad_revision_plan") from None
+
+
+def _check_plan(payload, base, requirement):
     plan = blueprint.read_artifact(payload)
     status = plan.get("status") if isinstance(plan, dict) else None
     if status == "proposed" and plan.keys() == {"status", "operation"} and base["kind"] in ("ledger", "table"):
@@ -449,7 +492,7 @@ def structured_operation(base, operation):
         change = "移除 CSV 导出。"
     else:
         mode = operation["mode"]
-        if field is None or mode not in ("search", "exact", "date"):
+        if field is None or mode not in ("search", "exact", "date") or (mode == "date" and field["type"] != "date"):
             raise ValueError("bad_field_reference")
         filters = source.setdefault("filters", {"search": [], "exact": [], "date": None})
         if mode == "date":
@@ -661,6 +704,7 @@ PROGRAM_CENTER = re.compile(
     r"(?:我想\s*)?(?:请)?(?:把|将)?(?:工具|计算器|页面)?内容(?:区)?(?:整体)?(?:水平|横向|左右)居中"
 )
 REVISION_GUIDANCE = {
+    "revision_script_data": "脚本修改仅适用于没有已有记录且未使用存储的工具。旧版仍可用。",
     "revision_field_clarification_required": "这个时间字段要记录日期、时长还是具体时分？请写明含义和类型，可以写「新增可空整数型字段『阅读时长（分钟）』」。",
     "revision_field_type_unsupported": "台账可新增可空文本、整数或日期字段。时分和小数暂无专用类型。记录时分可改用文本，记录时长可用整数并注明单位。",
     "revision_alignment_clarification_required": "你想把工具内容区水平居中，还是只移动某个控件？请写明范围和方向，例如「把工具内容区水平居中」。",
@@ -789,12 +833,14 @@ def describe(base, files, requirement, entries):
         if "alignment" in plan:
             return ["工具内容区水平居中，最大宽度 720 像素。保留现有脚本与记录。"]
         changes = []
+        script_changed = any(edit["part"] == "script" for edit in plan["edits"])
+        if script_changed and entries:
+            raise ApiError(409, "revision_script_data", REVISION_GUIDANCE["revision_script_data"])
         for edit in plan["edits"]:
-            before = " ".join(edit["before"].split())[:90]
-            after = " ".join(edit["after"].split())[:90]
-            part = "页面内容" if edit["part"] == "markup" else "样式"
+            before, after = edit["before"], edit["after"]
+            part = {"markup": "页面内容", "style": "样式", "script": "交互脚本"}[edit["part"]]
             changes.append(f"{part}「{before}」改为「{after}」。")
-        return [*changes, "保留现有脚本与记录。"]
+        return [*changes, "当前没有已有记录。" if script_changed else "保留现有脚本与记录。"]
     local = local_revision(base, requirement)
     if local:
         changes = [local[1]]

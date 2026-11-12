@@ -565,6 +565,35 @@ export async function verifyStagedCalculator(ctx) {
   assert.ok(evidence.runs.every(item => item.request_id && item.usage?.total_tokens > 0));
   evidence.tests.push('统一生成任务走两次真实模型调用并发布，100℃→212℉ 和 32℉→0℃ 均正确');
   await screenshot('staged-calculator');
+  if (process.env.ROOT_STAGED_SCRIPT_REVISION === '1') {
+    const requirement = '改实际换算逻辑，摄氏和华氏的结果都只保留一位小数。保留所有输入与操作。';
+    await click('#revise-tool');
+    await generate(requirement);
+    const task = await until(() => findStagedTask(appRequest, requirement));
+    await until(async () => {
+      const current = (await appRequest(taskPath + task.id)).body.task;
+      if (['failed', 'unsupported'].includes(current.state)) {
+        throw new Error('脚本修改未生成候选 ' + current.reason + ' / ' + (current.guidance || ''));
+      }
+      return visible('#revision-confirm');
+    });
+    assert.match(await evaluate('document.querySelector("#revision-plan-changes").textContent'), /交互脚本/);
+    assert.equal((await appRequest('/api/tools/' + tool.id + '/versions')).body.current, 1);
+    await click('#revision-confirm');
+    const revised = await until(async () => {
+      const current = await activeTool().catch(() => null);
+      return current?.id === tool.id && current.loader !== tool.loader && current;
+    });
+    for (const [value, unit, expected] of [['100','celsius',/212\.0(?!\d)/], ['32','fahrenheit',/(^|\D)0\.0(?!\d)/]]) {
+      await evaluate('document.getElementById("temperature").value=' + JSON.stringify(value) +
+        ';document.getElementById("unit").value=' + JSON.stringify(unit) + ';', revised.context);
+      await click('#convert', revised.context);
+      assert.match(await evaluate('document.querySelector("#result").textContent', revised.context), expected);
+    }
+    assert.equal((await appRequest('/api/tools/' + tool.id + '/versions')).body.current, 2);
+    evidence.tests.push({id:'TEST-007-script', sameTool:true, precision:1, originalConversionsPreserved:true});
+    await screenshot('staged-calculator-revised');
+  }
 }
 
 export async function verifyStagedRevision(ctx) {
