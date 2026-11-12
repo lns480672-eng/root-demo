@@ -503,7 +503,8 @@ def provide(stage, requirement, previous, key, admit, record=None, *, revision_c
             "max_tokens": tokens,
         }
         payload = json.dumps({"key": key, "body": body, "wall_seconds": STAGE_SECONDS}, ensure_ascii=False).encode()
-        if len(payload) > assistant_model.INPUT_BYTES:
+        input_limit = assistant_model.REVISION_INPUT_BYTES if planning_revision else assistant_model.INPUT_BYTES
+        if len(payload) > input_limit:
             raise ApiError(400, "invalid_staged_requirement", "本阶段输入过长，请简化需求。")
         try:
             envelope = assistant_model._exchange(payload, before_dispatch, wall_seconds=STAGE_SECONDS)

@@ -61,6 +61,20 @@ class RevisionContextTests(unittest.TestCase):
         self.assertEqual(request["requirement"], requirement)
         self.assertEqual(request["revision_source"]["source"]["implementation"], code)
 
+    def test_revision_plans_accept_valid_code_larger_than_the_old_context_limit(self):
+        spec = {"kind": "program", "title": "分账计算", "goal": "平均分摊"}
+        code = {
+            "markup": "<label>原价</label><p>" + "a" * 7800 + "</p>",
+            "script": "void 0; /* " + "b" * 11000 + " */",
+        }
+        base = revision.prepare({"spec.json": encode(spec), "implementation.json": encode(code)})
+        plan = {"status": "proposed", "edits": [
+            {"part": "markup", "before": ">原价<", "after": ">起始金额<"},
+        ]}
+        with patch.object(assistant_model, "_exchange", return_value=envelope(json.dumps(plan))) as exchange:
+            revision.provide("revision-plan", "把原价改为起始金额", {}, "fixture-key", Mock(), None, base=base)
+        self.assertIn("b" * 11000, json.loads(exchange.call_args.args[0])["body"]["messages"][1]["content"])
+
     def test_model_adds_nullable_field_using_host_identity_and_impact(self):
         base = revision.prepare(artifacts())
         plan = {"status": "proposed", "operation": {

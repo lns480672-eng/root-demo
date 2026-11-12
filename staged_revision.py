@@ -35,7 +35,7 @@ STRUCTURED_REVISION_PLAN_SYSTEM = """根据用户原话和当前工具结构提�
 用户明确要求保留、不要添加、或不希望修改的能力不可改。不能删字段、改类型、写记录、执行 SQL 或修改权限。"""
 
 MAX_LEGACY_HTML = 24 * 1024
-MAX_BASE_BYTES = 14 * 1024
+MAX_BASE_BYTES = 40 * 1024
 THEME_NAMES = {
     "gray": ("灰白", "灰色", "浅灰", "淡灰"),
     "yellow": ("黄色", "浅黄", "淡黄"),
