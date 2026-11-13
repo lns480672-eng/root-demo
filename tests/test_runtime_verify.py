@@ -71,6 +71,8 @@ class RuntimeVerifierTests(unittest.TestCase):
             verify(source, [])
         self.assertEqual((result.exception.status, result.exception.code), (422, "staged_runtime_failed"))
         self.assertEqual(result.exception.diagnostic, "record_initialization")
+        delayed = source.replace(b"void 0;", b"setTimeout(() => rootRecords.list(), 500);")
+        verify(delayed, [])
 
     def test_runtime_diagnostics_distinguish_script_exception_from_inert_website_tabs(self):
         with self.assertRaises(ApiError) as startup:

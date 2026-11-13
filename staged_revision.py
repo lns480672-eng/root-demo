@@ -1091,6 +1091,9 @@ def provide(stage, requirement, previous, key, admit, record, *, base):
             system = CODE_REVISION_PLAN_SYSTEM
             if base["kind"] == "record_code":
                 system += ("\n这是由模型生成的台账或看板。允许按需求修改多个相关 CSS 规则。"
+                           "只改背景颜色时，只改 style 中负责该背景的声明或变量。先在源码中定位真实选择器，"
+                           "逐字复制能唯一匹配的最短 before 片段，保留原空白、标点和大小写。"
+                           "不要把整理过格式的 CSS 当作原代码。"
                            "可修改 UI 及交互脚本，保留 rootRecords 的字段 ID、数据接口和现有记录。"
                            "不提交字段、存储或数据库迁移。脚本修改适用当前工具。")
         system += (

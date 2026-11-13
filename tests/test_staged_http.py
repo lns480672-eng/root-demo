@@ -89,6 +89,8 @@ def stages(stage, requirement, prior, key, admit, record, *, category="auto"):
         if stage == "implementation":
             content = {"format":"record-code-v1", "markup":"<main><h1>代码台账</h1></main>",
                        "style":"main { color: #174838 }", "script":"rootRecords.list();"}
+            if requirement.endswith("初始化失败"):
+                content["markup"] = "<h1>invalid-record-init-fixture</h1>"
         record({"stage":stage,"status":"ok","dispatched":True})
         return json.dumps(content, ensure_ascii=False).encode()
     if requirement.startswith("官网"):
@@ -251,6 +253,8 @@ def revise(stage, requirement, prior, key, admit, record, *, base):
         return staged_revision.provide(stage, requirement, prior, key, admit, record, base=base)
 
 def verify_runtime(html, entries, *, backup, storage_limit, website):
+    if b"invalid-record-init-fixture" in html:
+        raise RuntimeVerificationError("record_initialization")
     if website and b"invalid-website-tabs-fixture" in html:
         ready = runs / "website-verifier-recovered"
         if not ready.exists():
@@ -437,6 +441,20 @@ class StagedHTTP(StagedHTTPFixture):
         budget = self.request("/api/trial", auth=owner)[1]["generation"]
         self.assertEqual(budget["used"], 0)
         self.assertEqual(budget["totalUsed"] - before, 8)
+
+    def test_record_initialization_failure_moves_unpublished_tool_to_history(self):
+        owner = self.account("record-init-failure")
+        task = self.gen(owner, "代码台账初始化失败")[1]["task"]["id"]
+        self.wait_task(owner, task, "complete")
+        path = "/api/staged/" + task
+        candidate = self.request(path + "/candidate", {}, owner)[1]
+        payload = {**candidate["staged"], "toolId":candidate["id"], "entries":[]}
+        status, body, _ = self.request(path + "/verify-preview", payload, owner)
+        self.assertEqual((status, body["code"]), (422, "staged_runtime_failed"))
+        failed = self.wait_task(owner, task, "failed")
+        self.assertFalse(failed["resumable"])
+        self.assertEqual(self.request(path + "/publish", payload, owner)[0], 409)
+        self.assertEqual(self.request("/api/trial", auth=owner)[1]["generation"]["used"], 0)
 
     def test_code_record_writes_are_scoped_and_reject_snapshot_replacement(self):
         owner = self.account("record-owner")

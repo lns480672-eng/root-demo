@@ -351,8 +351,15 @@ async function run() {
     observer.executionContextId, sessionId);
   if (failure) return 'failed:' + failure;
   if (!result) return 'failed:document_not_ready';
-  if (recordCode && await evaluate("document.documentElement.dataset.recordProof", executionContextId) !== 'read') {
-    return 'failed:record_initialization';
+  if (recordCode) {
+    const deadline = Date.now() + 1000;
+    let proof;
+    do {
+      proof = await evaluate("document.documentElement.dataset.recordProof", executionContextId);
+      if (failure || proof === 'read' || proof === 'write') break;
+      await delay(25);
+    } while (Date.now() < deadline);
+    if (failure || proof !== 'read') return 'failed:' + (failure || 'record_initialization');
   }
   if (website && !await evaluate(
     '(' + verifyWebsiteTabs.toString() + ')()', observer.executionContextId, sessionId,
