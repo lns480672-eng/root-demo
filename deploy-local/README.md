@@ -26,7 +26,7 @@ umask 077
 state_dir="$(mktemp -d "${TMPDIR:-/tmp}/root-local-acceptance.XXXXXX")"
 printf '%s\n' "$state_dir"
 python3 -B workbench.py --runs-dir "$state_dir" --create-invite --invite-hours 24 --invite-uses 1 > "$state_dir/qa-invite"
-python3 -B workbench.py --runs-dir "$state_dir" --port 8803
+ROOT_PUBLIC_SITE_URL=https://localhost:8801/ python3 -B workbench.py --runs-dir "$state_dir" --port 8803
 ```
 
 第二个终端启动官网并指向同一固定候选的 HTTPS 工作台。

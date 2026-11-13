@@ -480,6 +480,8 @@ try {
       await until(() => evaluate(`performance.timeOrigin !== ${previousDocument} && document.documentElement.dataset.ready === "true"`));
       assert.equal(await evaluate('location.pathname'), home);
       assert.equal(await visible('#auth'), true);
+      assert.equal(await evaluate('document.querySelector("#auth-home").href'),
+        home === '/workbench' ? base + '/' : 'http://[::1]:8788/');
       await cdp('Page.navigate', {url:base + '/admin'});
       await until(() => visible('.workbench-link'));
       assert.equal(await evaluate('document.querySelector(".workbench-link").getAttribute("href")'), home);
@@ -555,7 +557,16 @@ try {
   }
   if (!live) {
     stage = 'account visual layout and registration feedback';
-    if (entryFlow) await assertCenteredNonWorkspaceShell('#auth');
+    assert.equal(await evaluate('document.querySelector("#auth-intro-title").innerText.replace(/\\s/g, "")'), '把手头的事，做成小工具。');
+    assert.equal(await evaluate('document.querySelector("#auth-intro > p").textContent'), '从一个想法、明确需求或已有表格开始。');
+    assert.equal(await evaluate('document.querySelector("#auth-title").textContent'), '登录工作台');
+    assert.equal(await evaluate('document.querySelector(".auth-illustration")'), null);
+    assert.equal(await visible('#auth-home'), true);
+    assert.equal(await evaluate('document.querySelector("#auth-home").href'), 'http://[::1]:8788/');
+    assert.equal(await evaluate('document.querySelector(".auth-panel").getBoundingClientRect().width <= 430'), true);
+    await cdp('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
+    await screenshot('account-login-390');
+    await cdp('Emulation.setDeviceMetricsOverride', { width: 1360, height: 980, deviceScaleFactor: 1, mobile: false });
     await screenshot('account-login');
     await click('#auth-mode');
     assert.deepEqual(await evaluate(
@@ -606,7 +617,7 @@ try {
     await cdp('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
     await cdp('Emulation.setTouchEmulationEnabled', { enabled: true });
     assert.deepEqual(await evaluate(`({
-      illustration: document.querySelector('.auth-illustration').checkVisibility(),
+      illustration: Boolean(document.querySelector('.auth-illustration')),
       belowTitle: document.querySelector('#auth-form').getBoundingClientRect().top >
         document.querySelector('#auth-intro').getBoundingClientRect().bottom,
       overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
@@ -614,7 +625,11 @@ try {
     assert.equal(await evaluate(`matchMedia('(pointer: coarse)').matches &&
       [...document.querySelectorAll('#auth-form input, #auth-submit')]
         .every(element => element.getBoundingClientRect().height >= 44)`), true);
-    await screenshot('account-narrow');
+    assert.equal(await evaluate('document.querySelector("#auth-title").textContent'), '凭邀请码注册');
+    await screenshot('account-register-invalid-390');
+    await click('#auth-mode');
+    await click('#auth-mode');
+    await screenshot('account-register-390');
     await cdp('Emulation.setTouchEmulationEnabled', { enabled: false });
     await cdp('Emulation.setDeviceMetricsOverride', { width: 1360, height: 980, deviceScaleFactor: 1, mobile: false });
     await evaluate('document.querySelector("#invite").value = ""');

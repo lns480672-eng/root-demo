@@ -865,6 +865,7 @@ function renderRoute(focus = false) {
   byId('updates').hidden = byId('updates-back').hidden = !updates;
   byId('account').open = false;
   byId('auth').hidden = updates || !identityResolved || Boolean(session);
+  byId('auth-home').hidden = byId('auth').hidden;
   byId('account').hidden = workspace.hidden = updates || !session;
   document.title = updates ? '工作台更新记录 · ROOT' : 'ROOT 工具工作台';
   if (updates) loadReleases();
@@ -1892,10 +1893,9 @@ byId('library-entry').addEventListener('click', () => browseLibrary('library-ent
 
 function authMode(next) {
   registering = next;
-  byId('auth-title').textContent = next ? '邀请注册' : '登录';
-  byId('auth-description').textContent = next ? '凭邀请码创建你的工作台账号。' : '登录后打开你的工具和记录。';
-  byId('auth-submit').textContent = next ? '创建账号' : '登录';
-  byId('auth-mode').textContent = next ? '已有账号？去登录' : '凭邀请码注册';
+  byId('auth-title').textContent = next ? '凭邀请码注册' : '登录工作台';
+  byId('auth-submit').textContent = next ? '注册并进入' : '登录';
+  byId('auth-mode').textContent = next ? '已有账号？登录' : '凭邀请码注册';
   byId('invite-field').hidden = !next;
   byId('invite').required = next;
   byId('username-hint').hidden = byId('password-hint').hidden = !next;

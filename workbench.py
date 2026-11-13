@@ -8,10 +8,12 @@ import re
 import sqlite3
 import tempfile
 import threading
+from html import escape
 from html.parser import HTMLParser
 from http.cookies import CookieError, SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from urllib.parse import urlsplit
 from uuid import uuid4
 
 import generate
@@ -28,6 +30,7 @@ from trial_budget import TrialBudget
 ROOT = Path(__file__).resolve().parent
 ADMIN = "/admin"
 WORKBENCH = "/workbench"
+LOCAL_SITE = "http://[::1]:8788/"
 SHELL_ROUTES = ("/", WORKBENCH, "/updates", ADMIN)
 STATIC = {
     "/": ("index.html", "text/html; charset=utf-8"),
@@ -150,7 +153,7 @@ def session_cookie(token, max_age=SESSION_SECONDS, *, admin=False):
 
 def serve(key, port, runs=generate.RUNS, *, generation_limits=(5, 30), analysis_limits=(6, 60),
           admin_usernames=(), analysis_provider=assistant_model.analyze, table_limits=None,
-          staged_enabled=False, staged_provider=staged_blueprint.provide,
+          staged_enabled=False, public_site_url=LOCAL_SITE, staged_provider=staged_blueprint.provide,
           staged_revision_provider=staged_revision.provide, staged_runtime_verifier=runtime_verify.verify):
     model_lock = threading.Lock()
     store = Store(runs / "workspace.sqlite3")
@@ -277,6 +280,9 @@ def serve(key, port, runs=generate.RUNS, *, generation_limits=(5, 30), analysis_
             # The same backend serves the legacy IP and the shared-domain proxy.
             if self.path == WORKBENCH or self.headers.get("X-Root-Workbench-Path") == WORKBENCH:
                 page = page.replace(b'href="/"', b'href="/workbench"')
+            site_url = "/" if self.headers.get("X-Root-Workbench-Path") == WORKBENCH else public_site_url
+            page = page.replace(f'href="{LOCAL_SITE}"'.encode(),
+                                f'href="{escape(site_url, quote=True)}"'.encode())
             self.send_bytes(200, page, mime, SHELL_POLICY)
 
         def handle_get(self):
@@ -722,13 +728,19 @@ def main():
         if not 0 < generation_limits[0] <= generation_limits[1] or min(analysis_limits) <= 0:
             raise ValueError("额度须为正整数，个人生成额度不得超过全站生成调用额度")
         table_limits = table_import.limits_from_env()
+        public_site_url = os.environ.get("ROOT_PUBLIC_SITE_URL", LOCAL_SITE)
+        site = urlsplit(public_site_url)
+        if (site.scheme not in ("http", "https") or not site.hostname or site.username is not None
+                or site.password is not None or site.port == 0
+                or any(char.isspace() or ord(char) < 32 or char == "\\" for char in public_site_url)):
+            raise ValueError("ROOT_PUBLIC_SITE_URL 必须是无凭据的 HTTP 或 HTTPS 官网地址。")
         admins = tuple(name.strip().lower() for name in os.environ.get("ROOT_TRIAL_ADMINS", "").split(",") if name.strip())
         if any(not re.fullmatch(r"[a-z0-9_-]{3,32}", name) for name in admins):
             raise ValueError("管理员用户名格式无效")
     except ValueError as error:
         parser.error(str(error))
     serve(key, args.port, args.runs_dir, generation_limits=generation_limits, analysis_limits=analysis_limits,
-          admin_usernames=admins, table_limits=table_limits,
+          admin_usernames=admins, table_limits=table_limits, public_site_url=public_site_url,
           staged_enabled=os.environ.get("ROOT_STAGED_ENABLED", "1") != "0")
     return 0
 

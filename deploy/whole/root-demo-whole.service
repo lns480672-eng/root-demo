@@ -7,6 +7,7 @@ Wants=network-online.target
 User=root-demo
 Group=root-demo
 WorkingDirectory=/opt/root-demo/whole/current
+Environment=ROOT_PUBLIC_SITE_URL=https://site.example.invalid/
 EnvironmentFile=/etc/root-demo/workbench.env
 EnvironmentFile=/etc/root-demo/whole.env
 StateDirectory=root-demo-whole
