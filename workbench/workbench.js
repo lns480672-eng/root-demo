@@ -1121,7 +1121,12 @@ function initializeFrame(entries, token, parentOrigin, limit, backup, storageDis
     Object.defineProperty(window, 'rootRecords', {value: Object.freeze({
       list: () => call({action: 'list'}),
       create: values => call({action: 'create', values}),
-      update: (id, values) => call({action: 'update', id, values}),
+      update: (id, values) => {
+        // Dataset attributes return strings even when the record ID is numeric.
+        const identifier = typeof id === 'string' && /^[1-9][0-9]*$/.test(id) ? Number(id) : id;
+        if (!Number.isSafeInteger(identifier) || identifier < 1) return reject(new Error('记录 ID 无效。'));
+        return call({action: 'update', id: identifier, values});
+      },
     })});
   }
   if (backup) {
