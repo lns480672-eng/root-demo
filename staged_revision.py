@@ -380,11 +380,7 @@ def website_text_edit(implementation, edit):
 
 def check_plan(payload, base, requirement=None, *, operation_selected=False, model_response=False):
     try:
-        if model_response:
-            operation = blueprint.read_artifact(payload).get("operation", {})
-            if operation.get("kind") == "add_field" and "required" not in operation:
-                raise ValueError("bad_revision_required")
-        plan = _check_plan(payload, base, requirement)
+        plan = _check_plan(payload, base, requirement, model_response=model_response)
         if operation_selected and "choices" in plan:
             raise ValueError("bad_revision_plan")
         return plan
@@ -392,11 +388,15 @@ def check_plan(payload, base, requirement=None, *, operation_selected=False, mod
         raise ValueError("bad_revision_plan") from None
 
 
-def _check_plan(payload, base, requirement):
+def _check_plan(payload, base, requirement, *, model_response=False):
     plan = blueprint.read_artifact(payload)
     status = plan.get("status") if isinstance(plan, dict) else None
     if status == "proposed" and plan.keys() == {"status", "operation"} and base["kind"] in ("ledger", "table"):
         operation = plan["operation"]
+        if not isinstance(operation, dict):
+            raise ValueError("bad_revision_operation")
+        if model_response and operation.get("kind") == "add_field" and "required" not in operation:
+            raise ValueError("bad_revision_required")
         source, _ = structured_operation(base, operation)
         if requirement is not None and operation["kind"] == "title" and operation["label"] not in requirement:
             raise _out_of_scope()
@@ -503,15 +503,18 @@ def structured_operation(base, operation):
         "remove_csv": set(), "ledger_filter": {"field", "mode"},
     }
     kind = operation.get("kind") if isinstance(operation, dict) else None
+    if not isinstance(kind, str) or kind not in keys:
+        raise ValueError("bad_revision_operation")
+    if kind == "add_field" and "required" in operation:
+        keys[kind].add("required")
+    if operation.keys() != keys[kind] | {"kind"}:
+        raise ValueError("bad_revision_operation")
     if kind == "add_field" and "required" in operation:
         required = operation["required"]
         if required is not None and type(required) is not bool:
             raise ValueError("bad_revision_required")
         if required is True:
             raise ApiError(422, "revision_required_field", REVISION_GUIDANCE["revision_required_field"])
-        keys[kind].add("required")
-    if not isinstance(kind, str) or kind not in keys or operation.keys() != keys[kind] | {"kind"}:
-        raise ValueError("bad_revision_operation")
     if "label" in operation and (not blueprint.label(operation["label"]) or operation["label"].strip() != operation["label"]):
         raise ValueError("bad_revision_label")
     source = deepcopy(base["source"])

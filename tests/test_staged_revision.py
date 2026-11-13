@@ -45,6 +45,8 @@ class RevisionContextTests(unittest.TestCase):
         requirement = "新增必填的巡检日期，所有旧记录都必须填写"
         plan = {"status": "proposed", "operation": {"kind": "add_field", "label": "巡检日期", "type": "date"}}
         for operation, code in ((plan["operation"], "invalid_staged_result"),
+                                (None, "invalid_staged_result"),
+                                ({**plan["operation"], "required": 0}, "invalid_staged_result"),
                                 ({**plan["operation"], "required": True}, "revision_required_field")):
             with self.subTest(operation=operation):
                 with self.assertRaises(ApiError) as raised, patch.object(
@@ -52,6 +54,10 @@ class RevisionContextTests(unittest.TestCase):
                 ):
                     revision.provide("revision-plan", requirement, {}, "fixture-key", Mock(), None, base=base)
                 self.assertEqual(raised.exception.code, code)
+        for operation in (plan["operation"], {**plan["operation"], "required": None},
+                          {**plan["operation"], "required": False}):
+            files = revision.plan_artifacts(encode({**plan, "operation": operation}), base)
+            self.assertEqual(json.loads(files["spec"])["fields"][-1]["required"], False)
 
     def test_operation_choices_are_distinct_spans_and_end_after_selection(self):
         request = "增加阅读日期，再把标题改为读书记录"
@@ -259,7 +265,7 @@ class RevisionContextTests(unittest.TestCase):
     def test_revision_uses_model_field_type_and_clarification_decisions(self):
         base = revision.prepare(artifacts())
         proposed = {"status": "proposed", "operation": {
-            "kind": "add_field", "label": "观测时间", "type": "date",
+            "kind": "add_field", "label": "观测时间", "type": "date", "required": None,
         }}
         clarify = {"status": "clarify", "question": "是记下哪一天，还是记下用了多久或具体时刻？"}
         cases = (
@@ -295,8 +301,9 @@ class RevisionContextTests(unittest.TestCase):
         self.assertIn("已有记录 2 条", " ".join(changes))
         self.assertIn("显示为空", " ".join(changes))
         plan["operation"]["required"] = True
-        with self.assertRaises(ValueError):
+        with self.assertRaises(ApiError) as blocked:
             revision.plan_artifacts(encode(plan), base)
+        self.assertEqual(blocked.exception.code, "revision_required_field")
 
     def test_title_and_csv_patches_reuse_unmodified_checkpoint_artifacts(self):
         original = artifacts()
