@@ -29,26 +29,26 @@ const tool = (name, description, parameters, handler) => ({
 });
 const tools = [
   tool('read_file', '读取当前候选文件', schema({file}), args => files.get(args.file) ?? ''),
-  tool('submit_candidate', '一次提交候选。仅提供实际变化的文件，其余保留。收到拒绝时继续修正。', {
+  tool('submit_candidate', '提交候选。markup、script、style 是完整文件内容，省略未改部分。', {
     type:'object',
     properties:{
-      decision:{type:'object', properties:{
-        status:{type:'string',enum:['proposed','clarify','unsupported']}, question:string, reason:string,
-        field:string, choices:{type:'array',items:string},
-        operation:schema({kind:{type:'string',enum:['add_field']},label:string,
-          type:{type:'string',enum:['text','integer','date']},required:{type:'boolean'}}),
-        type_evidence:string,
-      },additionalProperties:false},
-      changes:{type:'object', properties:Object.fromEntries(fields.map(name => [name, string])), additionalProperties:false},
-    },
-    required:['decision','changes'],additionalProperties:false,
-  }, async ({decision,changes}) => {
-    const decisionText = JSON.stringify(decision);
-    if (decisionText.length > 4000 || decisionText.includes(key)) throw Error('invalid decision');
-    for (const [name, content] of Object.entries(changes)) {
-      if (!files.has(name) || Buffer.byteLength(content) > 24576 || content.includes(key)) throw Error('invalid file');
+      markup:string, script:string, ...(fields.includes('tool.css') ? {style:string} : {}),
+      status:{type:'string',enum:['proposed','clarify','unsupported']}, question:string, reason:string,
+      field:string, choices:{type:'array',items:string}, field_label:string,
+      field_type:{type:'string',enum:['text','integer','date']}, type_evidence:string,
+    },additionalProperties:false,
+  }, async ({markup,script,style,field_label,field_type,type_evidence,...decision}) => {
+    if (field_label && field_type) {
+      decision.operation = {kind:'add_field',label:field_label,type:field_type,required:false};
+      decision.type_evidence = type_evidence;
     }
-    for (const [name, content] of Object.entries(changes)) files.set(name,content);
+    const changes = {'tool.html':markup,'tool.js':script,'tool.css':style};
+    for (const [name, content] of Object.entries(changes)) {
+      if (content === undefined) continue;
+      if (!files.has(name) || Buffer.byteLength(content) > 24576 || content.includes(key)) throw Error('invalid file');
+      files.set(name,content);
+    }
+    if (JSON.stringify(decision).includes(key)) throw Error('invalid decision');
     send({kind:'candidate',files:Object.fromEntries(files),decision});
     return (await receive()).reason;
   }),
