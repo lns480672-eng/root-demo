@@ -1066,7 +1066,8 @@ def provide(stage, requirement, previous, key, admit, record, *, base):
         if base["kind"] == "ledger":
             system += (
                 '\n仅当已明确要新增的字段名称、还不确定填写类型时，clarify 附加 "field":"字段名"，'
-                '让用户直接选日期、整数或文本。类型明确时直接 proposed。'
+                '此时只返回 status、question、field，类型选项由宿主提供。'
+            'choices 只用于多个独立操作，不要与 field 同时返回。类型明确时直接 proposed。'
             )
         return blueprint.provide(stage, requirement, previous, key, admit, record,
                                  revision_context=context, revision_plan_system=system,
