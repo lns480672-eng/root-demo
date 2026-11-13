@@ -31,6 +31,29 @@ class AgentConfigurationTests(unittest.TestCase):
 
 
 class AgentRevisionTests(unittest.TestCase):
+    def test_backfill_request_cannot_be_satisfied_with_page_code_alone(self):
+        import coding_agent
+
+        spec = {"kind":"ledger", "title":"巡检", "modules":[], "implementation":"record-code-v1",
+                "fields":[{"id":"note", "label":"备注", "type":"text", "required":False, "options":[]}]}
+        original = {"format":"record-code-v1", "markup":"<p>巡检</p>", "style":"",
+                    "script":"window.rootRecords.list();"}
+        base = {"kind":"record_code", "source":{"spec":spec, "implementation":original}}
+        request = "把已有记录里空白的「备注」统一填为「待复核」，有值的备注保留。"
+
+        def validate_submissions(_request, _key, _dispatch, validate, _timeout):
+            files = {"tool.html":"<p>巡检</p><p>待复核</p>", "tool.css":"", "tool.js":original["script"]}
+            with self.assertRaisesRegex(ValueError, "missing_record_data_proposal"):
+                validate({"files":files, "decision":{}})
+            return validate({"files":files, "decision":{
+                "operation":{"kind":"backfill", "field":"note", "value":"待复核"},
+            }})
+
+        with patch.object(coding_agent, "run", validate_submissions):
+            result = coding_agent.provide("revision-plan", request, {}, "fixture-key", None,
+                                          base=base, timeout_seconds=120)
+        self.assertEqual(json.loads(result)["operation"]["kind"], "backfill")
+
     def test_candidate_cannot_use_an_undeclared_new_record_field(self):
         spec = {"kind":"ledger", "title":"书单", "modules":[], "implementation":"record-code-v1",
                 "fields":[{"id":"book", "label":"书名", "type":"text", "required":True, "options":[]}]}

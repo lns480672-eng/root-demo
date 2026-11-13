@@ -3,6 +3,7 @@ import json
 import logging
 import os
 from pathlib import Path
+import re
 import select
 import shutil
 import subprocess
@@ -18,6 +19,10 @@ import staged_website
 
 HELPER = Path(__file__).with_name("coding-agent.mjs")
 PARTS = {"markup": "tool.html", "style": "tool.css", "script": "tool.js"}
+RECORD_WRITE_INTENT = re.compile(
+    r"(?:已有|现有|旧|历史)(?:的)?(?:记录|数据).{0,100}(?:填为|填成|填上|填入|填补|补上|补齐|补填|回填)"
+    r"|(?:回填|批量更新|批量修改).{0,80}(?:记录|数据|字段)"
+)
 
 
 def provide(stage, requirement, prior, key, dispatch, *, base=None, timeout_seconds):
@@ -103,6 +108,8 @@ def provide(stage, requirement, prior, key, dispatch, *, base=None, timeout_seco
                 implementation["format"] = staged_website.FORMAT if website else staged_record_code.FORMAT
             if base:
                 operation = decision.get("operation")
+                if record and not operation and RECORD_WRITE_INTENT.search(requirement):
+                    raise ValueError("missing_record_data_proposal")
                 decision = {"operation":operation} if operation and not base.get("selected_field") else {}
                 if decision and operation.get("kind") == "add_field":
                     decision["type_evidence"] = message["decision"].get("type_evidence")
@@ -194,6 +201,7 @@ def run(request, key, dispatch, validate, timeout_seconds):
                                    "bad_website_style_size": "CSS 必须不超过 4096 字节。如果需求无需改样式，请省略 style 参数以沿用原 CSS。",
                                    "bad_revision_data_control": "同时提交改好的 markup 和 script。保留目标字段的输入框 id，并将 type 对应改成 number、date 或 text；同步调整提交值类型。",
                                    "undeclared_record_field": "新增保存字段须填写 field_label、field_type 和用户明确类型的原话 type_evidence。用户未明确日期、时长或具体时间时，先提交 clarify，勿提交源码。",
+                                   "missing_record_data_proposal": "用户要求修改已保存的数据。仅改页面不能完成；空值回填用 propose_backfill，改型用 propose_type_change，缺少信息先澄清。",
                                    "oversize_tool_html": "将 tool.html 缩到 8 KiB 内。",
                                    "oversize_tool_js": "将 tool.js 缩到 12 KiB 内。"}
                         send({"ok":False, "reason":f"{diagnostic} {details.get(diagnostic, '')}".strip()})
