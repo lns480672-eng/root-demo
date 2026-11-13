@@ -73,10 +73,12 @@ def provide(stage, requirement, prior, key, dispatch, *, base=None):
         if not isinstance(decision, dict):
             raise ValueError("bad_revision_plan")
         decision = {name:value for name,value in decision.items() if value not in (None, "", [])}
-        if base and decision.get("status") in ("clarify", "unsupported"):
-            if base.get("selected_field") and decision["status"] == "clarify":
-                raise ValueError("field_already_selected")
-            result = json.dumps(decision, ensure_ascii=False).encode()
+        status = decision.get("status")
+        if base and status in ("clarify", "unsupported") and not (
+                status == "clarify" and base.get("selected_field")):
+            allowed = {"status", "reason"} if status == "unsupported" else {"status", "question", "field", "choices"}
+            result = json.dumps({name:value for name,value in decision.items() if name in allowed},
+                                ensure_ascii=False).encode()
         else:
             implementation = {part: message["files"][name] for part, name in parts.items()}
             for part in ("markup", "script"):
@@ -89,14 +91,8 @@ def provide(stage, requirement, prior, key, dispatch, *, base=None):
             if website or record:
                 implementation["format"] = staged_website.FORMAT if website else staged_record_code.FORMAT
             if base:
-                if decision.get("status") == "proposed":
-                    decision = {key:value for key,value in decision.items() if key != "status"}
-                if base.get("selected_field"):
-                    decision = {}
-                if decision.keys() - {"operation", "type_evidence"}:
-                    raise ValueError("bad_revision_plan")
-                if "operation" not in decision:
-                    decision = {}
+                decision = ({"operation":decision["operation"], "type_evidence":decision.get("type_evidence")}
+                            if "operation" in decision and not base.get("selected_field") else {})
                 plan = {"status":"proposed", "implementation":implementation, **decision}
                 result = json.dumps(plan, ensure_ascii=False).encode()
                 if record:
@@ -178,7 +174,6 @@ def run(request, key, dispatch, validate):
                         logging.getLogger(__name__).warning("Agent candidate rejected: %s (%s)", diagnostic, fields)
                         details = {"bad_revision_operation": "检查字段 ID 和实际新增的输入控件。",
                                    "bad_revision_plan": "仅提交允许的 decision 字段。",
-                                   "field_already_selected": "用户已选定字段类型，请直接提交修改。",
                                    "bindings_changed": "保留已有控件和它们的属性。",
                                    "missing_tool_html": "在 markup 提供非空 HTML。",
                                    "missing_tool_js": "在 script 提供非空 JS，静态工具用 void 0;。",
