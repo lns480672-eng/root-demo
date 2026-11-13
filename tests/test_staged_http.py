@@ -607,6 +607,12 @@ class StagedHTTP(StagedHTTPFixture):
         with self.store.connection() as db:
             calls = db.execute("SELECT count(*) FROM staged_dispatches WHERE task=?", (revised,)).fetchone()
         self.assertEqual(calls[0], 3)
+        receipts = [json.loads(line) for line in (self.runs / "staged-usage.jsonl").read_text().splitlines()]
+        rejected = [receipt for receipt in receipts
+                    if receipt["task"] == revised and receipt["status"] == "revision_patch_invalid"]
+        self.assertEqual([receipt.get("patch_feedback") for receipt in rejected], [
+            {"part": "markup", "edit": 1, "reason": "before_not_found"},
+        ])
         candidate = self.request(path + "/candidate", {}, owner)[1]
         self.assertIn("已有记录 1 条。", candidate["revisionPlan"]["changes"])
         self.assertEqual(candidate["entries"], saved["entries"])

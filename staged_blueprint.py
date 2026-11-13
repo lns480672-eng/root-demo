@@ -567,6 +567,8 @@ def provide(stage, requirement, previous, key, admit, record=None, *, revision_c
         return result
     except ApiError as error:
         evidence["status"] = error.code
+        if error.code == "revision_patch_invalid" and hasattr(error, "patch_feedback"):
+            evidence["patch_feedback"] = error.patch_feedback
         raise
     except (AttributeError, IndexError, KeyError, RecursionError, TypeError, ValueError) as error:
         evidence["status"] = "invalid_staged_result"

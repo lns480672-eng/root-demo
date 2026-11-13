@@ -52,6 +52,9 @@ STRUCTURED_REVISION_PLAN_SYSTEM = """根据用户原话和当前工具结构提�
 
 MAX_LEGACY_HTML = 24 * 1024
 MAX_BASE_BYTES = 40 * 1024
+MAX_CODE_EDITS = 12
+MAX_EDIT_FRAGMENT_CHARS = 400
+MAX_EDIT_TOTAL_CHARS = 6400
 THEME_NAMES = {
     "gray": ("灰白", "灰色", "浅灰", "淡灰"),
     "yellow": ("黄色", "浅黄", "淡黄"),
@@ -322,9 +325,12 @@ class RevisionPatchError(ApiError):
 
 def apply_code_edits(implementation, edits):
     """Apply exact, non-overlapping edits against the original code of one version."""
-    if not isinstance(edits, list) or not 1 <= len(edits) <= 8:
+    if not isinstance(edits, list) or not edits:
         raise RevisionPatchError("invalid_edits")
+    if len(edits) > MAX_CODE_EDITS:
+        raise RevisionPatchError("too_many_edits")
     by_part = {}
+    total_chars = 0
     for index, edit in enumerate(edits, 1):
         if not isinstance(edit, dict) or edit.keys() != {"part", "before", "after"}:
             raise RevisionPatchError("invalid_edit", edit=index)
@@ -333,10 +339,15 @@ def apply_code_edits(implementation, edits):
             raise RevisionPatchError("invalid_edit", edit=index)
         if not isinstance(before, str) or not isinstance(after, str) or not before or before == after:
             raise RevisionPatchError("invalid_fragment", part=part, edit=index)
-        if max(len(before), len(after)) > 400 or any(
+        if max(len(before), len(after)) > MAX_EDIT_FRAGMENT_CHARS:
+            raise RevisionPatchError("fragment_too_long", part=part, edit=index)
+        if any(
             unicodedata.category(character) == "Cf" for character in before + after
         ):
             raise RevisionPatchError("invalid_fragment", part=part, edit=index)
+        total_chars += len(before) + len(after)
+        if total_chars > MAX_EDIT_TOTAL_CHARS:
+            raise RevisionPatchError("patch_budget_exceeded", part=part, edit=index)
         original = implementation[part]
         start = original.find(before)
         if start < 0:
@@ -1193,7 +1204,12 @@ def provide(stage, requirement, previous, key, admit, record, *, base):
         if base.get("patch_feedback"):
             system += ("\npatch_feedback 指出上一次失败的代码区、编辑序号和原因。序号从 1 开始。"
                        "before_not_found 表示原片段不存在，before_ambiguous 表示出现多次。"
+                       "too_many_edits 表示编辑数量超限，fragment_too_long 表示某段超限，"
+                       "patch_budget_exceeded 表示原片段和替换片段的字符总量超限。"
                        "从 revision_source.source 中重新逐字定位，保留原来的修改目标和其他功能。")
+        if base["kind"] in ("program", "website", "record_code"):
+            system += (f"\n最多 {MAX_CODE_EDITS} 处编辑，所有 before 和 after 合计不超过 "
+                       f"{MAX_EDIT_TOTAL_CHARS} 字。")
         if base.get("repair_feedback"):
             system += ("\nrepair_feedback 按时间提供上次失败原因与用户补充。结合已有源码修复失败，"
                        "保持原需求和已经确认的选择。补充与已确认选择冲突时先澄清。")

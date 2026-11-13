@@ -128,6 +128,26 @@ class RevisionContextTests(unittest.TestCase):
                 revision.apply_code_edits(source, [{"part":"markup", "before":before, "after":">新<"}])
             self.assertEqual(result.exception.patch_feedback, {"part":"markup", "edit":1, "reason":reason})
 
+    def test_patch_budget_allows_nine_small_edits_and_limits_total_change(self):
+        fragments = [f"<p>记录 {index}</p>" for index in range(13)]
+        source = {"markup": "".join(fragments), "script": "void 0;"}
+        edits = [{"part": "markup", "before": fragment, "after": f"<p>归档 {index}</p>"}
+                 for index, fragment in enumerate(fragments)]
+        self.assertEqual(revision.apply_code_edits(source, edits[:9])["markup"],
+                         "".join(edit["after"] for edit in edits[:9]) + "".join(fragments[9:]))
+        with self.assertRaises(ApiError) as rejected:
+            revision.apply_code_edits(source, edits)
+        self.assertEqual(rejected.exception.patch_feedback, {"reason": "too_many_edits"})
+
+        fragments = [f"/* {index:02} " + "a" * 380 + " */" for index in range(9)]
+        source = {"style": "\n".join(fragments)}
+        edits = [{"part": "style", "before": fragment, "after": fragment.replace("a", "b")}
+                 for fragment in fragments]
+        with self.assertRaises(ApiError) as rejected:
+            revision.apply_code_edits(source, edits)
+        self.assertEqual(rejected.exception.patch_feedback,
+                         {"reason": "patch_budget_exceeded", "part": "style", "edit": 9})
+
     def test_code_plan_preserves_dom_bindings_and_displays_full_edit(self):
         spec = {"kind": "program", "title": "分账计算", "goal": "平均分摊"}
         note = "原" * 104 + "\n尾部"
