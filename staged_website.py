@@ -42,6 +42,10 @@ def validate(value):
         raise ValueError("bad_website_code_shape")
     if value["format"] != FORMAT:
         raise ValueError("bad_website_code_format")
+    validate_fragment(value)
+
+
+def validate_fragment(value):
     staged_program.validate({"markup": value["markup"], "script": value["script"]}, elements=ELEMENTS)
     style = value["style"]
     if not isinstance(style, str) or len(style.encode()) > MAX_STYLE_BYTES or "\x00" in style:

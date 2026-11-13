@@ -12,6 +12,7 @@ from accounts import ApiError
 import staged_blueprint as blueprint
 import staged_program
 import staged_website
+import staged_record_code
 import table_import
 
 
@@ -195,7 +196,7 @@ def prepare(prior_artifacts, legacy_html=None):
                 blueprint.validate(stage, payload, prior_artifacts)
                 limit = staged_program.MAX_ARTIFACT_BYTES if stage == "implementation" else blueprint.MAX_ARTIFACT_BYTES
                 source[stage] = blueprint.read_artifact(payload, limit=limit)
-            kind = source["spec"].get("kind", "ledger")
+            kind = "record_code" if staged_record_code.matches(source["spec"]) else source["spec"].get("kind", "ledger")
         keys = storage_keys(source["implementation"]["script"]) if kind == "program" else []
         base = {"kind":kind, "source":source, "storageKeys":keys}
         if len(json.dumps(base, ensure_ascii=False).encode()) > MAX_BASE_BYTES:
@@ -410,7 +411,7 @@ def _check_plan(payload, base, requirement, *, model_response=False):
         blueprint.validate("implementation", json.dumps(implementation).encode(),
                            {"spec.json": json.dumps(source["spec"]).encode()})
         return plan
-    if status == "proposed" and plan.keys() == {"status", "edits"} and base["kind"] in ("program", "website"):
+    if status == "proposed" and plan.keys() == {"status", "edits"} and base["kind"] in ("program", "website", "record_code"):
         source = base["source"]
         implementation = apply_code_edits(source["implementation"], plan["edits"])
         if base["kind"] == "website":
@@ -422,7 +423,7 @@ def _check_plan(payload, base, requirement, *, model_response=False):
             ):
                 raise ApiError(422, "revision_patch_invalid", "样式补丁应只修改或新增一条局部规则，旧版仍可用。")
         if implementation["script"] != source["implementation"]["script"] and not (
-            base["kind"] == "website" or source["spec"].get("storage") == "none"
+            base["kind"] in ("website", "record_code") or source["spec"].get("storage") == "none"
         ):
             raise ApiError(422, "revision_script_data", REVISION_GUIDANCE["revision_script_data"])
         blueprint.validate("implementation", json.dumps(implementation).encode(),
@@ -942,13 +943,14 @@ def describe(base, files, requirement, entries):
             return ["工具内容区水平居中，最大宽度 720 像素。保留现有脚本与记录。"]
         changes = []
         script_changed = any(edit["part"] == "script" for edit in plan["edits"])
-        if script_changed and entries:
+        if script_changed and entries and base["kind"] != "record_code":
             raise ApiError(409, "revision_script_data", REVISION_GUIDANCE["revision_script_data"])
         for edit in plan["edits"]:
             before, after = edit["before"], edit["after"]
             part = {"markup": "页面内容", "style": "样式", "script": "交互脚本"}[edit["part"]]
             changes.append(f"{part}「{before}」改为「{after}」。")
-        return [*changes, "当前没有已有记录。" if script_changed else "保留现有脚本与记录。"]
+        return [*changes, "保留现有记录。" if base["kind"] == "record_code" else
+                "当前没有已有记录。" if script_changed else "保留现有脚本与记录。"]
     local = local_revision(base, requirement)
     if local:
         changes = [local[1]]
@@ -1087,6 +1089,10 @@ def provide(stage, requirement, previous, key, admit, record, *, base):
             system = STRUCTURED_REVISION_PLAN_SYSTEM
         else:
             system = CODE_REVISION_PLAN_SYSTEM
+            if base["kind"] == "record_code":
+                system += ("\n这是由模型生成的台账或看板。允许按需求修改多个相关 CSS 规则。"
+                           "可修改 UI 及交互脚本，保留 rootRecords 的字段 ID、数据接口和现有记录。"
+                           "不提交字段、存储或数据库迁移。脚本修改适用当前工具。")
         system += (
             '\n在判断字段类型或可执行性之前，先看是否要求多个独立操作。若用户要求多个独立操作，先返回 {"status":"clarify","question":"请选择本次要做的一项",'
             '"choices":["第一项原话","第二项原话"]}。每个选项逐字引用原话，保留各自的条件。'

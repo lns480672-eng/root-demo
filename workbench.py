@@ -47,7 +47,7 @@ STATIC = {
     "/workbench.js": ("workbench.js", "text/javascript; charset=utf-8"),
 }
 TOOL_PATH = re.compile(r"/api/tools/(run-[a-z0-9_]{8})")
-TOOL_ACTION = re.compile(r"/api/tools/(run-[a-z0-9_]{8})/(commit|open|data|publish|revise|restore|resolve-publish|resolve-commit)")
+TOOL_ACTION = re.compile(r"/api/tools/(run-[a-z0-9_]{8})/(commit|open|data|records|publish|revise|restore|resolve-publish|resolve-commit)")
 TOOL_VERSIONS = re.compile(r"/api/tools/(run-[a-z0-9_]{8})/versions")
 DRAFTS = "/api/requirement-drafts"
 UUID = r"[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}"
@@ -120,7 +120,7 @@ def build_id(assets):
     digest = hashlib.sha256()
     for name in ("generate.py", "workbench.py", "accounts.py", "assistant_fixture.py", "assistant_model.py",
                  "table_import.py", "trial_budget.py", "staged_blueprint.py", "staged_jobs.py", "staged_program.py", "staged_revision.py",
-                 "staged_website.py", "runtime_verify.py", "runtime-verify.mjs",
+                 "staged_website.py", "staged_record_code.py", "runtime_verify.py", "runtime-verify.mjs",
                  "workbench/staged-runtime.js"):
         digest.update(name.encode() + b"\0" + (ROOT / name).read_bytes() + b"\0")
     for path, body in assets.items():
@@ -149,7 +149,7 @@ def session_cookie(token, max_age=SESSION_SECONDS, *, admin=False):
 
 def serve(key, port, runs=generate.RUNS, *, generation_limits=(5, 30), analysis_limits=(6, 60),
           admin_usernames=(), analysis_provider=assistant_model.analyze, table_limits=None,
-          staged_enabled=False, staged_provider=staged_blueprint.provide,
+          staged_enabled=False, record_code=False, staged_provider=staged_blueprint.provide,
           staged_revision_provider=staged_revision.provide, staged_runtime_verifier=runtime_verify.verify):
     model_lock = threading.Lock()
     store = Store(runs / "workspace.sqlite3")
@@ -179,7 +179,10 @@ def serve(key, port, runs=generate.RUNS, *, generation_limits=(5, 30), analysis_
         try:
             if base is not None:
                 return staged_revision_provider(stage, requirement, prior, key, admit, record, base=base)
-            if staged_provider is staged_blueprint.provide or category != "auto":
+            if staged_provider is staged_blueprint.provide:
+                return staged_provider(stage, requirement, prior, key, admit, record, category=category,
+                                       record_code=record_code)
+            if category != "auto":
                 return staged_provider(stage, requirement, prior, key, admit, record, category=category)
             return staged_provider(stage, requirement, prior, key, admit, record)
         finally:
@@ -517,6 +520,10 @@ def serve(key, port, runs=generate.RUNS, *, generation_limits=(5, 30), analysis_
             if match := TOOL_ACTION.fullmatch(self.path):
                 if match[2] == "revise":
                     self.handle_generation(data, match[1])
+                elif match[2] == "records":
+                    if staged is None:
+                        raise ApiError(404, "not_found", "页面不存在。")
+                    self.send_json(200, staged.change_record(token, self.marker(), match[1], data))
                 elif match[2] == "restore":
                     row, run_id = store.prepare_restore(token, self.marker(), match[1], data, self.prepare_table_restore)
                     self.send_tool(row, draft=run_id)
@@ -532,7 +539,8 @@ def serve(key, port, runs=generate.RUNS, *, generation_limits=(5, 30), analysis_
                 else:
                     self.send_json(200, store.change_tool(token, self.marker(), match[1], match[2], data,
                                                          record_model_success=budget.record_generation_success,
-                                                         ensure_history=history.ensure_tool_history))
+                                                         ensure_history=history.ensure_tool_history,
+                                                         allow_snapshot=lambda db, row: history.record_code_spec(db, row) is None))
                 return
             if self.path != "/api/generate":
                 raise ApiError(404, "not_found", "页面不存在。")
@@ -720,7 +728,8 @@ def main():
         parser.error(str(error))
     serve(key, args.port, args.runs_dir, generation_limits=generation_limits, analysis_limits=analysis_limits,
           admin_usernames=admins, table_limits=table_limits,
-          staged_enabled=os.environ.get("ROOT_STAGED_ENABLED", "1") != "0")
+          staged_enabled=os.environ.get("ROOT_STAGED_ENABLED", "1") != "0",
+          record_code=os.environ.get("ROOT_EXPERIMENTAL_RECORD_CODE") == "1")
     return 0
 
 

@@ -49,6 +49,53 @@ def envelope(content, *, finish="stop", request_id="response-1", usage=None):
 
 
 class StageArtifactTests(unittest.TestCase):
+    def test_record_code_preserves_model_markup_style_and_interaction(self):
+        spec = json.loads(artifacts()["spec.json"])
+        spec.update(kind="ledger", modules=[], implementation="record-code-v1")
+        previous = {"spec.json": json.dumps(spec).encode()}
+        self.assertEqual(blueprint.stage_plan(previous["spec.json"]), ("spec", "implementation", "assemble"))
+        with self.assertRaises(ValueError):
+            blueprint.assemble(previous)
+        code = {
+            "format": "record-code-v1",
+            "markup": '<main><button id="move" type="button">归档</button></main>',
+            "style": '#move { background: #b6d4ca }',
+            "script": "document.querySelector('#move').onclick = () => rootRecords.update(1, {status: '已处理'});",
+        }
+        for unsafe in ({**code, "style": "body{background:url(https://example.com/a)}"},
+                       {**code, "markup": '<iframe src="/"></iframe>'}):
+            with self.assertRaises(ValueError):
+                blueprint.validate("implementation", json.dumps(unsafe).encode(), previous)
+        previous["implementation.json"] = json.dumps(code).encode()
+        blueprint.validate("implementation", previous["implementation.json"], previous)
+        page = blueprint.assemble(previous).decode()
+        for field in ("markup", "style", "script"):
+            self.assertIn(code[field], page)
+        self.assertNotIn('id="record-board"', page)
+        self.assertFalse(blueprint.permits_backup(previous))
+
+    def test_record_mutation_only_changes_requested_record_and_validated_fields(self):
+        from staged_record_code import mutate
+        fields = json.loads(artifacts()["spec.json"])["fields"]
+        first = {"id": 1, "device": "风扇", "date": "2026-11-13", "delay": 2, "status": "待处理"}
+        second = {**first, "id": 2, "device": "电机"}
+        updated = mutate(fields, [first, second], {"action": "update", "id": 1, "values": {"status": "已处理"}})
+        self.assertEqual(updated, [{**first, "status": "已处理"}, second])
+        self.assertEqual(first["status"], "待处理")
+        for operation in (
+            {"action": "replace", "values": []},
+            {"action": "update", "id": 1, "values": {"id": 2}},
+            {"action": "update", "id": 1, "values": {"date": "2026-02-30"}},
+            {"action": "update", "id": 2, "values": {"delay": True}},
+            {"action": "update", "id": 1, "values": {"status": "不存在"}},
+            {"action": "update", "id": 3, "values": {"status": "已处理"}},
+        ):
+            with self.subTest(operation=operation), self.assertRaises(ApiError):
+                mutate(fields, [first, second], operation)
+        self.assertEqual(mutate(fields, [first, second], {"action": "create", "values": {
+            key: value for key, value in first.items() if key != "id"
+        }}), [first, second, {**first, "id": 3}])
+
     def test_ledger_runs_only_the_requested_optional_modules(self):
         files = artifacts()
         spec = json.loads(files["spec.json"])

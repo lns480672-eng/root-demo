@@ -565,7 +565,7 @@ class Store:
         db.execute("UPDATE accounts SET latest_tool=? WHERE id=?", (row["id"], row["owner"]))
         return {"revision": revision}
 
-    def change_tool(self, token, marker, tool_id, action, data, *, record_model_success=None, ensure_history=None):
+    def change_tool(self, token, marker, tool_id, action, data, *, record_model_success=None, ensure_history=None, allow_snapshot=None):
         with self.connection(write=True) as db:
             user = self.session(db, token, marker)
             row = self.owned_tool(db, user, tool_id, published=action != "commit")
@@ -581,6 +581,8 @@ class Store:
             if action == "open" and "version" in data:
                 self.require_version(data["version"], row["version"])
             if action == "data":
+                if allow_snapshot is not None and not allow_snapshot(db, row):
+                    raise ApiError(409, "record_operation_required", "此工具须逐条保存记录。")
                 limit = TABLE_STORAGE_BYTES if row["table_tool"] else TOOL_STORAGE_BYTES
                 entries = pack_entries(data.get("entries"), limit=limit)
                 if type(data.get("revision")) is not int or data["revision"] != revision:

@@ -10,6 +10,7 @@ const profile = process.argv[3];
 const input = [];
 for await (const part of process.stdin) input.push(part);
 const { html, entries, backup, limit, website } = JSON.parse(Buffer.concat(input).toString());
+const recordCode = html.startsWith('<!doctype html><!--root:implementation=record-code-v1-->');
 const storageDisabled = html.startsWith('<!doctype html><!--root:storage=none-->');
 if (storageDisabled && entries.length) {
   process.stdout.write('failed:storage_not_allowed\n');
@@ -50,7 +51,7 @@ const blocksWebRTC = `(() => {
     finally { pc.close(); }
   } catch (error) { return error.name === 'NotAllowedError' || error.name === 'SecurityError'; }
 })()`;
-const args = JSON.stringify([entries, token, origin, limit, backup && !storageDisabled, storageDisabled]).replaceAll('<', '\\u003c');
+const args = JSON.stringify([entries, token, origin, limit, backup && !storageDisabled, storageDisabled, recordCode]).replaceAll('<', '\\u003c');
 const srcdoc = '<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">'
   + '<meta http-equiv="Content-Security-Policy" content="' + previewPolicy + '">'
   + '<script>(' + initializeFrame + ')(...' + args + ')</script>' + html.slice('<!doctype html>'.length);
@@ -317,6 +318,25 @@ async function run() {
   if (!await evaluate("self.origin === 'null'", observer.executionContextId, sessionId)) {
     throw new Error('Verification frame is not opaque');
   }
+  if (recordCode) {
+    const initial = new Map(entries).get('root-structured-records-v1') || '[]';
+    await evaluate(`(() => {
+      const frame = document.querySelector('iframe');
+      const records = JSON.parse(${JSON.stringify(initial)});
+      document.documentElement.dataset.recordProof = 'waiting';
+      window.addEventListener('message', event => {
+        const data = event.data;
+        if (event.source !== frame.contentWindow || event.origin !== 'null' ||
+            data?.token !== ${JSON.stringify(token)} || data.type !== 'record-operation') return;
+        const error = data.operation?.action === 'list' ? undefined : '候选验证期间不能写入记录。';
+        const proof = document.documentElement.dataset.recordProof;
+        document.documentElement.dataset.recordProof = error || proof === 'write' ? 'write' : 'read';
+        frame.contentWindow.postMessage({
+          type: 'record-result', token: data.token, request: data.request, records, error,
+        }, '*');
+      });
+    })()`, executionContextId);
+  }
   candidateStarted = true;
   await cdp('Page.setDocumentContent', { frameId: frame.id, html: srcdoc }, sessionId);
   await delay(250);
@@ -328,6 +348,9 @@ async function run() {
     observer.executionContextId, sessionId);
   if (failure) return 'failed:' + failure;
   if (!result) return 'failed:document_not_ready';
+  if (recordCode && await evaluate("document.documentElement.dataset.recordProof", executionContextId) !== 'read') {
+    return 'failed:record_initialization';
+  }
   if (website && !await evaluate(
     '(' + verifyWebsiteTabs.toString() + ')()', observer.executionContextId, sessionId,
   )) return 'failed:' + (failure || 'website_tabs');

@@ -983,7 +983,7 @@ function serializeEntries(entries, limit) {
 }
 
 // Runs inside the opaque frame before any generated code. It has only this tool's snapshot.
-function initializeFrame(entries, token, parentOrigin, limit, backup, storageDisabled) {
+function initializeFrame(entries, token, parentOrigin, limit, backup, storageDisabled, recordCode = false) {
   const send = parent.postMessage.bind(parent);
   const values = new Map(entries);
   const existing = new Set(values.keys());
@@ -991,6 +991,8 @@ function initializeFrame(entries, token, parentOrigin, limit, backup, storageDis
   let paused = false;
   let restoringBackup = null;
   let backupSequence = 0;
+  let recordRequest = null;
+  let recordSequence = 0;
   const report = (type, extra = {}) => send({ token, type, ...extra }, parentOrigin);
   window.addEventListener('message', event => {
     if (event.source !== parent || event.origin !== parentOrigin || event.data?.token !== token) return;
@@ -999,6 +1001,11 @@ function initializeFrame(entries, token, parentOrigin, limit, backup, storageDis
       report('storage-paused', { reads: Array.from(reads) });
     } else if (event.data.type === 'resume-storage') {
       paused = false;
+    } else if (event.data.type === 'record-result' && recordRequest?.id === event.data.request) {
+      const operation = recordRequest;
+      recordRequest = null;
+      if (event.data.error) operation.reject(new Error(event.data.error));
+      else operation.resolve(event.data.records);
     } else if (event.data.type === 'backup-result' && restoringBackup?.request === event.data.request) {
       const operation = restoringBackup;
       restoringBackup = null;
@@ -1009,6 +1016,23 @@ function initializeFrame(entries, token, parentOrigin, limit, backup, storageDis
       }
     }
   });
+  if (recordCode) {
+    const call = operation => {
+      if (paused || recordRequest) return Promise.reject(new Error('请等当前操作完成。'));
+      return new Promise((resolve, reject) => {
+        recordRequest = {id: ++recordSequence, resolve, reject};
+        if (operation.action === 'list' && existing.has('root-structured-records-v1')) {
+          reads.add('root-structured-records-v1');
+        }
+        report('record-operation', {request: recordRequest.id, operation});
+      });
+    };
+    Object.defineProperty(window, 'rootRecords', {value: Object.freeze({
+      list: () => call({action: 'list'}),
+      create: values => call({action: 'create', values}),
+      update: (id, values) => call({action: 'update', id, values}),
+    })});
+  }
   if (backup) {
     Object.defineProperty(window, 'rootSaveBackup', {
       value(key, value) {
@@ -1037,7 +1061,7 @@ function initializeFrame(entries, token, parentOrigin, limit, backup, storageDis
     for (const [key, value] of next) values.set(key, value);
     report('storage', { entries: snapshot });
   }
-  if (!storageDisabled) Object.defineProperty(window, 'localStorage', {
+  if (!storageDisabled && !recordCode) Object.defineProperty(window, 'localStorage', {
     value: Object.freeze({
       get length() { return values.size; },
       getItem(key) {
@@ -1138,6 +1162,45 @@ function enqueueBackupRestore(frame, { request, key, value }) {
   });
 }
 
+async function handleRecordOperation(frame, {request, operation}) {
+  if (!Number.isSafeInteger(request) || frame.recordPending) return;
+  const reply = (records, error) => frame.iframe.contentWindow?.postMessage(
+    {type: 'record-result', token: frame.token, request, records, error}, '*');
+  if (frame === candidate) {
+    if (operation?.action !== 'list') {
+      frame.reject(new Error('候选预览试图在初始化时写入记录。'));
+      reply(null, '候选预览不能写入记录。');
+      return;
+    }
+    const records = new Map(JSON.parse(frame.snapshot)).get('root-structured-records-v1');
+    reply(records ? JSON.parse(records) : []);
+    return;
+  }
+  if (frame !== active || frame.iframe.inert || pendingPublication) {
+    reply(null, '工具正在切换，请重开后再试。');
+    return;
+  }
+  frame.recordPending = true;
+  const writing = operation?.action !== 'list';
+  if (writing) showRecordSave(frame, 'pending');
+  try {
+    const saved = await workspaceApi('/api/tools/' + frame.id + '/records', {
+      version: frame.version, revision: frame.revision, operation,
+    }, publicationTimeout);
+    if (writing) {
+      frame.snapshot = serializeEntries(saved.entries, frame.storageLimit);
+      frame.revision = saved.revision;
+      showRecordSave(frame, 'saved');
+    }
+    reply(saved.records);
+  } catch (error) {
+    if (writing) showRecordSave(frame, error.code === 'transport' ? 'unknown' : 'failed');
+    reply(null, error.message);
+  } finally {
+    frame.recordPending = false;
+  }
+}
+
 window.addEventListener('message', event => {
   if (event.origin !== 'null' || !event.data || typeof event.data !== 'object') return;
   const frame = [candidate, active].find(
@@ -1145,8 +1208,10 @@ window.addEventListener('message', event => {
   );
   if (!frame) return;
   const { type, entries } = event.data;
-  if (type === 'storage') {
-    if (frame.storageDisabled) return;
+  if (type === 'record-operation' && frame.recordCode) {
+    handleRecordOperation(frame, event.data);
+  } else if (type === 'storage') {
+    if (frame.storageDisabled || frame.recordCode) return;
     if (frame === active && pendingPublication?.runId) return;
     try {
       const snapshot = serializeEntries(entries, frame.storageLimit);
@@ -1541,21 +1606,22 @@ async function openTool(tool, restore = false) {
   const iframe = document.createElement('iframe');
   iframe.title = '生成的工具';
   const storageDisabled = tool.html.startsWith('<!doctype html><!--root:storage=none-->');
-  const backup = !storageDisabled && tool.stagedBackup === true;
+  const recordCode = tool.html.startsWith('<!doctype html><!--root:implementation=record-code-v1-->');
+  const backup = !storageDisabled && !recordCode && tool.stagedBackup === true;
   iframe.setAttribute('sandbox', 'allow-scripts allow-forms' + (backup ? ' allow-downloads' : ''));
   iframe.referrerPolicy = 'no-referrer';
   iframe.tabIndex = -1;
   iframe.inert = true;
   const frame = {
     id: tool.id, token: crypto.randomUUID(), iframe, snapshot: original,
-    storageLimit, backup, storageDisabled,
+    storageLimit, backup, storageDisabled, recordCode,
     revision: tool.revision, version: tool.version, saveTail: Promise.resolve(), saveFailed: false, recordSaveSequence: 0,
   };
   const old = active;
   candidate = frame;
   const ready = new Promise((resolve, reject) => Object.assign(frame, { resolve, reject }));
   const deadline = setTimeout(() => frame.reject(new Error('准备预览超时，需求已保留。')), 5000);
-  const args = JSON.stringify([storageDisabled ? [] : entries, frame.token, location.origin, storageLimit, backup, storageDisabled]).replaceAll('<', '\\u003c');
+  const args = JSON.stringify([storageDisabled ? [] : entries, frame.token, location.origin, storageLimit, backup, storageDisabled, recordCode]).replaceAll('<', '\\u003c');
   const bootstrap = '(' + initializeFrame.toString() + ')(...' + args + ')';
   iframe.srcdoc = '<!doctype html><meta charset="utf-8">'
     + '<meta name="viewport" content="width=device-width, initial-scale=1">'
@@ -1569,6 +1635,7 @@ async function openTool(tool, restore = false) {
       if (tool.runId && old?.id === frame.id) {
         await pauseStorage(old);
         await old.saveTail;
+        if (old.recordPending) throw new Error('旧版还有记录正在保存，请稍后重试。');
         if (old.saveFailed) throw new Error('旧版还有未保存的修改，请先解决保存问题再试。');
       }
       savedSnapshot = frame.snapshot;

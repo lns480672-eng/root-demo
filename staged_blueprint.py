@@ -9,6 +9,7 @@ import time
 import assistant_model
 import staged_program
 import staged_website
+import staged_record_code
 import table_import
 from accounts import ApiError
 from generate import MODEL
@@ -153,8 +154,11 @@ def validate_spec(value):
         require(isinstance(goal, str) and goal.isprintable() and 0 < len(goal.strip()) <= 240,
                 "bad_program_goal")
         return
-    keys(value, "title", "fields", optional=("kind", "modules", "theme", "columnThemes"))
+    keys(value, "title", "fields", optional=("kind", "modules", "theme", "columnThemes", "implementation"))
     require(value.get("kind", "ledger") == "ledger", "bad_spec_kind")
+    if "implementation" in value:
+        require(value["implementation"] == staged_record_code.FORMAT, "bad_record_code_format")
+        require(not {"theme", "columnThemes"} & value.keys(), "bad_record_code_theme")
     theme = value.get("theme", "gray")
     require(isinstance(theme, str) and theme in LEDGER_THEMES, "bad_ledger_theme")
     if "columnThemes" in value:
@@ -174,6 +178,8 @@ def validate_spec(value):
     for field in fields:
         keys(field, "id", "label", "type", "required", "options")
         identifier, name, kind, options = field["id"], field["label"], field["type"], field["options"]
+        if staged_record_code.matches(value):
+            require(identifier not in {"id", "__proto__", "constructor", "prototype"}, "bad_record_field_id")
         require(isinstance(identifier, str) and re.fullmatch("[a-z][a-z0-9_]{0,31}", identifier)
                 and identifier not in {"id", "__proto__", "constructor", "prototype"} and identifier not in ids,
                 "bad_field_id")
@@ -275,7 +281,7 @@ def stage_plan(spec_bytes):
     """Resolve the next stages from a validated, committed model specification."""
     spec = read_artifact(spec_bytes)
     validate_spec(spec)
-    if spec.get("kind") in ("program", "website"):
+    if spec.get("kind") in ("program", "website") or staged_record_code.matches(spec):
         return staged_program.PLAN
     if spec.get("kind") == "table":
         return TABLE_PLAN
@@ -298,6 +304,8 @@ def validate(stage, payload, previous):
         implementation = read_artifact(payload, limit=staged_program.MAX_ARTIFACT_BYTES)
         if spec.get("kind") == "website":
             staged_website.validate(implementation)
+        elif staged_record_code.matches(spec):
+            staged_record_code.validate(implementation)
         else:
             staged_program.validate(implementation)
         return
@@ -336,6 +344,8 @@ def assemble(previous):
         implementation = read_artifact(previous.get("implementation.json"), limit=staged_program.MAX_ARTIFACT_BYTES)
         if spec.get("kind") == "website":
             return staged_website.assemble(spec, implementation)
+        if staged_record_code.matches(spec):
+            return staged_record_code.assemble(spec, implementation)
         return staged_program.assemble(spec, implementation)
     config = {}
     for stage in plan[:-1]:
@@ -423,7 +433,7 @@ def _decode_response(envelope, key, evidence, *, limit=MAX_ARTIFACT_BYTES):
 
 
 def provide(stage, requirement, previous, key, admit, record=None, *, revision_context=None, accept=None,
-            spec_patch=None, category="auto", revision_plan_system=None):
+            spec_patch=None, category="auto", revision_plan_system=None, record_code=False):
     """Request one stage, admitting its usage immediately before dispatch."""
     planning_revision = stage == "revision-plan" and revision_plan_system is not None
     if not planning_revision and stage not in RULES and stage != "implementation":
@@ -479,6 +489,9 @@ def provide(stage, requirement, previous, key, admit, record=None, *, revision_c
             if spec.get("kind") == "website":
                 system = staged_website.SYSTEM + "\n" + markup_rules(staged_website.ELEMENTS)
                 tokens = 5200
+            elif staged_record_code.matches(spec):
+                system = staged_record_code.SYSTEM + "\n" + markup_rules(staged_website.ELEMENTS)
+                tokens = 5200
         elif stage == "spec":
             system, tokens, output_limit = RULES["spec"], 1200, MAX_ARTIFACT_BYTES
         else:
@@ -530,6 +543,11 @@ def provide(stage, requirement, previous, key, admit, record=None, *, revision_c
         result = _decode_response(envelope, key, evidence, limit=output_limit)
         if spec_patch is not None:
             result = spec_patch(result)
+        if record_code and stage == "spec":
+            spec = read_artifact(result)
+            if spec.get("kind", "ledger") == "ledger":
+                spec["implementation"] = staged_record_code.FORMAT
+                result = json.dumps(spec, ensure_ascii=False, separators=(",", ":")).encode()
         if not planning_revision:
             validate(stage, result, previous)
         if stage == "spec":

@@ -10,6 +10,7 @@
 !/workbench-harness.yaml
 !/generate.py
 !/staged_website.py
+!/staged_record_code.py
 !/runtime_verify.py
 !/runtime-verify.mjs
 !/assistant_fixture.py

@@ -14,10 +14,11 @@ import uuid
 from accounts import ApiError, TABLE_STORAGE_BYTES, TOOL_STORAGE_BYTES, pack_entries
 from runtime_verify import RuntimeVerificationError, check_script
 from staged_revision import REVISION_GUIDANCE
+import staged_record_code
 
 MAX_ATTEMPTS = 8
 MAX_CLARIFICATION_ROUNDS = 2
-RUNTIME_PROOF_VERSION = 4
+RUNTIME_PROOF_VERSION = 5
 LEASE_SECONDS = 90
 RETAIN_SECONDS = 48 * 60 * 60
 ZERO = "0" * 40
@@ -395,6 +396,36 @@ class StagedJobs:
             if error.returncode != 1:
                 raise
             return False
+
+    def record_code_spec(self, db, tool):
+        source = self.published_source(db, tool["run_id"])
+        if source is not None:
+            spec = self.blueprint.read_artifact(self.read(source, source["head"], "spec.json"))
+            if staged_record_code.matches(spec):
+                return spec
+        return None
+
+    def change_record(self, token, marker, identifier, data):
+        with self.store.connection(write=True) as db:
+            user = self.store.session(db, token, marker)
+            tool = self.store.owned_tool(db, user, identifier)
+            self.store.require_version(data.get("version"), tool["version"])
+            spec = self.record_code_spec(db, tool)
+            if spec is None:
+                raise ApiError(409, "record_code_unavailable", "当前工具不支持逐条记录接口。")
+            entries = dict(json.loads(tool["entries"]))
+            records = json.loads(entries.get(staged_record_code.STORAGE_KEY, "[]"))
+            if data.get("operation") == {"action": "list"}:
+                return {"records": records, "revision": tool["revision"]}
+            if type(data.get("revision")) is not int or data["revision"] != tool["revision"]:
+                raise ApiError(409, "revision_conflict", "已有更新的记录，请重新打开后编辑。")
+            records = staged_record_code.mutate(spec["fields"], records, data.get("operation"))
+            entries[staged_record_code.STORAGE_KEY] = json.dumps(records, ensure_ascii=False, separators=(",", ":"))
+            packed = pack_entries([list(item) for item in entries.items()])
+            revision = tool["revision"] + 1
+            db.execute("UPDATE tools SET entries=?,revision=? WHERE id=? AND owner=?",
+                       (packed, revision, identifier, user["id"]))
+            return {"records": records, "revision": revision, "entries": json.loads(packed)}
 
     def revision_source(self, db, tool):
         repo_id, head = self.ensure_tool_history(db, tool)
@@ -825,7 +856,8 @@ class StagedJobs:
         except (ValueError, OSError, RecursionError, subprocess.SubprocessError):
             raise ApiError(503, "staged_artifact_invalid", "生成候选的规格无法校验。") from None
         try:
-            self.runtime_verifier(html, data["entries"], backup=self.permits_backup(row), storage_limit=limit,
+            verifier_entries = [] if staged_record_code.matches(spec) else data["entries"]
+            self.runtime_verifier(html, verifier_entries, backup=self.permits_backup(row), storage_limit=limit,
                                   website=spec.get("kind") == "website")
         except RuntimeVerificationError as error:
             logging.getLogger(__name__).warning("staged runtime rejected task=%s candidate=%s reason=%s",
