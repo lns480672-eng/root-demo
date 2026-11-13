@@ -519,7 +519,7 @@ def provide(stage, requirement, previous, key, admit, record=None, *, revision_c
                            "每次只处理一个明确改动，宿主保留其他字段、功能及配色。无法实现需求时必须返回不支持。")
         if instructions:
             system += "\n" + "\n".join(instructions)
-        structured_planning = planning_revision and revision_context["kind"] in ("ledger", "table")
+        structured_planning = planning_revision and revision_context["kind"] in ("ledger", "table", "record_code")
         body = {
             "model": MODEL,
             "messages": [

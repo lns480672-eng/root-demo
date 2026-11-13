@@ -243,6 +243,11 @@ class StagedJobs:
                 return None
             context = json.loads(row["context"])
             answers = self.revision_answers(db, identifier)
+            if context["kind"] == "record_code" and answers and answers[-1]["selection"] == "field":
+                answer = answers[-1]
+                task = self.row(db, identifier)
+                question = json.loads(self.read(task, answer["question_id"], "revision-plan.json"))
+                context["selected_field"] = {"label": question["field"], "type": answer["answer"]}
             if answers:
                 context["clarification"] = [{"question":item["question"], "answer":item["answer"],
                                              "selection":item["selection"]} for item in answers]
@@ -609,6 +614,9 @@ class StagedJobs:
         with self.store.connection() as db:
             answers = self.revision_answers(db, row["id"])
             if not answers or answers[-1]["selection"] != "field":
+                return None
+            revision = self.revision_record(db, row["id"])
+            if json.loads(revision["context"])["kind"] == "record_code":
                 return None
             answer = answers[-1]
             question = json.loads(self.read(row, answer["question_id"], "revision-plan.json"))

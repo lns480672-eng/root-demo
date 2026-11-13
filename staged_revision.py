@@ -426,7 +426,10 @@ def _check_plan(payload, base, requirement, *, model_response=False):
     plan = blueprint.read_artifact(payload)
     status = plan.get("status") if isinstance(plan, dict) else None
     if status == "proposed" and plan.keys() == {"status", "operation", "edits"} and base["kind"] == "record_code":
+        field_answer = base.get("selected_field")
         artifacts = encode_source(record_field_artifacts(base, plan))
+        if field_answer and any(plan["operation"][key] != value for key, value in field_answer.items()):
+            raise ValueError("bad_revision_operation")
         blueprint.validate("spec", artifacts["spec"], {})
         blueprint.validate("implementation", artifacts["implementation"], {"spec.json": artifacts["spec"]})
         return plan
@@ -450,6 +453,8 @@ def _check_plan(payload, base, requirement, *, model_response=False):
                            {"spec.json": json.dumps(source["spec"]).encode()})
         return plan
     if status == "proposed" and plan.keys() == {"status", "edits"} and base["kind"] in ("program", "website", "record_code"):
+        if base.get("selected_field"):
+            raise ValueError("bad_revision_operation")
         source = base["source"]
         implementation = apply_code_edits(source["implementation"], plan["edits"])
         if base["kind"] == "website":
@@ -477,7 +482,7 @@ def _check_plan(payload, base, requirement, *, model_response=False):
         if not isinstance(question, str) or not 0 < len(question.strip()) <= 160 or not question.isprintable():
             raise ValueError("bad_revision_plan")
         if "field" in plan:
-            if base["kind"] == "ledger" and blueprint.label(plan["field"]):
+            if base["kind"] in ("ledger", "record_code") and blueprint.label(plan["field"]):
                 return plan
         else:
             choices = plan["choices"]
@@ -1145,7 +1150,10 @@ def provide(stage, requirement, previous, key, admit, record, *, base):
                            '{"status":"proposed","operation":{"kind":"add_field","label":"字段名","type":"date","required":false},"edits":[...]}。'
                            "使用 revision_source.new_field_id 作为输入框 ID 和记录字段键；更新表单、保存脚本及需要的展示。"
                            "日期用 input type=date，保存 YYYY-MM-DD，旧记录缺值时显示为空。"
-                           "字段类型不清楚时先问是日期、时分还是时长，只返回 status 和 question。"
+                           "字段类型不清楚时先问是日期、时分还是时长。"
+                           "例如『帮我加一栏阅读时间』必须先澄清，不能直接选择日期或写补丁。"
+                           "revision_source.selected_field 存在时，它是用户点选的标签和类型，逐字沿用并生成新增字段补丁。"
+                           "用户在补答中明确类型时，按补答继续生成方案。"
                            "不删除、改型、改键、回填旧记录或迁移数据库。")
                 context = {**context, "new_field_id": next_record_field_id(base["source"]["spec"])}
         system += (
@@ -1155,7 +1163,7 @@ def provide(stage, requirement, previous, key, admit, record, *, base):
         )
         if selected is not None:
             system += '\n用户已选定一项，当前 requirement 就是唯一要处理的操作。不要再返回 choices。'
-        if base["kind"] == "ledger":
+        if base["kind"] in ("ledger", "record_code"):
             system += (
                 '\n仅当已明确要新增的字段名称、还不确定填写类型时，clarify 附加 "field":"字段名"，'
                 '此时只返回 status、question、field，类型选项由宿主提供。'

@@ -194,11 +194,19 @@ def revise(stage, requirement, prior, key, admit, record, *, base):
                 plan["operation"] = {"kind":"table_filter","column":1}
         elif base["kind"] == "record_code":
             assert request["revision_source"]["new_field_id"] == "field_1"
-            plan["operation"] = {"kind":"add_field", "label":"阅读日期", "type":"date", "required":False}
-            plan["edits"] = [
-                {"part":"markup", "before":"</main>", "after":"<input id='field_1' type='date'></main>"},
-                {"part":"script", "before":"list();", "after":"list(); document.getElementById('field_1');"},
-            ]
+            selected_field = request["revision_source"].get("selected_field")
+            if "阅读时间" in requirement and not selected_field:
+                plan = {"status":"clarify", "field":"阅读时间", "question":"要记录日期、时分还是时长？"}
+            else:
+                if "阅读时间" in requirement:
+                    assert selected_field == {"label":"阅读时间", "type":"date"}
+                plan["operation"] = {"kind":"add_field", "label":"阅读日期", "type":"date", "required":False}
+                if selected_field:
+                    plan["operation"].update(selected_field)
+                plan["edits"] = [
+                    {"part":"markup", "before":"</main>", "after":"<input id='field_1' type='date'></main>"},
+                    {"part":"script", "before":"list();", "after":"list(); document.getElementById('field_1');"},
+                ]
         elif base["kind"] == "ledger":
             if scope == "加一个可空文本项目字段，再把名称改为设备名称":
                 plan = {"status":"clarify","question":"请选择本次改动",
@@ -482,12 +490,17 @@ class StagedHTTP(StagedHTTPFixture):
         status, saved, _ = self.request(tool + "/records", write, owner)
         self.assertEqual(status, 200)
         status, response, _ = self.request(tool + "/revise", {
-            "version":1, "requirement":"增加可空阅读日期", "requestId":uuid4().hex,
+            "version":1, "requirement":"帮我加一栏阅读时间。", "requestId":uuid4().hex,
         }, owner)
         self.assertEqual(status, 202)
         revised = response["task"]["id"]
-        self.wait_task(owner, revised, "complete")
+        question = self.wait_task(owner, revised, "clarifying")["clarification"]
+        self.assertEqual(question["field"], "阅读时间")
         path = "/api/staged/" + revised
+        self.assertEqual(self.request(path + "/answer-revision", {
+            "questionId":question["id"], "selection":"field", "answer":"date", "requestId":uuid4().hex,
+        }, owner)[0], 202)
+        self.wait_task(owner, revised, "complete")
         candidate = self.request(path + "/candidate", {}, owner)[1]
         self.assertIn("已有记录 1 条。", candidate["revisionPlan"]["changes"])
         self.assertEqual(candidate["entries"], saved["entries"])

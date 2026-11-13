@@ -35,6 +35,8 @@ class RevisionContextTests(unittest.TestCase):
         implementation = {"format": "record-code-v1", "style": "", "markup": "<form><input id='book'></form>",
                           "script": "window.rootRecords.list(); function save(book) { return window.rootRecords.create({book}); }"}
         base = revision.prepare({"spec.json": encode(spec), "implementation.json": encode(implementation)})
+        question = {"status": "clarify", "question": "要记录日期、时分还是时长？", "field": "阅读时间"}
+        self.assertEqual(revision.check_plan(encode(question), base, "帮我加一栏阅读时间。"), question)
         plan = {"status": "proposed", "operation": {"kind": "add_field", "label": "阅读日期",
                 "type": "date", "required": False}, "edits": [
             {"part": "markup", "before": "</form>", "after": "<label>阅读日期<input type='date' id='field_1'></label></form>"},
