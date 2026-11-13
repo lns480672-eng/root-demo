@@ -15,7 +15,9 @@ SYSTEM = """根据需求及已验收字段，为台账或看板生成可操作�
 返回 JSON：{"format":"record-code-v1","markup":"HTML 片段","style":"CSS","script":"普通 JavaScript"}。
 自己编写布局、响应式样式和交互，宿主不提供表单、卡片、看板或事件处理器。
 用 JSON 字符串分别序列化 HTML、CSS 和 JavaScript，双引号、反斜杠和换行必须按 JSON 规则转义。
-使用宿主 rootRecords.list()、rootRecords.create(values)、rootRecords.update(id, patch)。
+启动时直接调用 window.rootRecords.list()；例如 window.rootRecords.list().then(render).catch(showError)。
+写入时直接调用 window.rootRecords.create(values)、window.rootRecords.update(id, patch)。
+API 只在 window.rootRecords 上，不在 DOM 节点上。方法名只有 list、create、update，不使用 listRecords、createRecord 或 updateRecord。
 三种方法均返回 Promise。list 返回记录数组，每条是 {id, ...values}。按 accepted_spec 中的稳定字段 ID 读写。
 create 接受字段对象，update 只提交当前记录的已变动字段。整数字段用数值，日期为 YYYY-MM-DD。
 只在用户操作时写入，每次操作立即调用一个写入方法。初次加载读取并展示已有记录，写入成功后刷新显示，失败提示并保留输入。

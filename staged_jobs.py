@@ -884,8 +884,11 @@ class StagedJobs:
         except RuntimeVerificationError as error:
             logging.getLogger(__name__).warning("staged runtime rejected task=%s candidate=%s reason=%s",
                                                 identifier, identity["sha256"], error.diagnostic)
-            if (revision is None and spec.get("kind") == "website"
-                    and error.diagnostic == "website_tabs" and not data["entries"]):
+            permanent_failure = (
+                (spec.get("kind") == "website" and error.diagnostic == "website_tabs")
+                or (staged_record_code.matches(spec) and error.diagnostic == "record_initialization")
+            )
+            if revision is None and permanent_failure and not data["entries"]:
                 with self.store.connection(write=True) as db:
                     db.execute("""
                         UPDATE staged_jobs SET state='failed',failure=?,issue=?,updated_at=?

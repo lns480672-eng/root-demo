@@ -109,7 +109,7 @@ def verify(html, entries, *, backup=False, storage_limit=TOOL_STORAGE_BYTES, web
         return
     if process.returncode == 0:
         for reason in ("script_exception", "frame_changed", "isolation_event", "document_not_ready",
-                       "website_tabs", "runtime_timeout", "storage_not_allowed"):
+                       "website_tabs", "record_initialization", "runtime_timeout", "storage_not_allowed"):
             if output == f"failed:{reason}\n".encode("ascii"):
                 raise RuntimeVerificationError(reason)
     raise _unavailable()

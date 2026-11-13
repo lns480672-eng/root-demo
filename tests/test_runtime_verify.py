@@ -63,6 +63,15 @@ class RuntimeVerifierTests(unittest.TestCase):
             self.assertEqual((result.exception.status, result.exception.code), (422, "staged_runtime_failed"))
             self.assertEqual(result.exception.diagnostic, diagnostic)
 
+    def test_record_candidate_missing_initial_read_is_a_runtime_rejection(self):
+        source = artifact("void 0;").replace(
+            b"<!doctype html>", b"<!doctype html><!--root:implementation=record-code-v1-->", 1,
+        )
+        with self.assertRaises(ApiError) as result:
+            verify(source, [])
+        self.assertEqual((result.exception.status, result.exception.code), (422, "staged_runtime_failed"))
+        self.assertEqual(result.exception.diagnostic, "record_initialization")
+
     def test_runtime_diagnostics_distinguish_script_exception_from_inert_website_tabs(self):
         with self.assertRaises(ApiError) as startup:
             verify(artifact("throw new Error('private-model-text');"), [])
