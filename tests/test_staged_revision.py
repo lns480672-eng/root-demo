@@ -29,6 +29,30 @@ def encode(value):
 
 
 class RevisionContextTests(unittest.TestCase):
+    def test_structured_revision_uses_reasoning_without_changing_user_text(self):
+        base = revision.prepare(artifacts())
+        requirement = "按日期加一个观测时间字段"
+        plan = {"status": "proposed", "operation": {"kind": "add_field", "label": "观测时间", "type": "date", "required": False}}
+        with patch.object(assistant_model, "_exchange", return_value=envelope(json.dumps(plan))) as exchange:
+            self.assertEqual(json.loads(revision.provide("revision-plan", requirement, {}, "fixture-key", Mock(), None,
+                                                        base=base)), plan)
+        body = json.loads(exchange.call_args.args[0])["body"]
+        self.assertEqual(body["thinking"], {"type": "enabled"})
+        self.assertEqual(json.loads(body["messages"][1]["content"])["requirement"], requirement)
+
+    def test_structured_revision_does_not_drop_required_field_constraint(self):
+        base = revision.prepare(artifacts())
+        requirement = "新增必填的巡检日期，所有旧记录都必须填写"
+        plan = {"status": "proposed", "operation": {"kind": "add_field", "label": "巡检日期", "type": "date"}}
+        for operation, code in ((plan["operation"], "invalid_staged_result"),
+                                ({**plan["operation"], "required": True}, "revision_required_field")):
+            with self.subTest(operation=operation):
+                with self.assertRaises(ApiError) as raised, patch.object(
+                    assistant_model, "_exchange", return_value=envelope(json.dumps({**plan, "operation": operation}))
+                ):
+                    revision.provide("revision-plan", requirement, {}, "fixture-key", Mock(), None, base=base)
+                self.assertEqual(raised.exception.code, code)
+
     def test_operation_choices_are_distinct_spans_and_end_after_selection(self):
         request = "增加阅读日期，再把标题改为读书记录"
         base = {"kind": "ledger"}

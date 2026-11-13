@@ -39,7 +39,7 @@ STRUCTURED_REVISION_PLAN_SYSTEM = """根据用户原话和当前工具结构提�
 表格和台账均可用 {"kind":"title","label":"用户指定的新标题"}。
 导入表格可用 {"kind":"table_filter","column":从零开始的列下标}，按结构中的列顺序定位。
 台账可用 {"kind":"rename_field","field":"已有字段 ID","label":"新显示名"} 或
-{"kind":"add_field","label":"新字段名","type":"text|integer|date"}。新增字段可空。
+{"kind":"add_field","label":"新字段名","type":"text|integer|date","required":null}。required 必须表达用户原话：明确要求必填或要求旧记录全部有值为 true，明确可空为 false，没说明为 null。当前只支持可空；用户要求必填或给旧记录回填，直接返回 unsupported，不要降级。
 先找同一个新字段的明确类型声明或填写方式。用户可以在字段名前后指定类型，明确声明本身就足够，无需举例。字段名称不决定类型。
 日期只表示年月日，整数可以表示有明确单位的整数量，文本表示文字。例：「按日期加一栏进馆时间」的结果为新增「进馆时间」，类型 date。明确说要日期的字段即使叫时间，也不包含时分。
 明确要求时分、日期加时分、小数或必填且未接受可用替代时，返回 unsupported。缺少明确声明且存在不同合理解释时，必须返回 clarify 并询问要填写的值。未知时不要默认用 text。例如只说「加一栏签到时间」，先问要存日期、持续多久还是时刻。不要用另一个字段的类型、筛选或排序方式推断新字段。已有字段 ID、值和类型都不能改。
@@ -378,8 +378,12 @@ def website_text_edit(implementation, edit):
 
 
 
-def check_plan(payload, base, requirement=None, *, operation_selected=False):
+def check_plan(payload, base, requirement=None, *, operation_selected=False, model_response=False):
     try:
+        if model_response:
+            operation = blueprint.read_artifact(payload).get("operation", {})
+            if operation.get("kind") == "add_field" and "required" not in operation:
+                raise ValueError("bad_revision_required")
         plan = _check_plan(payload, base, requirement)
         if operation_selected and "choices" in plan:
             raise ValueError("bad_revision_plan")
@@ -499,6 +503,13 @@ def structured_operation(base, operation):
         "remove_csv": set(), "ledger_filter": {"field", "mode"},
     }
     kind = operation.get("kind") if isinstance(operation, dict) else None
+    if kind == "add_field" and "required" in operation:
+        required = operation["required"]
+        if required is not None and type(required) is not bool:
+            raise ValueError("bad_revision_required")
+        if required is True:
+            raise ApiError(422, "revision_required_field", REVISION_GUIDANCE["revision_required_field"])
+        keys[kind].add("required")
     if not isinstance(kind, str) or kind not in keys or operation.keys() != keys[kind] | {"kind"}:
         raise ValueError("bad_revision_operation")
     if "label" in operation and (not blueprint.label(operation["label"]) or operation["label"].strip() != operation["label"]):
@@ -794,6 +805,7 @@ PROGRAM_CENTER = re.compile(
     r"(?:我想\s*)?(?:请)?(?:把|将)?(?:工具|计算器|页面)?内容(?:区)?(?:整体)?(?:水平|横向|左右)居中"
 )
 REVISION_GUIDANCE = {
+    "revision_required_field": "当前只支持新增可空字段，不能设为必填或给旧记录补值。旧版仍可用。",
     "revision_script_data": "脚本修改仅适用于未开通存储且没有已有记录的工具。旧版仍可用。",
     "revision_field_clarification_required": "这个时间字段要记录日期、时长还是具体时分？请写明含义和类型，可以写「新增可空整数型字段『阅读时长（分钟）』」。",
     "revision_field_type_unsupported": "台账可新增可空文本、整数或日期字段。时分和小数暂无专用类型。记录时分可改用文本，记录时长可用整数并注明单位。",
@@ -1088,7 +1100,8 @@ def provide(stage, requirement, previous, key, admit, record, *, base):
         return blueprint.provide(stage, requirement, previous, key, admit, record,
                                  revision_context=context, revision_plan_system=system,
                                  accept=lambda payload: check_plan(payload, base, requirement,
-                                                                   operation_selected=selected is not None))
+                                                                   operation_selected=selected is not None,
+                                                                   model_response=True))
     if "revision-plan.json" in previous:
         return plan_artifacts(previous["revision-plan.json"], base)[stage]
     if re.fullmatch(r"(?:我想|请|帮我)?(?:改一下|换一下|调整)(?:颜色|配色)[。！？]?", requirement.strip()):

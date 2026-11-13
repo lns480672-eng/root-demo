@@ -501,6 +501,7 @@ def provide(stage, requirement, previous, key, admit, record=None, *, revision_c
                            "每次只处理一个明确改动，宿主保留其他字段、功能及配色。无法实现需求时必须返回不支持。")
         if instructions:
             system += "\n" + "\n".join(instructions)
+        structured_planning = planning_revision and revision_context["kind"] in ("ledger", "table")
         body = {
             "model": MODEL,
             "messages": [
@@ -508,10 +509,12 @@ def provide(stage, requirement, previous, key, admit, record=None, *, revision_c
                 {"role": "user", "content": text},
             ],
             "response_format": {"type": "json_object"},
-            "thinking": {"type": "disabled"},
+            "thinking": {"type": "enabled" if structured_planning else "disabled"},
             "stream": False,
-            "max_tokens": tokens,
+            "max_tokens": 4096 if structured_planning else tokens,
         }
+        if structured_planning:
+            body["reasoning_effort"] = "low"
         payload = json.dumps({"key": key, "body": body, "wall_seconds": STAGE_SECONDS}, ensure_ascii=False).encode()
         input_limit = assistant_model.REVISION_INPUT_BYTES if planning_revision else assistant_model.INPUT_BYTES
         if len(payload) > input_limit:

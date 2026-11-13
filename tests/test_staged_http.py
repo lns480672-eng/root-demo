@@ -175,8 +175,10 @@ def revise(stage, requirement, prior, key, admit, record, *, base):
                 plan = {"status":"clarify","question":"要改分栏背景还是字段显示名？"}
             elif "具体时分" in requirement:
                 plan = {"status":"unsupported","reason":"当前字段类型不支持具体时分。"}
+            elif requirement == "新增必填的巡检日期，所有旧记录都必须填写":
+                plan["operation"] = {"kind":"add_field","label":"巡检日期","type":"date","required":True}
             elif requirement == "按日期加一个观测时间字段":
-                plan["operation"] = {"kind":"add_field","label":"观测时间","type":"date"}
+                plan["operation"] = {"kind":"add_field","label":"观测时间","type":"date","required":None}
             elif "观测时间" in requirement:
                 rounds = len(request["revision_source"].get("clarification", []))
                 questions = ["观测时间要记日期、持续时长还是几点几分？", "你要填写的具体值是什么？", "你希望保存成什么格式？"]
@@ -196,9 +198,9 @@ def revise(stage, requirement, prior, key, admit, record, *, base):
             elif "设备名称" in scope:
                 plan["operation"] = {"kind":"rename_field","field":"name","label":"设备名称"}
             elif "阅读时长" in requirement:
-                plan["operation"] = {"kind":"add_field","label":"阅读时长（分钟）","type":"integer"}
+                plan["operation"] = {"kind":"add_field","label":"阅读时长（分钟）","type":"integer","required":None}
             else:
-                plan["operation"] = {"kind":"add_field","label":"项目","type":"text"}
+                plan["operation"] = {"kind":"add_field","label":"项目","type":"text","required":None}
         elif base["kind"] == "website":
             targets = request["revision_source"]["text_targets"]
             selected = next(target for target in targets if target["path"] == "main > h1")
@@ -944,9 +946,14 @@ class StagedHTTP(StagedHTTPFixture):
                 _, outside = revise(unsupported, "unsupported")
                 self.assertEqual(outside["reason"], limit_reason)
                 self.assertIn(limit_copy, outside["guidance"])
+                if new_field:
+                    blocked, task = revise("新增必填的巡检日期，所有旧记录都必须填写", "unsupported")
+                    self.assertEqual(task["reason"], "revision_required_field")
+                    self.assertIn("必填", task["guidance"])
+                    self.assertEqual(self.request(blocked + "/candidate", {}, owner)[0], 409)
                 after_questions = self.request("/api/trial", auth=owner)[1]["generation"]
                 self.assertEqual(after_questions["used"], quota["used"])
-                self.assertEqual(after_questions["totalUsed"] - quota["totalUsed"], len(variants) + 3)
+                self.assertEqual(after_questions["totalUsed"] - quota["totalUsed"], len(variants) + 3 + bool(new_field))
                 self.assertEqual(self.request(tool, auth=owner)[1]["entries"], entries)
                 explicit = (clarified,) if new_field else (
                     clarified, "我想把工具内容区水平居中", "把页面内容区左右居中",

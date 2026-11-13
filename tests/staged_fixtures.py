@@ -124,7 +124,7 @@ def revise(stage, requirement, prior, key, admit, record, *, base):
             operations = {
                 "把颜色改成黄色": {"kind":"theme","theme":"yellow"},
                 "公司名称改为雇主": {"kind":"rename_field","field":"company","label":"雇主"},
-                "新增一个可空文本字段「项目」": {"kind":"add_field","label":"项目","type":"text"},
+                "新增一个可空文本字段「项目」": {"kind":"add_field","label":"项目","type":"text","required":None},
                 "把「面试中」分栏背景改为浅蓝": {"kind":"column_theme","option":"面试中","theme":"blue"},
             }
             user = json.loads(json.loads(payload)["body"]["messages"][1]["content"])
