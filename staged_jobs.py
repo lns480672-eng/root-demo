@@ -625,21 +625,19 @@ class StagedJobs:
         )
         for attempt in range(2 if retryable else 1):
             dispatch_id = uuid.uuid4().hex
-            dispatched = False
-
-            def admit():
-                nonlocal dispatched
-                self.dispatch(identifier, fence, index, dispatch_id)
-                dispatched = True
+            invalid_json = False
 
             def record(receipt):
+                nonlocal invalid_json
+                invalid_json = receipt.get("dispatched") is True and receipt.get("validation") == "invalid_model_json"
                 if self.record is not None:
                     self.record(identifier, dispatch_id, receipt)
 
             try:
-                return provider(stage, row["requirement"], prior, admit, record)
+                return provider(stage, row["requirement"], prior,
+                                lambda: self.dispatch(identifier, fence, index, dispatch_id), record)
             except ApiError as error:
-                if not (retryable and attempt == 0 and dispatched and error.code == "invalid_staged_result"):
+                if not (retryable and attempt == 0 and invalid_json and error.code == "invalid_staged_result"):
                     raise
 
     def run(self, identifier, fence, provider):
