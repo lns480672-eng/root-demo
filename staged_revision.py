@@ -55,6 +55,11 @@ MAX_BASE_BYTES = 40 * 1024
 MAX_CODE_EDITS = 12
 MAX_EDIT_FRAGMENT_CHARS = 400
 MAX_EDIT_TOTAL_CHARS = 6400
+FIELD_TYPE_EVIDENCE = {
+    "date": re.compile(r"日期|年月日|YYYY-MM-DD|\bdate\b", re.I),
+    "integer": re.compile(r"整数|整型|\binteger\b|\bwhole number\b", re.I),
+    "text": re.compile(r"文本|文字|字符串|\btext\b|\bstring\b", re.I),
+}
 THEME_NAMES = {
     "gray": ("灰白", "灰色", "浅灰", "淡灰"),
     "yellow": ("黄色", "浅黄", "淡黄"),
@@ -431,12 +436,29 @@ def next_record_field_id(spec):
     return next(f"field_{i}" for i in range(1, 14) if f"field_{i}" not in used)
 
 
-def bind_selected_record_field(payload, field):
+def ground_record_field_plan(payload, base, requirement):
     plan = blueprint.read_artifact(payload)
-    if isinstance(plan, dict) and plan.get("status") == "proposed" and plan.keys() == {"status", "edits"}:
+    if not isinstance(plan, dict) or plan.get("status") != "proposed":
+        return payload
+    field = base.get("selected_field")
+    if field and plan.keys() == {"status", "edits"}:
         plan["operation"] = {"kind": "add_field", **field, "required": False}
-        return json.dumps(plan, ensure_ascii=False, separators=(",", ":")).encode()
-    return payload
+    elif plan.keys() in ({"status", "operation", "edits"}, {"status", "operation", "edits", "type_evidence"}):
+        operation = plan["operation"]
+        if not isinstance(operation, dict) or operation.get("kind") != "add_field":
+            return payload
+        evidence = plan.pop("type_evidence", None)
+        label, kind = operation.get("label"), operation.get("type")
+        if (not field and blueprint.label(label) and isinstance(kind, str) and kind in FIELD_TYPE_EVIDENCE
+                and operation.get("required") is False):
+            user_texts = [requirement, *(item["answer"] for item in base.get("clarification", [])
+                                         if item["selection"] is None)]
+            if (not isinstance(evidence, str) or not any(evidence in value for value in user_texts)
+                    or not FIELD_TYPE_EVIDENCE[kind].search(evidence)):
+                plan = {"status": "clarify", "field": label, "question": f"「{label}」需要记录哪种类型的值？"}
+    else:
+        return payload
+    return json.dumps(plan, ensure_ascii=False, separators=(",", ":")).encode()
 
 
 def check_plan(payload, base, requirement=None, *, operation_selected=False, model_response=False):
@@ -1174,7 +1196,8 @@ def provide(stage, requirement, previous, key, admit, record, *, base):
                            "不要把整理过格式的 CSS 当作原代码。"
                            "可修改 UI 及交互脚本，保留 rootRecords 的字段 ID、数据接口和现有记录。"
                            "未提供 selected_field 且需求明确新增一个可空的文本、整数或日期字段时，返回 "
-                           '{"status":"proposed","operation":{"kind":"add_field","label":"字段名","type":"date","required":false},"edits":[...]}。'
+                           '{"status":"proposed","operation":{"kind":"add_field","label":"字段名","type":"date","required":false},"type_evidence":"用户原话中明确说明类型的片段","edits":[...]}。'
+                           "type_evidence 必须逐字引用当前 requirement 或用户的文字补答。仅有用途含糊的字段名时先追问。"
                            "使用 revision_source.new_field_id 作为输入框 ID 和记录字段键；更新表单、保存脚本及需要的展示。"
                            "日期用 input type=date，保存 YYYY-MM-DD，旧记录缺值时显示为空。"
                            "每个 before 选最短的唯一源码片段，逐字核对，保持原有空格和引号。"
@@ -1213,10 +1236,12 @@ def provide(stage, requirement, previous, key, admit, record, *, base):
         if base.get("repair_feedback"):
             system += ("\nrepair_feedback 按时间提供上次失败原因与用户补充。结合已有源码修复失败，"
                        "保持原需求和已经确认的选择。补充与已确认选择冲突时先澄清。")
-        field = base.get("selected_field") if base["kind"] == "record_code" else None
+        spec_patch = None
+        if base["kind"] == "record_code":
+            spec_patch = lambda payload: ground_record_field_plan(payload, context, requirement)
         return blueprint.provide(stage, requirement, previous, key, admit, record,
                                  revision_context=context, revision_plan_system=system,
-                                 spec_patch=(lambda payload: bind_selected_record_field(payload, field)) if field else None,
+                                 spec_patch=spec_patch,
                                  accept=lambda payload: check_plan(payload, base, requirement,
                                                                    operation_selected=selected is not None,
                                                                    model_response=True))

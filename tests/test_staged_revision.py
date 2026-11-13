@@ -43,6 +43,26 @@ class RevisionContextTests(unittest.TestCase):
             {"part": "script", "before": "create({book})",
              "after": "create({book, field_1: document.getElementById('field_1').value})"},
         ]}
+        for requirement, evidence, expected in (
+            ("每笔补一格阅读时间", None, "clarify"),
+            ("每笔补一格阅读时间", "年月日", "clarify"),
+            ("每笔补一格阅读时间", "阅读时间", "clarify"),
+            ("阅读日期这栏只记年月日", "年月日", "proposed"),
+            ("Add reading date as a calendar date", "calendar date", "proposed"),
+        ):
+            with self.subTest(requirement=requirement, evidence=evidence):
+                response = {**plan, "operation": {**plan["operation"],
+                            "label": "阅读时间" if "阅读时间" in requirement else "阅读日期"}}
+                if evidence is not None:
+                    response["type_evidence"] = evidence
+                with patch.object(assistant_model, "_exchange", return_value=envelope(json.dumps(response))):
+                    result = json.loads(revision.provide("revision-plan", requirement, {}, "fixture-key",
+                                                         Mock(), None, base=base))
+                self.assertEqual(result["status"], expected)
+                if expected == "clarify":
+                    self.assertEqual(result["field"], "阅读时间")
+                else:
+                    self.assertEqual(result, plan)
         proposed = revision.plan_artifacts(encode(plan), base)
         fields = json.loads(proposed["spec"])["fields"]
         self.assertEqual(fields[:-1], spec["fields"])

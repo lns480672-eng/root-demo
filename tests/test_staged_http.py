@@ -199,7 +199,8 @@ def revise(stage, requirement, prior, key, admit, record, *, base):
             if requirement == "修改台账标题为归档记录":
                 plan["edits"] = [{"part": "markup", "before": "</missing>", "after": "<h1>归档记录</h1>"}]
             elif "阅读时间" in requirement and not selected_field:
-                plan = {"status":"clarify", "field":"阅读时间", "question":"要记录日期、时分还是时长？"}
+                plan.update(operation={"kind":"add_field", "label":"阅读时间", "type":"date", "required":False},
+                            type_evidence="年月日", edits=[])
             else:
                 if "阅读时间" in requirement:
                     assert selected_field == {"label":"阅读时间", "type":"date"}
