@@ -477,9 +477,9 @@ class StagedJobs:
             context = json.loads(revision["context"])
             if stage == "revision-plan":
                 answers = self.revision_answers(db, row["id"])
-                scope = next((answer["answer"] for answer in answers if answer["selection"] == "operation"),
-                             row["requirement"])
-                self.revision.check_plan(content, context, scope)
+                selected = next((answer["answer"] for answer in answers if answer["selection"] == "operation"), None)
+                self.revision.check_plan(content, context, selected or row["requirement"],
+                                         operation_selected=selected is not None)
             elif "revision-plan.json" in prior:
                 self.revision.check_planned_stage(stage, content, context, prior)
             else:

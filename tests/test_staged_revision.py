@@ -29,6 +29,18 @@ def encode(value):
 
 
 class RevisionContextTests(unittest.TestCase):
+    def test_operation_choices_are_distinct_spans_and_end_after_selection(self):
+        request = "增加阅读日期，再把标题改为读书记录"
+        base = {"kind": "ledger"}
+        plan = {"status": "clarify", "question": "这次做哪一项？", "choices": ["增加阅读日期", "把标题改为读书记录"]}
+        self.assertEqual(revision.check_plan(encode(plan), base, request), plan)
+        for options in ([request, "增加阅读日期"], ["增加阅读日期，再把标题", "把标题改为读书记录"],
+                        ["增加阅读日期", "删除已有数据"]):
+            with self.subTest(options=options), self.assertRaises(ValueError):
+                revision.check_plan(encode({**plan, "choices": options}), base, request)
+        with self.assertRaises(ValueError):
+            revision.check_plan(encode(plan), base, request, operation_selected=True)
+
     def test_generated_revision_patch_applies_to_fixed_code_without_replacing_other_parts(self):
         source = {"markup": "<label>原价</label><button>计算</button>", "script": "void 0;"}
         edits = [{"part": "markup", "before": ">原价<", "after": ">原始金额<"}]

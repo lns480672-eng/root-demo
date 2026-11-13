@@ -378,9 +378,12 @@ def website_text_edit(implementation, edit):
 
 
 
-def check_plan(payload, base, requirement=None):
+def check_plan(payload, base, requirement=None, *, operation_selected=False):
     try:
-        return _check_plan(payload, base, requirement)
+        plan = _check_plan(payload, base, requirement)
+        if operation_selected and "choices" in plan:
+            raise ValueError("bad_revision_plan")
+        return plan
     except (AttributeError, IndexError, KeyError, TypeError, RecursionError):
         raise ValueError("bad_revision_plan") from None
 
@@ -1071,18 +1074,21 @@ def provide(stage, requirement, previous, key, admit, record, *, base):
             system = CODE_REVISION_PLAN_SYSTEM
         system += (
             '\n在判断字段类型或可执行性之前，先看是否要求多个独立操作。若用户要求多个独立操作，先返回 {"status":"clarify","question":"请选择本次要做的一项",'
-            '"choices":["第一项原话","第二项原话"]}。每个选项逐字引用原话，保留各自的条件。收到 selection=operation 后只处理当前 requirement；其他操作不在本次范围。'
+            '"choices":["第一项原话","第二项原话"]}。每个选项逐字引用原话，保留各自的条件。'
             'clarification 中的问答按顺序补充原需求；已有回答不重复问。'
         )
+        if selected is not None:
+            system += '\n用户已选定一项，当前 requirement 就是唯一要处理的操作。不要再返回 choices。'
         if base["kind"] == "ledger":
             system += (
                 '\n仅当已明确要新增的字段名称、还不确定填写类型时，clarify 附加 "field":"字段名"，'
                 '此时只返回 status、question、field，类型选项由宿主提供。'
-            'choices 只用于多个独立操作，不要与 field 同时返回。类型明确时直接 proposed。'
+                'choices 只用于多个独立操作，不要与 field 同时返回。类型明确时直接 proposed。'
             )
         return blueprint.provide(stage, requirement, previous, key, admit, record,
                                  revision_context=context, revision_plan_system=system,
-                                 accept=lambda payload: check_plan(payload, base, requirement))
+                                 accept=lambda payload: check_plan(payload, base, requirement,
+                                                                   operation_selected=selected is not None))
     if "revision-plan.json" in previous:
         return plan_artifacts(previous["revision-plan.json"], base)[stage]
     if re.fullmatch(r"(?:我想|请|帮我)?(?:改一下|换一下|调整)(?:颜色|配色)[。！？]?", requirement.strip()):
