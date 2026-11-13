@@ -85,14 +85,34 @@ class RuntimeVerifierTests(unittest.TestCase):
           };
         </script>"""
         field = {"id": "field_1", "type": "date"}
-        verify(source, [], record_field=field)
+        verify(source, [], record_field=field, record_fields=[{**field, "required":False}])
         for broken in (
             source.replace(b'type="date"', b'type="text"'),
             source.replace(b"field_1: document.querySelector('input').value", b"other: '2026-01-17'"),
+            source.replace(b"event.preventDefault();", b"event.preventDefault(); event.stopImmediatePropagation();")
+                  .replace(b"rootRecords.create", b"setTimeout(() => rootRecords.create")
+                  .replace(b".catch(() => {});", b".catch(() => {}), 30);")
+                  .replace(b".onsubmit = event => {", b".onclick = event => {"),
         ):
             with self.subTest(source=broken), self.assertRaises(ApiError) as rejected:
-                verify(broken, [], record_field=field)
+                verify(broken, [], record_field=field, record_fields=[{**field, "required":False}])
             self.assertEqual(getattr(rejected.exception, "diagnostic", None), "record_field_behavior")
+
+    def test_record_field_probe_rejects_missing_required_value(self):
+        source = b"""<!doctype html><!--root:implementation=record-code-v1-->
+        <form><input id="field_1" type="date"><button>Save</button></form>
+        <script>
+          rootRecords.list();
+          document.querySelector('form').onsubmit = event => {
+            event.preventDefault();
+            rootRecords.create({field_1: document.querySelector('input').value}).catch(() => {});
+          };
+        </script>"""
+        field = {"id": "field_1", "type": "date"}
+        fields = [{**field, "required":False}, {"id":"name", "type":"text", "required":True}]
+        with self.assertRaises(ApiError) as rejected:
+            verify(source, [], record_field=field, record_fields=fields)
+        self.assertEqual(getattr(rejected.exception, "diagnostic", None), "record_field_behavior")
 
     def test_runtime_diagnostics_distinguish_script_exception_from_inert_website_tabs(self):
         with self.assertRaises(ApiError) as startup:

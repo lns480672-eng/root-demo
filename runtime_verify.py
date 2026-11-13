@@ -9,6 +9,7 @@ import tempfile
 import threading
 
 from accounts import ApiError, TOOL_STORAGE_BYTES, pack_entries
+from staged_record_code import mutate
 
 
 HELPER = Path(__file__).with_name("runtime-verify.mjs")
@@ -68,7 +69,7 @@ def _command():
     return [node, str(HELPER), chrome]
 
 
-def verify(html, entries, *, backup=False, storage_limit=TOOL_STORAGE_BYTES, website=False, record_field=None):
+def verify(html, entries, *, backup=False, storage_limit=TOOL_STORAGE_BYTES, website=False, record_field=None, record_fields=None):
     """Require isolated startup and the applicable website checks for the fixed snapshot."""
     packed = pack_entries(entries, limit=storage_limit)
     if not isinstance(html, bytes) or not html.lower().startswith(b"<!doctype html>"):
@@ -105,6 +106,13 @@ def verify(html, entries, *, backup=False, storage_limit=TOOL_STORAGE_BYTES, web
     finally:
         SLOTS.release()
 
+    if process.returncode == 0 and record_field and output.startswith(b"record:"):
+        try:
+            values = json.loads(output[len(b"record:"):])
+            mutate(record_fields, [], {"action": "create", "values": values})
+        except (ApiError, ValueError, TypeError, RecursionError):
+            raise RuntimeVerificationError("record_field_behavior") from None
+        return
     if process.returncode == 0 and output == b"ok\n":
         return
     if process.returncode == 0:

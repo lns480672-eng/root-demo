@@ -885,6 +885,7 @@ class StagedJobs:
                 if len(spec["fields"]) == len(original) + 1:
                     field = spec["fields"][-1]
                     verifier_options["record_field"] = {name: field[name] for name in ("id", "type")}
+                    verifier_options["record_fields"] = spec["fields"]
             self.runtime_verifier(html, verifier_entries, backup=self.permits_backup(row), storage_limit=limit,
                                   **verifier_options)
         except RuntimeVerificationError as error:

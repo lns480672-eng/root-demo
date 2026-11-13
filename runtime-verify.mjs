@@ -10,6 +10,9 @@ const profile = process.argv[3];
 const input = [];
 for await (const part of process.stdin) input.push(part);
 const { html, entries, backup, limit, website, recordField } = JSON.parse(Buffer.concat(input).toString());
+const dateDay = String(10 + Number.parseInt(randomUUID().slice(0, 2), 16) % 18);
+const recordSample = recordField?.type === 'date' ? '2026-01-' + dateDay :
+  recordField?.type === 'integer' ? Number(dateDay) : randomUUID();
 const recordCode = html.startsWith('<!doctype html><!--root:implementation=record-code-v1-->');
 const storageDisabled = html.startsWith('<!doctype html><!--root:storage=none-->');
 if (storageDisabled && entries.length) {
@@ -334,11 +337,14 @@ async function run() {
           if (data?.type !== 'record-operation') return;
           const action = data.operation?.action;
           const field = ${JSON.stringify(recordField ?? null)};
-          const sample = field?.type === 'date' ? '2026-01-17' : field?.type === 'integer' ? 17 : 'ROOT test value';
+          const sample = ${JSON.stringify(recordSample)};
           const matched = field && document.documentElement.dataset.recordCheck === 'active' && action === 'create' &&
             data.operation.values?.[field.id] === sample;
           const error = action === 'list' || matched ? undefined : '候选验证期间不能写入记录。';
-          if (matched) document.documentElement.dataset.recordCheck = 'passed';
+          if (matched) {
+            document.documentElement.dataset.recordCheck = 'passed';
+            document.documentElement.dataset.recordValues = JSON.stringify(data.operation.values);
+          }
           const proof = document.documentElement.dataset.recordProof;
           document.documentElement.dataset.recordProof = error || proof === 'write' ? 'write' : 'read';
           port.postMessage({type: 'record-result', request: data.request, records, error});
@@ -383,7 +389,10 @@ async function run() {
         }
         input.dispatchEvent(new Event('input', {bubbles: true}));
       }
-      field.value = kind === 'date' ? '2026-01-17' : kind === 'integer' ? '17' : 'ROOT test value';
+      field.value = ${JSON.stringify(String(recordSample))};
+      field.form.addEventListener('submit', event => {
+        if (event.isTrusted) globalThis.rootVerifiedSubmit = true;
+      }, {capture:true, once:true});
       field.dispatchEvent(new Event('input', {bubbles: true}));
       const submit = [...field.form.elements].find(input => input.type === 'submit' && !input.disabled);
       if (!submit) return null;
@@ -406,9 +415,14 @@ async function run() {
       if (await evaluate("document.documentElement.dataset.recordCheck", executionContextId) === 'passed') break;
       await delay(25);
     }
-    if (failure || await evaluate("document.documentElement.dataset.recordCheck", executionContextId) !== 'passed') {
-      return 'failed:' + (failure || 'record_field_behavior');
-    }
+    await delay(100);
+    const observed = await evaluate(`(() => {
+      const {recordCheck, recordProof, recordValues} = document.documentElement.dataset;
+      return recordCheck === 'passed' && recordProof === 'read' ? recordValues : null;
+    })()`, executionContextId);
+    const submitted = await evaluate("globalThis.rootVerifiedSubmit === true", observer.executionContextId, sessionId);
+    if (failure || !observed || !submitted) return 'failed:' + (failure || 'record_field_behavior');
+    return 'record:' + observed;
   }
   if (website && !await evaluate(
     '(' + verifyWebsiteTabs.toString() + ')()', observer.executionContextId, sessionId,
