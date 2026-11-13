@@ -144,6 +144,7 @@ export async function verifyStagedFlow(ctx) {
 
   await inBoard('document.querySelector("#export-backup").scrollIntoView({block:"center"})');
   await pointerClick('#export-backup', board.context);
+  evidence.tests.push('保存后留在生成页，预览可录入；点打开工具进入同一项');
   const backupFile = join(downloadPath, 'root-tool-backup.json');
   const backup = await until(async () => readFile(backupFile, 'utf8').catch(() => ''));
   const decoded = JSON.parse(backup);

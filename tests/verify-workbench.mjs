@@ -1632,6 +1632,18 @@ try {
         await click('#generate');
       } else {
         if (path === 'table') {
+          await type('#requirement', '一段与导表无关的原需求');
+          await evaluate(`(() => {
+            const fetch = window.fetch;
+            window.fetch = async (path, options) => {
+              const response = await fetch(path, options);
+              if (options?.method === 'POST' && String(path).endsWith('/commit')) {
+                window.fetch = fetch;
+                throw new TypeError('fixture: lost table commit response');
+              }
+              return response;
+            };
+          })()`);
           await click('#table-entry');
           await click('#table-example');
           await until(() => evaluate('document.querySelector("#table-confirm")?.checkVisibility() && !document.querySelector("#table-confirm").disabled'));
@@ -1646,6 +1658,7 @@ try {
       await activeTool();
       assert.equal(await visible('#entry-coachmark'), false);
       assert.equal(await visible(path === 'table' ? '#first-tool-saved' : '#generation-saved'), true);
+      if (path === 'table') assert.equal(await visible('#generation-saved'), false);
       assert.equal(await evaluate('document.documentElement.scrollWidth <= innerWidth'), true);
       await screenshot('first-saved-' + path);
     }
