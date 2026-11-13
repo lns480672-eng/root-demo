@@ -1230,6 +1230,9 @@ def provide(stage, requirement, previous, key, admit, record, *, base):
                        "too_many_edits 表示编辑数量超限，fragment_too_long 表示某段超限，"
                        "patch_budget_exceeded 表示原片段和替换片段的字符总量超限。"
                        "从 revision_source.source 中重新逐字定位，保留原来的修改目标和其他功能。")
+            if base["patch_feedback"].get("reason") == "bad_program_attribute":
+                elements = staged_program.ELEMENTS if base["kind"] == "program" else staged_website.ELEMENTS
+                system += "\nHTML 属性未通过校验。按以下规则修正拟新增的标记：\n" + blueprint.markup_rules(elements)
         if base["kind"] in ("program", "website", "record_code"):
             system += (f"\n最多 {MAX_CODE_EDITS} 处编辑，所有 before 和 after 合计不超过 "
                        f"{MAX_EDIT_TOTAL_CHARS} 字。")

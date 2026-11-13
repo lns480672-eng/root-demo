@@ -207,15 +207,14 @@ def revise(stage, requirement, prior, key, admit, record, *, base):
                 plan["operation"] = {"kind":"add_field", "label":"阅读日期", "type":"date", "required":False}
                 if selected_field:
                     del plan["operation"]
-                anchor = "</main>"
+                markup = "<input id='field_1' type='date'></main>"
                 if selected_field and requirement in failed:
-                    assert request["revision_source"]["patch_feedback"] == {
-                        "part":"markup", "edit":1, "reason":"before_not_found"}
+                    assert request["revision_source"]["patch_feedback"] == {"reason":"bad_program_attribute"}
                 if selected_field and requirement not in failed:
                     failed.add(requirement)
-                    anchor = "</missing>"
+                    markup = markup.replace("type=", "onchange='void 0' type=")
                 plan["edits"] = [
-                    {"part":"markup", "before":anchor, "after":"<input id='field_1' type='date'></main>"},
+                    {"part":"markup", "before":"</main>", "after":markup},
                     {"part":"script", "before":"list();", "after":"list(); document.getElementById('field_1');"},
                 ]
         elif base["kind"] == "ledger":
@@ -628,10 +627,8 @@ class StagedHTTP(StagedHTTPFixture):
         self.assertEqual(calls[0], 3)
         receipts = [json.loads(line) for line in (self.runs / "staged-usage.jsonl").read_text().splitlines()]
         rejected = [receipt for receipt in receipts
-                    if receipt["task"] == revised and receipt["status"] == "revision_patch_invalid"]
-        self.assertEqual([receipt.get("patch_feedback") for receipt in rejected], [
-            {"part": "markup", "edit": 1, "reason": "before_not_found"},
-        ])
+                    if receipt["task"] == revised and receipt["status"] == "invalid_staged_result"]
+        self.assertEqual([receipt.get("validation") for receipt in rejected], ["bad_program_attribute"])
         candidate = self.request(path + "/candidate", {}, owner)[1]
         self.assertIn("已有记录 1 条。", candidate["revisionPlan"]["changes"])
         self.assertEqual(candidate["entries"], saved["entries"])
