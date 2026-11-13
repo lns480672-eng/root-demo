@@ -984,7 +984,7 @@ function serializeEntries(entries, limit) {
 
 // Runs inside the opaque frame before any generated code. It has only this tool's snapshot.
 function initializeFrame(entries, token, parentOrigin, limit, backup, storageDisabled, recordCode = false) {
-  document.currentScript?.remove();
+  if (recordCode) document.currentScript?.remove();
   const send = parent.postMessage.bind(parent);
   const values = new Map(entries);
   const existing = new Set(values.keys());
@@ -995,30 +995,39 @@ function initializeFrame(entries, token, parentOrigin, limit, backup, storageDis
   let recordRequest = null;
   let recordSequence = 0;
   const report = (type, extra = {}) => send({ token, type, ...extra }, parentOrigin);
-  window.addEventListener('message', event => {
-    if (event.source !== parent || event.origin !== parentOrigin || event.data?.token !== token) return;
-    if (recordCode) event.stopImmediatePropagation();
-    if (event.data.type === 'pause-storage') {
+  function receive(data) {
+    if (data.type === 'pause-storage') {
       paused = true;
-      report('storage-paused', { reads: Array.from(reads) });
-    } else if (event.data.type === 'resume-storage') {
+      if (recordCode) sendRecord({type: 'storage-paused', reads: Array.from(reads)});
+      else report('storage-paused', {reads: Array.from(reads)});
+    } else if (data.type === 'resume-storage') {
       paused = false;
-    } else if (event.data.type === 'record-result' && recordRequest?.id === event.data.request) {
+    } else if (data.type === 'record-result' && recordRequest?.id === data.request) {
       const operation = recordRequest;
       recordRequest = null;
-      if (event.data.error) operation.reject(new Error(event.data.error));
-      else operation.resolve(event.data.records);
-    } else if (event.data.type === 'backup-result' && restoringBackup?.request === event.data.request) {
+      if (data.error) operation.reject(new Error(data.error));
+      else operation.resolve(data.records);
+    } else if (data.type === 'backup-result' && restoringBackup?.request === data.request) {
       const operation = restoringBackup;
       restoringBackup = null;
-      if (event.data.error) operation.reject(new Error(event.data.error));
+      if (data.error) operation.reject(new Error(data.error));
       else {
         values.set(operation.key, operation.value);
         operation.resolve();
       }
     }
+  }
+  let sendRecord;
+  if (!recordCode) window.addEventListener('message', event => {
+    if (event.source === parent && event.origin === parentOrigin && event.data?.token === token) receive(event.data);
   });
   if (recordCode) {
+    const channel = new MessageChannel();
+    sendRecord = channel.port1.postMessage.bind(channel.port1);
+    channel.port1.onmessage = event => receive(event.data);
+    send({token, type: 'record-connect'}, parentOrigin, [channel.port2]);
+    const RecordPromise = Promise;
+    const reject = Promise.reject.bind(Promise);
     let writeUntil = 0;
     const clock = performance.now.bind(performance);
     const permitWrite = event => {
@@ -1030,17 +1039,17 @@ function initializeFrame(entries, token, parentOrigin, limit, backup, storageDis
     }, true);
     window.addEventListener('change', permitWrite, true);
     const call = operation => {
-      if (paused || recordRequest) return Promise.reject(new Error('请等当前操作完成。'));
+      if (paused || recordRequest) return reject(new Error('请等当前操作完成。'));
       if (operation.action !== 'list') {
-        if (!writeUntil || clock() > writeUntil) return Promise.reject(new Error('请通过页面操作修改记录。'));
+        if (!writeUntil || clock() > writeUntil) return reject(new Error('请通过页面操作修改记录。'));
         writeUntil = 0;
       }
-      return new Promise((resolve, reject) => {
+      return new RecordPromise((resolve, reject) => {
         recordRequest = {id: ++recordSequence, resolve, reject};
         if (operation.action === 'list' && existing.has('root-structured-records-v1')) {
           reads.add('root-structured-records-v1');
         }
-        report('record-operation', {request: recordRequest.id, operation});
+        sendRecord({type: 'record-operation', request: recordRequest.id, operation});
       });
     };
     Object.defineProperty(window, 'rootRecords', {value: Object.freeze({
@@ -1179,9 +1188,13 @@ function enqueueBackupRestore(frame, { request, key, value }) {
 }
 
 async function handleRecordOperation(frame, {request, operation}) {
-  if (!Number.isSafeInteger(request) || frame.recordPending) return;
-  const reply = (records, error) => frame.iframe.contentWindow?.postMessage(
-    {type: 'record-result', token: frame.token, request, records, error}, '*');
+  if (!Number.isSafeInteger(request)) return;
+  const reply = (records, error) => frame.recordPort?.postMessage(
+    {type: 'record-result', request, records, error});
+  if (frame.recordPending) {
+    reply(null, '请等当前操作完成。');
+    return;
+  }
   if (frame === candidate) {
     if (operation?.action !== 'list') {
       frame.reject(new Error('候选预览试图在初始化时写入记录。'));
@@ -1228,8 +1241,13 @@ window.addEventListener('message', event => {
   );
   if (!frame) return;
   const { type, entries } = event.data;
-  if (type === 'record-operation' && frame.recordCode) {
-    handleRecordOperation(frame, event.data);
+  if (type === 'record-connect' && frame === candidate && frame.recordCode && !frame.recordPort && event.ports.length === 1) {
+    frame.recordPort = event.ports[0];
+    frame.recordPort.onmessage = ({data}) => {
+      if (frame !== candidate && frame !== active) return;
+      if (data?.type === 'record-operation') handleRecordOperation(frame, data);
+      else if (data?.type === 'storage-paused') frame.acknowledgePause?.(data.reads);
+    };
   } else if (type === 'storage') {
     if (frame.storageDisabled || frame.recordCode) return;
     if (frame === active && pendingPublication?.runId) return;
@@ -1262,7 +1280,8 @@ window.addEventListener('message', event => {
 });
 
 function signalStorage(frame, type) {
-  frame.iframe.contentWindow.postMessage({ type, token: frame.token }, '*');
+  if (frame.recordCode) frame.recordPort?.postMessage({type});
+  else frame.iframe.contentWindow.postMessage({ type, token: frame.token }, '*');
 }
 
 async function pauseStorage(frame) {
@@ -1663,6 +1682,7 @@ async function openTool(tool, restore = false) {
       if (saved.id !== frame.id) throw new Error('保存结果与当前候选不匹配。');
       if (saved.version !== frame.version || serializeEntries(saved.entries, storageLimit) !== savedSnapshot ||
           (saved.stagedBackup === true) !== backup) {
+        frame.recordPort?.close();
         iframe.remove();
         return await openTool(saved, true);
       }
@@ -1680,6 +1700,7 @@ async function openTool(tool, restore = false) {
       await workspaceApi('/api/tools/' + frame.id + '/open', { version: frame.version },
         pendingPublication || stagedPendingId ? publicationTimeout : undefined);
     }
+    old?.recordPort?.close();
     old?.iframe.remove();
     active = frame;
     iframe.dataset.tool = frame.id;
@@ -1694,6 +1715,7 @@ async function openTool(tool, restore = false) {
   } finally {
     clearTimeout(deadline);
     if (active !== frame) {
+      frame.recordPort?.close();
       iframe.remove();
       if (tool.runId && !pendingPublication && !stagedPendingId && old?.iframe.inert && old.iframe.isConnected) {
         resumeStorage(old);

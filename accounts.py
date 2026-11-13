@@ -569,6 +569,8 @@ class Store:
         with self.connection(write=True) as db:
             user = self.session(db, token, marker)
             row = self.owned_tool(db, user, tool_id, published=action != "commit")
+            if action in ("data", "publish", "commit") and allow_snapshot is not None and not allow_snapshot(db, row):
+                raise ApiError(409, "record_operation_required", "此工具须逐条保存记录。")
             if action in ("publish", "commit"):
                 result = (self.publish_revision(db, row, data, record_model_success) if action == "publish"
                           else self.commit_initial(db, row, data.get("entries"), record_model_success))
@@ -581,8 +583,6 @@ class Store:
             if action == "open" and "version" in data:
                 self.require_version(data["version"], row["version"])
             if action == "data":
-                if allow_snapshot is not None and not allow_snapshot(db, row):
-                    raise ApiError(409, "record_operation_required", "此工具须逐条保存记录。")
                 limit = TABLE_STORAGE_BYTES if row["table_tool"] else TOOL_STORAGE_BYTES
                 entries = pack_entries(data.get("entries"), limit=limit)
                 if type(data.get("revision")) is not int or data["revision"] != revision:

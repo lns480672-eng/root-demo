@@ -419,6 +419,8 @@ class StagedHTTP(StagedHTTPFixture):
         self.assertEqual(status, 200)
         self.assertEqual(self.request(tool + "/records", write, owner)[0], 409)
         self.assertEqual(self.request(tool + "/data", {"version":1,"revision":saved["revision"],"entries":[]}, owner)[0], 409)
+        self.assertEqual(self.request(tool + "/publish", {"version":1,"revision":saved["revision"],"entries":[]}, owner)[0], 409)
+        self.assertEqual(self.request(tool + "/commit", {"entries":[]}, owner)[0], 404)
         self.assertEqual(self.request(tool, auth=owner)[1]["entries"], saved["entries"])
 
 

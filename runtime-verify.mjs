@@ -325,15 +325,18 @@ async function run() {
       const records = JSON.parse(${JSON.stringify(initial)});
       document.documentElement.dataset.recordProof = 'waiting';
       window.addEventListener('message', event => {
-        const data = event.data;
         if (event.source !== frame.contentWindow || event.origin !== 'null' ||
-            data?.token !== ${JSON.stringify(token)} || data.type !== 'record-operation') return;
-        const error = data.operation?.action === 'list' ? undefined : '候选验证期间不能写入记录。';
-        const proof = document.documentElement.dataset.recordProof;
-        document.documentElement.dataset.recordProof = error || proof === 'write' ? 'write' : 'read';
-        frame.contentWindow.postMessage({
-          type: 'record-result', token: data.token, request: data.request, records, error,
-        }, '*');
+            event.data?.token !== ${JSON.stringify(token)} || event.data.type !== 'record-connect' ||
+            event.ports.length !== 1 || document.documentElement.dataset.recordProof !== 'waiting') return;
+        const port = event.ports[0];
+        document.documentElement.dataset.recordProof = 'connected';
+        port.onmessage = ({data}) => {
+          if (data?.type !== 'record-operation') return;
+          const error = data.operation?.action === 'list' ? undefined : '候选验证期间不能写入记录。';
+          const proof = document.documentElement.dataset.recordProof;
+          document.documentElement.dataset.recordProof = error || proof === 'write' ? 'write' : 'read';
+          port.postMessage({type: 'record-result', request: data.request, records, error});
+        };
       });
     })()`, executionContextId);
   }
