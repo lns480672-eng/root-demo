@@ -40,11 +40,9 @@ STRUCTURED_REVISION_PLAN_SYSTEM = """根据用户原话和当前工具结构提�
 导入表格可用 {"kind":"table_filter","column":从零开始的列下标}，按结构中的列顺序定位。
 台账可用 {"kind":"rename_field","field":"已有字段 ID","label":"新显示名"} 或
 {"kind":"add_field","label":"新字段名","type":"text|integer|date"}。新增字段可空。
-先判断用户要求这个新字段保存什么值，再决定类型。字段名本身不等于类型。日期表示年月日，整数可表示明确单位的整数量，例如以分钟计的整数时长，文本表示文字。
-若有多个合理解释且会改变字段类型，返回 clarify，询问用户希望填写什么值。列出会影响实现的合理含义。追问只询问真实用途，暂不评价能否实现。
-先检查原话中是否已经说明类型、格式或填入值，说明可能在字段名前或后。用户明确说按某种类型填写、只保留某些日期部分或指定单位时，以该说明为准。
-类型已明确且受支持，就返回 proposed；即使字段名笼统或含「时间」，也不要再追问。仅使用属于同一新增字段的说明。
-若字段用于记录时间但用户未区分日历日期、持续时长或一天中的时刻，追问时同时列出这三种含义。若明确需要时分、日期加时分、小数或必填的新字段，返回 unsupported，除非用户已明确接受受支持的表示。已有字段 ID、值和类型都不能改。
+先找同一个新字段的明确类型声明或填写方式。用户可以在字段名前后指定类型，明确声明本身就足够，无需举例。字段名称不决定类型。
+日期只表示年月日，整数可以表示有明确单位的整数量，文本表示文字。例：「按日期加一栏进馆时间」的结果为新增「进馆时间」，类型 date。明确说要日期的字段即使叫时间，也不包含时分。
+明确要求时分、日期加时分、小数或必填且未接受可用替代时，返回 unsupported。缺少明确声明且存在不同合理解释时，必须返回 clarify 并询问要填写的值。未知时不要默认用 text。例如只说「加一栏签到时间」，先问要存日期、持续多久还是时刻。不要用另一个字段的类型、筛选或排序方式推断新字段。已有字段 ID、值和类型都不能改。
 台账可用 {"kind":"theme","theme":"gray|yellow|blue|green|pink|purple"} 或
 {"kind":"column_theme","option":"真实分栏名称","theme":"gray|yellow|blue|green|pink|purple"}。
 背景色无法用给定配色表达时返回限制。只说改色、未指定对象或配色时先追问。
@@ -428,6 +426,19 @@ def _check_plan(payload, base, requirement):
         if base["source"]["spec"].get("contentAlignment") == "center":
             raise _no_change()
         return plan
+    if status == "clarify" and plan.keys() in ({"status", "question", "field"}, {"status", "question", "choices"}):
+        question = plan["question"]
+        if not isinstance(question, str) or not 0 < len(question.strip()) <= 160 or not question.isprintable():
+            raise ValueError("bad_revision_plan")
+        if "field" in plan:
+            if base["kind"] == "ledger" and blueprint.label(plan["field"]):
+                return plan
+        else:
+            choices = plan["choices"]
+            if (isinstance(choices, list) and 2 <= len(choices) <= 5
+                    and all(isinstance(item, str) and 0 < len(item.strip()) <= 160 and item.isprintable()
+                            and (requirement is None or item in requirement) for item in choices) and len(set(choices)) == len(choices)):
+                return plan
     for decision, field in (("clarify", "question"), ("unsupported", "reason")):
         if status == decision and plan.keys() == {"status", field}:
             message = plan[field]
@@ -1031,6 +1042,10 @@ def provide(stage, requirement, previous, key, admit, record, *, base):
     """Generate one revision stage from source-only context and check before success."""
     if stage == "revision-plan":
         context = base
+        selected = next((item["answer"] for item in base.get("clarification", [])
+                         if item["selection"] == "operation"), None)
+        if selected is not None:
+            requirement = selected
         if base["kind"] == "website":
             system = WEBSITE_REVISION_PLAN_SYSTEM
             markup = base["source"]["implementation"]["markup"]
@@ -1043,6 +1058,16 @@ def provide(stage, requirement, previous, key, admit, record, *, base):
             system = STRUCTURED_REVISION_PLAN_SYSTEM
         else:
             system = CODE_REVISION_PLAN_SYSTEM
+        system += (
+            '\n在判断字段类型或可执行性之前，先看是否要求多个独立操作。若用户要求多个独立操作，先返回 {"status":"clarify","question":"请选择本次要做的一项",'
+            '"choices":["第一项原话","第二项原话"]}。每个选项逐字引用原话，保留各自的条件。收到 selection=operation 后只处理当前 requirement；其他操作不在本次范围。'
+            'clarification 中的问答按顺序补充原需求；已有回答不重复问。'
+        )
+        if base["kind"] == "ledger":
+            system += (
+                '\n仅当已明确要新增的字段名称、还不确定填写类型时，clarify 附加 "field":"字段名"，'
+                '让用户直接选日期、整数或文本。类型明确时直接 proposed。'
+            )
         return blueprint.provide(stage, requirement, previous, key, admit, record,
                                  revision_context=context, revision_plan_system=system,
                                  accept=lambda payload: check_plan(payload, base, requirement))

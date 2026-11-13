@@ -127,8 +127,11 @@ def revise(stage, requirement, prior, key, admit, record, *, base):
                 "新增一个可空文本字段「项目」": {"kind":"add_field","label":"项目","type":"text"},
                 "把「面试中」分栏背景改为浅蓝": {"kind":"column_theme","option":"面试中","theme":"blue"},
             }
-            if requirement in operations:
-                content = {"status":"proposed","operation":operations[requirement]}
+            user = json.loads(json.loads(payload)["body"]["messages"][1]["content"])
+            answers = user["revision_source"].get("clarification", [])
+            selected = answers[-1]["answer"] if answers else requirement
+            if selected in operations:
+                content = {"status":"proposed","operation":operations[selected]}
         elif base["kind"] == "program" and "不存在" not in requirement and "加入书单" in requirement:
             content = {"status":"proposed","edits":[{"part":"markup","before":">添加<","after":">加入书单<"}]}
         elif base["kind"] == "table" and requirement.startswith("增加一个"):

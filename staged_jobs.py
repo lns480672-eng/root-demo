@@ -16,6 +16,7 @@ from runtime_verify import RuntimeVerificationError, check_script
 from staged_revision import REVISION_GUIDANCE
 
 MAX_ATTEMPTS = 8
+MAX_CLARIFICATION_ROUNDS = 2
 RUNTIME_PROOF_VERSION = 4
 LEASE_SECONDS = 90
 RETAIN_SECONDS = 48 * 60 * 60
@@ -69,6 +70,11 @@ class StagedJobs:
                 CREATE TABLE IF NOT EXISTS staged_revisions (
                     task TEXT PRIMARY KEY REFERENCES staged_jobs(id), tool_id TEXT NOT NULL REFERENCES tools(id),
                     base_version INTEGER NOT NULL, source_digest TEXT NOT NULL, context TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS staged_revision_answers (
+                    task TEXT NOT NULL REFERENCES staged_jobs(id), request_id TEXT NOT NULL,
+                    question_id TEXT NOT NULL, question TEXT NOT NULL, answer TEXT NOT NULL, selection TEXT,
+                    PRIMARY KEY (task, request_id), UNIQUE (task, question_id)
                 );
                 CREATE TABLE IF NOT EXISTS staged_candidates (
                     task TEXT PRIMARY KEY REFERENCES staged_jobs(id), tool_id TEXT NOT NULL UNIQUE,
@@ -146,6 +152,22 @@ class StagedJobs:
                 result["guidance"] = decision["question"]
             else:
                 result["guidance"] = decision["reason"] + " 旧版仍可用，未扣除个人生成次数。"
+        if db is not None:
+            answers = self.revision_answers(db, row["id"])
+            if state == "clarifying":
+                decision = json.loads(self.read(row, row["head"], "revision-plan.json"))
+                rounds = sum(answer["selection"] is None for answer in answers)
+                repeated = self.repeated_question(decision["question"], answers)
+                limited = rounds >= MAX_CLARIFICATION_ROUNDS or repeated
+                result["clarification"] = {
+                    "id":row["head"], "round":min(rounds + 1, MAX_CLARIFICATION_ROUNDS), "limited":limited,
+                    "question":None if limited else decision["question"],
+                    "field":decision.get("field"), "choices":decision.get("choices", []),
+                }
+            if answers or "clarification" in result:
+                result.setdefault("clarification", {})["answers"] = [
+                    {"question":item["question"], "answer":item["answer"]} for item in answers
+                ]
         if row["category"] != "auto":
             result["category"] = row["category"]
         if db is not None:
@@ -169,7 +191,7 @@ class StagedJobs:
             owner = self.store.session(db, token, marker)["id"]
             rows = db.execute("""
                 SELECT * FROM staged_jobs WHERE owner=? AND state!='published'
-                AND (expires>? AND state IN ('queued','running','complete'))=?
+                AND (expires>? AND state IN ('queued','running','complete','clarifying'))=?
                 ORDER BY updated_at DESC, expires DESC LIMIT 30
             """, (owner, self.clock(), not history)).fetchall()
             return [self.view(row, db) for row in rows]
@@ -216,7 +238,75 @@ class StagedJobs:
     def revision_context(self, identifier):
         with self.store.connection() as db:
             row = self.revision_record(db, identifier)
-            return json.loads(row["context"]) if row else None
+            if not row:
+                return None
+            context = json.loads(row["context"])
+            answers = self.revision_answers(db, identifier)
+            if answers:
+                context["clarification"] = [{"question":item["question"], "answer":item["answer"],
+                                             "selection":item["selection"]} for item in answers]
+            return context
+
+    @staticmethod
+    def revision_answers(db, identifier):
+        return db.execute("SELECT * FROM staged_revision_answers WHERE task=? ORDER BY rowid", (identifier,)).fetchall()
+
+    @staticmethod
+    def repeated_question(question, answers):
+        normalized = lambda value: re.sub(r"[\W_]+", "", value).casefold()
+        return any(normalized(item["question"]) == normalized(question) for item in answers)
+
+    def answer_revision(self, token, marker, identifier, data):
+        request_id, question_id = data.get("requestId"), data.get("questionId")
+        if not isinstance(request_id, str) or not IDENTIFIER.fullmatch(request_id) or not isinstance(question_id, str):
+            raise ApiError(400, "revision_answer_invalid", "补答请求编号无效。")
+        answer, selection = data.get("answer"), data.get("selection")
+        if (not isinstance(answer, str) or not 0 < len(answer.strip()) <= 400
+                or selection not in (None, "field", "operation")):
+            raise ApiError(400, "revision_answer_invalid", "请填写补答或选择有效选项。")
+        answer = answer.strip()
+        with self.store.connection(write=True) as db:
+            row = self.owned(db, token, marker, identifier)
+            revision = self.revision_record(db, identifier)
+            if not revision:
+                raise ApiError(409, "revision_question_changed", "这个任务没有待补答的修改。")
+            previous = db.execute("SELECT * FROM staged_revision_answers WHERE task=? AND request_id=?",
+                                  (identifier, request_id)).fetchone()
+            if previous:
+                if (previous["question_id"], previous["answer"], previous["selection"]) != (question_id, answer, selection):
+                    raise ApiError(409, "staged_request_changed", "同一补答编号的内容不能变更。")
+                return False
+            state = self.view(row)["state"]
+            if state not in ("clarifying", "complete") or row["head"] != question_id:
+                raise ApiError(409, "revision_question_changed", "这道问题已更新，请重新打开修改任务。")
+            current = self.store.owned_tool(db, {"id":row["owner"]}, revision["tool_id"])
+            self.store.require_version(revision["base_version"], current["version"])
+            self.check_table_schema(revision, current)
+            decision = json.loads(self.read(row, row["head"], "revision-plan.json"))
+            operation = decision.get("operation", {})
+            field = (operation.get("label") if state == "complete" and operation.get("kind") == "add_field"
+                     else decision.get("field"))
+            if state == "complete" and (selection != "field" or not field or answer == operation.get("type")):
+                raise ApiError(409, "revision_question_changed", "此修改方案没有可调整的字段类型。")
+            prompt = decision.get("question", "调整字段类型")
+            answers = self.revision_answers(db, identifier)
+            if selection == "field":
+                if not field or answer not in ("date", "integer", "text"):
+                    raise ApiError(400, "revision_answer_invalid", "请选择当前方案支持的字段类型。")
+            elif selection == "operation":
+                if answer not in decision.get("choices", []) or any(item["selection"] == "operation" for item in answers):
+                    raise ApiError(400, "revision_answer_invalid", "请选择当前列出的改动。")
+            elif (decision.get("choices") or
+                  sum(item["selection"] is None for item in answers) >= MAX_CLARIFICATION_ROUNDS
+                  or self.repeated_question(prompt, answers)):
+                raise ApiError(409, "revision_clarification_limit", "请点选可用项、取消或改写需求。")
+            db.execute("INSERT INTO staged_revision_answers VALUES (?,?,?,?,?,?)",
+                       (identifier, request_id, question_id, prompt, answer, selection))
+            if state == "complete":
+                db.execute("DELETE FROM staged_candidates WHERE task=?", (identifier,))
+            db.execute("UPDATE staged_jobs SET state='queued',next_stage=0,plan=?,failure=NULL,updated_at=? WHERE id=?",
+                       (json.dumps(["revision-plan"]), self.clock(), identifier))
+            return True
 
     def generation_category(self, identifier):
         with self.store.connection() as db:
@@ -369,7 +459,7 @@ class StagedJobs:
             if decision == "proposed":
                 steps = ("revision-plan", "spec")
             else:
-                state = "unsupported"
+                state = "clarifying" if decision == "clarify" else "unsupported"
                 failure = "revision_clarification_required" if decision == "clarify" else "staged_unsupported"
         elif stage == "spec":
             stages = self.blueprint.stage_plan(content)
@@ -383,7 +473,10 @@ class StagedJobs:
         if revision:
             context = json.loads(revision["context"])
             if stage == "revision-plan":
-                self.revision.check_plan(content, context, row["requirement"])
+                answers = self.revision_answers(db, row["id"])
+                scope = next((answer["answer"] for answer in answers if answer["selection"] == "operation"),
+                             row["requirement"])
+                self.revision.check_plan(content, context, scope)
             elif "revision-plan.json" in prior:
                 self.revision.check_planned_stage(stage, content, context, prior)
             else:
@@ -476,6 +569,18 @@ class StagedJobs:
             self.git(row, "update-ref", self.ref(row), oid, previous)
             self.advance_row(db, row, oid, stage, content)
 
+    def selected_field_plan(self, row):
+        with self.store.connection() as db:
+            answers = self.revision_answers(db, row["id"])
+            if not answers or answers[-1]["selection"] != "field":
+                return None
+            answer = answers[-1]
+            question = json.loads(self.read(row, answer["question_id"], "revision-plan.json"))
+            field = question.get("field") or question["operation"]["label"]
+            return encoded({"status":"proposed", "operation":{
+                "kind":"add_field", "label":field, "type":answer["answer"],
+            }})
+
     def run(self, identifier, fence, provider):
         index = 0
         try:
@@ -488,6 +593,8 @@ class StagedJobs:
                 prior = self.files(row)
                 if stage == "assemble":
                     content = self.blueprint.assemble(prior)
+                elif stage == "revision-plan" and (selected := self.selected_field_plan(row)):
+                    content = selected
                 else:
                     dispatch_id = uuid.uuid4().hex
 
@@ -571,6 +678,11 @@ class StagedJobs:
             "changes":self.revision.describe(json.loads(revision["context"]), self.files(row),
                                              row["requirement"], json.loads(current["entries"])),
         }
+        files = self.files(row)
+        decision = json.loads(files.get("revision-plan.json", b"{}"))
+        operation = decision.get("operation", {})
+        if operation.get("kind") == "add_field":
+            plan["fieldType"] = {"id":row["head"], "label":operation["label"], "type":operation["type"]}
         plan["confirmation"] = digest(encoded({**plan, "nonce":candidate["nonce"], "sha256":candidate["digest"]}))
         return plan
 
@@ -593,6 +705,11 @@ class StagedJobs:
         with self.store.connection(write=True) as db:
             row = self.owned(db, token, marker, identifier)
             candidate = self.candidate_record(db, identifier)
+            if (self.revision_record(db, identifier) and self.view(row)["state"] == "clarifying"
+                    and nonce == row["head"]):
+                db.execute("UPDATE staged_jobs SET state='cancelled',updated_at=? WHERE id=?",
+                           (self.clock(), identifier))
+                return self.view(self.row(db, identifier), db)
             if (not self.revision_record(db, identifier) or candidate is None or candidate["nonce"] != nonce
                     or self.view(row)["state"] != "complete"):
                 raise ApiError(409, "revision_cannot_cancel", "此修改方案已变化或无法取消。")

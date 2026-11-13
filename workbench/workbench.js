@@ -50,7 +50,7 @@ const stagedStepLabels = {
 const stagedStates = {
   queued: '等待生成', running: '正在生成工具', failed: '阶段未完成', interrupted: '生成已中断',
   complete: '等待检查预览', published: '已保存', expired: '已过期', exhausted: '已达调用上限',
-  unsupported: '暂不支持此需求', cancelled: '已取消修改',
+  clarifying: '等待补充说明', unsupported: '暂不支持此需求', cancelled: '已取消修改',
 };
 const generationRestrictions = new Map([
   ['generation_total_limit', {
@@ -285,7 +285,7 @@ function selectedStagedTask() {
 }
 
 function isActiveStagedTask(task) {
-  return ['queued', 'running', 'interrupted', 'complete'].includes(task?.state);
+  return ['queued', 'running', 'interrupted', 'complete', 'clarifying'].includes(task?.state);
 }
 
 function clearStagedSelection() {
@@ -319,6 +319,7 @@ function stagedReason(task, restriction) {
     ? '上次生成时，' + previous.label + '。可以重新提交需求。' : previous.message;
   if (task.state === 'expired') return '任务已过期。可用保留的原需求重新生成。';
   if (task.state === 'exhausted') return '已达到此任务的调用上限。可用保留的原需求重新生成。';
+  if (task.state === 'clarifying') return '';
   if (task.guidance) return task.guidance;
   if (task.reason === 'revision_risky') return '此版本暂不支持删除、转换或批量改写已有数据。旧版仍可用。';
   if (task.reason === 'revision_clarification_required') return '你想改整体背景、某个分栏的颜色，还是字段显示名？请写明修改对象，再查看方案。';
@@ -364,6 +365,41 @@ function renderStagedHistory(blocked) {
     }));
   }
   for (const button of list.querySelectorAll('button')) button.disabled = blocked;
+}
+
+const revisionFieldTypes = {date:'日期（年月日）', integer:'整数', text:'文本'};
+
+function setRevisionOptions(select, options, selected = '') {
+  select.replaceChildren(new Option('请选择', ''), ...options.map(([value, label]) => new Option(label, value)));
+  select.value = selected;
+}
+
+function renderRevisionQuestion(task, canAct) {
+  const panel = byId('revision-clarification');
+  const detail = task?.state === 'clarifying' ? task.clarification : null;
+  panel.hidden = !detail;
+  if (!detail) return;
+  if (panel.dataset.question !== detail.id) {
+    panel.dataset.question = detail.id;
+    byId('revision-question').textContent = detail.question || '已达到追问上限。请选择可用选项，或改写需求。';
+    const history = byId('revision-answers');
+    history.hidden = !detail.answers.length;
+    history.querySelector('ol').replaceChildren(...detail.answers.map(item => {
+      const row = document.createElement('li');
+      row.textContent = item.question + ' ' + (revisionFieldTypes[item.answer] || item.answer);
+      return row;
+    }));
+    byId('revision-answer').value = '';
+    const options = detail.choices.length ? detail.choices.map(item => [item, item])
+      : detail.field ? Object.entries(revisionFieldTypes) : [];
+    setRevisionOptions(byId('revision-choice'), options);
+    byId('revision-choice-label').hidden = !options.length;
+    byId('revision-answer-label').hidden = detail.limited || Boolean(detail.choices.length);
+  }
+  byId('revision-answer-submit').disabled = !canAct ||
+    (byId('revision-answer-label').hidden && byId('revision-choice-label').hidden);
+  byId('revision-rewrite').disabled = !canAct;
+  byId('revision-question-cancel').disabled = !canAct;
 }
 
 function renderStagedTasks(blocked, restriction) {
@@ -434,11 +470,15 @@ function renderStagedTasks(blocked, restriction) {
   const resume = byId('staged-resume');
   resume.hidden = !['queued', 'interrupted'].includes(task?.state) || Boolean(stagedPendingId);
   resume.disabled = !canAct || !configured || quotaBlocked;
+  renderRevisionQuestion(task, canAct);
   const proposal = pendingRevision?.staged.taskId === task?.id ? pendingRevision?.revisionPlan : null;
   const confirmation = byId('revision-confirmation');
   confirmation.hidden = !proposal;
   if (proposal && confirmation.dataset.plan !== proposal.confirmation) {
     confirmation.dataset.plan = proposal.confirmation;
+    byId('revision-field-label').hidden = !proposal.fieldType;
+    if (proposal.fieldType) setRevisionOptions(byId('revision-field-type'),
+      Object.entries(revisionFieldTypes), proposal.fieldType.type);
     byId('revision-plan-tool').textContent = '「' + proposal.title + '」v' + proposal.baseVersion;
     byId('revision-plan-changes').replaceChildren(...proposal.changes.map(change => {
       const item = document.createElement('li');
@@ -446,6 +486,7 @@ function renderStagedTasks(blocked, restriction) {
       return item;
     }));
   }
+  byId('revision-field-type').disabled = !canAct;
   for (const id of ['revision-confirm', 'revision-adjust', 'revision-cancel']) byId(id).disabled = !canAct;
   const reopen = byId('staged-preview');
   reopen.hidden = task?.state !== 'complete' || Boolean(stagedPendingId) || Boolean(proposal);
@@ -1389,10 +1430,79 @@ async function openStagedCandidate(task, approvedTool = null) {
   }
 }
 
+let pendingAnswerRequest = null;
+async function submitRevisionAnswer(questionId, answer, selection) {
+  const task = selectedStagedTask();
+  if (!task || !answer || phase !== 'idle') return;
+  const signature = JSON.stringify([task.id, questionId, answer, selection]);
+  if (pendingAnswerRequest?.signature !== signature) {
+    pendingAnswerRequest = {signature, requestId:crypto.randomUUID().replaceAll('-', '')};
+  }
+  phase = 'sync';
+  stagedMessage = '';
+  render();
+  try {
+    const result = await workspaceApi('/api/staged/' + task.id + '/answer-revision', {
+      questionId, answer, selection, requestId:pendingAnswerRequest.requestId,
+    }, publicationTimeout);
+    pendingAnswerRequest = null;
+    pendingRevision = null;
+    rememberStagedTask(result.task);
+    selectedStagedId = stagedAutoId = result.task.id;
+  } catch (error) {
+    stagedMessage = generationError(error);
+    if (pendingRevision?.revisionPlan.fieldType) byId('revision-field-type').value = pendingRevision.revisionPlan.fieldType.type;
+  } finally {
+    phase = 'idle';
+    render();
+    refreshStagedTasks();
+  }
+}
+
+byId('revision-answer-form').addEventListener('submit', event => {
+  event.preventDefault();
+  const question = selectedStagedTask()?.clarification;
+  if (!question?.id) return;
+  const choice = byId('revision-choice').value;
+  const answer = choice || (!byId('revision-answer-label').hidden ? byId('revision-answer').value.trim() : '');
+  submitRevisionAnswer(question.id, answer, choice ? (question.choices.length ? 'operation' : 'field') : null);
+});
+
+byId('revision-field-type').addEventListener('change', event => {
+  const field = pendingRevision?.revisionPlan.fieldType;
+  if (field && event.target.value && event.target.value !== field.type) {
+    submitRevisionAnswer(field.id, event.target.value, 'field');
+  }
+});
+
+async function closeRevisionQuestion(rewrite) {
+  const task = selectedStagedTask();
+  if (task?.state !== 'clarifying' || phase !== 'idle') return;
+  phase = 'sync';
+  render();
+  try {
+    const result = await workspaceApi('/api/staged/' + task.id + '/cancel-revision',
+      {nonce:task.clarification.id}, publicationTimeout);
+    rememberStagedTask(result.task);
+    clearStagedSelection();
+    if (rewrite) requirement.focus();
+    else finishComposition();
+  } catch (error) {
+    stagedMessage = generationError(error);
+  } finally {
+    phase = 'idle';
+    render();
+  }
+}
+
+byId('revision-rewrite').addEventListener('click', () => closeRevisionQuestion(true));
+byId('revision-question-cancel').addEventListener('click', () => closeRevisionQuestion(false));
+
 byId('revision-confirm').addEventListener('click', () => {
   const task = selectedStagedTask();
   const tool = pendingRevision;
   if (!tool || task?.id !== tool.staged.taskId || phase !== 'idle') return;
+  if (tool.revisionPlan.fieldType && byId('revision-field-type').value !== tool.revisionPlan.fieldType.type) return;
   pendingRevision = null;
   openStagedCandidate(task, tool);
 });

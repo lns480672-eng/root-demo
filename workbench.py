@@ -59,7 +59,7 @@ TRIAL_ADMIN = "/api/trial/admin"
 STAGED = "/api/staged"
 STAGED_HISTORY = STAGED + "/history"
 STAGED_TASK = re.compile(STAGED + r"/([a-f0-9]{32})")
-STAGED_ACTION = re.compile(STAGED + r"/([a-f0-9]{32})/(resume|candidate|confirm-revision|cancel-revision|verify-preview|publish|resolve-publish)")
+STAGED_ACTION = re.compile(STAGED + r"/([a-f0-9]{32})/(resume|answer-revision|candidate|confirm-revision|cancel-revision|verify-preview|publish|resolve-publish)")
 ADMIN_INVITES = "/api/admin/invites"
 ADMIN_SETUP = "/api/admin/setup"
 ADMIN_PASSWORD = "/api/admin/password"
@@ -474,6 +474,11 @@ def serve(key, port, runs=generate.RUNS, *, generation_limits=(5, 30), analysis_
                     if staged.status(token, marker, match[1])["state"] == "cancelled":
                         raise ApiError(409, "staged_not_ready", "此修改方案已取消。")
                     self.send_json(202, {"task":start_staged(token, marker, match[1], resume=True)})
+                elif match[2] == "answer-revision":
+                    if key and isinstance(data.get("answer"), str) and key in data["answer"]:
+                        raise ApiError(400, "revision_answer_invalid", "请移除凭据后再补答。")
+                    staged.answer_revision(token, marker, match[1], data)
+                    self.send_json(202, {"task":start_staged(token, marker, match[1], resume=False)})
                 elif match[2] == "candidate":
                     self.send_json(200, staged.candidate(token, marker, match[1]))
                 elif match[2] == "confirm-revision":

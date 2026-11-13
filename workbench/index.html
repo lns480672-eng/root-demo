@@ -150,10 +150,24 @@
               <p id="staged-reason" class="elys-error" hidden></p>
               <p id="staged-issue" class="auth-muted" hidden></p>
             </div>
+            <section id="revision-clarification" aria-labelledby="revision-question" hidden>
+              <h3 id="revision-question"></h3>
+              <details id="revision-answers" hidden><summary>查看已答内容</summary><ol></ol></details>
+              <form id="revision-answer-form">
+                <label id="revision-answer-label">补充说明 <input id="revision-answer" maxlength="400"></label>
+                <label id="revision-choice-label" hidden>请选择 <select id="revision-choice"></select></label>
+                <div class="entry-actions">
+                  <button id="revision-answer-submit">查看修改方案</button>
+                  <button id="revision-rewrite" type="button">改写需求</button>
+                  <button id="revision-question-cancel" type="button">取消</button>
+                </div>
+              </form>
+            </section>
             <section id="revision-confirmation" aria-labelledby="revision-plan-heading" hidden>
               <h3 id="revision-plan-heading">确认修改方案</h3>
               <p id="revision-plan-tool"></p>
               <ul id="revision-plan-changes"></ul>
+              <label id="revision-field-label" hidden>字段类型 <select id="revision-field-type"></select></label>
               <div class="entry-actions">
                 <button id="revision-confirm" type="button">确认并修改</button>
                 <button id="revision-adjust" type="button">调整方案</button>

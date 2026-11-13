@@ -388,7 +388,7 @@ export async function verifyLedgerTheme(ctx) {
     const task = await until(() => findStagedTask(appRequest, text), 12000);
     return until(async () => {
       const current = (await appRequest(taskPath + task.id)).body.task;
-      return ['published','unsupported','failed'].includes(current.state) && current;
+      return ['published','unsupported','failed','clarifying'].includes(current.state) && current;
     }, 135000);
   }
   const balance = async () => (await appRequest('/api/trial')).body.generation;
@@ -431,21 +431,23 @@ export async function verifyLedgerTheme(ctx) {
   await generate('验收改为白色');
   const ambiguous = await settle('验收改为白色');
   assert.equal(ambiguous.reason, 'revision_clarification_required');
-  await until(() => visible('#staged-reason'));
-  assert.match(await evaluate('document.querySelector("#staged-reason").textContent'), /分栏的颜色.*字段显示名/);
+  await until(() => visible('#revision-clarification'));
+  assert.match(await evaluate('document.querySelector("#revision-question").textContent'), /分栏的颜色.*字段显示名/);
   assert.equal(await visible('#revision-confirm'), false);
   assert.equal((await versions()).current, 1);
   assert.deepEqual((await stored(old.id)).entries, before.entries);
   assert.equal((await balance()).used, beforeBalance.used);
   assert.equal((await balance()).totalUsed, beforeBalance.totalUsed + 1);
   await screenshot('ambiguous-color-asks-target');
-  await generate('把颜色改成黄色');
+  await evaluate('document.querySelector("#revision-answer").value = "把颜色改成黄色"');
+  await click('#revision-answer-submit');
   await until(() => visible('#revision-confirm'));
   assert.equal((await versions()).current, 1);
   assert.equal((await balance()).used, beforeBalance.used);
   await screenshot('theme-plan-before-confirm');
   await click('#revision-confirm');
-  const revised = await settle('把颜色改成黄色');
+  const revised = await settle('验收改为白色');
+  assert.equal(revised.id, ambiguous.id);
   assert.equal(revised.state, 'published', revised.reason);
   assert.equal(revised.toolId, old.id);
   const history = await versions();
