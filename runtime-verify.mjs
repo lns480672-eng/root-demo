@@ -9,7 +9,7 @@ const chromePath = process.argv[2];
 const profile = process.argv[3];
 const input = [];
 for await (const part of process.stdin) input.push(part);
-const { html, entries, backup, limit, website } = JSON.parse(Buffer.concat(input).toString());
+const { html, entries, backup, limit, website, recordField } = JSON.parse(Buffer.concat(input).toString());
 const recordCode = html.startsWith('<!doctype html><!--root:implementation=record-code-v1-->');
 const storageDisabled = html.startsWith('<!doctype html><!--root:storage=none-->');
 if (storageDisabled && entries.length) {
@@ -332,7 +332,13 @@ async function run() {
         document.documentElement.dataset.recordProof = 'connected';
         port.onmessage = ({data}) => {
           if (data?.type !== 'record-operation') return;
-          const error = data.operation?.action === 'list' ? undefined : '候选验证期间不能写入记录。';
+          const action = data.operation?.action;
+          const field = ${JSON.stringify(recordField ?? null)};
+          const sample = field?.type === 'date' ? '2026-01-17' : field?.type === 'integer' ? 17 : 'ROOT test value';
+          const matched = field && document.documentElement.dataset.recordCheck === 'active' && action === 'create' &&
+            data.operation.values?.[field.id] === sample;
+          const error = action === 'list' || matched ? undefined : '候选验证期间不能写入记录。';
+          if (matched) document.documentElement.dataset.recordCheck = 'passed';
           const proof = document.documentElement.dataset.recordProof;
           document.documentElement.dataset.recordProof = error || proof === 'write' ? 'write' : 'read';
           port.postMessage({type: 'record-result', request: data.request, records, error});
@@ -360,6 +366,49 @@ async function run() {
       await delay(25);
     } while (Date.now() < deadline);
     if (failure || proof !== 'read') return 'failed:' + (failure || 'record_initialization');
+  }
+  if (recordField) {
+    const prepared = await evaluate(`(() => {
+      const field = document.getElementById(${JSON.stringify(recordField.id)});
+      const kind = ${JSON.stringify(recordField.type)};
+      const expected = {date: 'date', integer: 'number', text: 'text'}[kind];
+      if (!field?.form || field.type !== expected || field.required || field.disabled || field.readOnly) return false;
+      for (const input of field.form.elements) {
+        if (input === field || input.disabled || !input.required || input.value) continue;
+        if (input instanceof HTMLSelectElement) {
+          const option = [...input.options].find(option => option.value && !option.disabled);
+          if (option) input.value = option.value;
+        } else if (input instanceof HTMLInputElement || input instanceof HTMLTextAreaElement) {
+          input.value = input.type === 'date' ? '2026-01-16' : input.type === 'number' ? '1' : 'ROOT example';
+        }
+        input.dispatchEvent(new Event('input', {bubbles: true}));
+      }
+      field.value = kind === 'date' ? '2026-01-17' : kind === 'integer' ? '17' : 'ROOT test value';
+      field.dispatchEvent(new Event('input', {bubbles: true}));
+      const submit = [...field.form.elements].find(input => input.type === 'submit' && !input.disabled);
+      if (!submit) return null;
+      submit.scrollIntoView({block:'center', inline:'center'});
+      const box = submit.getBoundingClientRect();
+      return box.width && box.height ? {x:box.x + box.width / 2, y:box.y + box.height / 2} : null;
+    })()`, observer.executionContextId, sessionId);
+    if (!prepared) return 'failed:record_field_behavior';
+    await evaluate("document.documentElement.dataset.recordCheck = 'active'", executionContextId);
+    const offset = await evaluate(`(() => {
+      const iframe = document.querySelector('iframe');
+      const box = iframe.getBoundingClientRect();
+      return {x:box.x + iframe.clientLeft, y:box.y + iframe.clientTop};
+    })()`, executionContextId);
+    const point = {x:offset.x + prepared.x, y:offset.y + prepared.y, button:'left', clickCount:1};
+    await cdp('Input.dispatchMouseEvent', {type:'mousePressed', ...point}, targetSession);
+    await cdp('Input.dispatchMouseEvent', {type:'mouseReleased', ...point}, targetSession);
+    const deadline = Date.now() + 1000;
+    while (!failure && Date.now() < deadline) {
+      if (await evaluate("document.documentElement.dataset.recordCheck", executionContextId) === 'passed') break;
+      await delay(25);
+    }
+    if (failure || await evaluate("document.documentElement.dataset.recordCheck", executionContextId) !== 'passed') {
+      return 'failed:' + (failure || 'record_field_behavior');
+    }
   }
   if (website && !await evaluate(
     '(' + verifyWebsiteTabs.toString() + ')()', observer.executionContextId, sessionId,

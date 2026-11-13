@@ -259,7 +259,9 @@ def revise(stage, requirement, prior, key, admit, record, *, base):
     with patch.object(assistant_model, "_exchange", exchange):
         return staged_revision.provide(stage, requirement, prior, key, admit, record, base=base)
 
-def verify_runtime(html, entries, *, backup, storage_limit, website):
+def verify_runtime(html, entries, *, backup, storage_limit, website, record_field=None):
+    if record_field is not None:
+        assert record_field == {"id":"field_1", "type":"date"}
     if b"invalid-record-init-fixture" in html:
         raise RuntimeVerificationError("record_initialization")
     if website and b"invalid-website-tabs-fixture" in html:

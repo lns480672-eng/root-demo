@@ -74,6 +74,26 @@ class RuntimeVerifierTests(unittest.TestCase):
         delayed = source.replace(b"void 0;", b"setTimeout(() => rootRecords.list(), 500);")
         verify(delayed, [])
 
+    def test_record_field_probe_observes_real_submission(self):
+        source = b"""<!doctype html><!--root:implementation=record-code-v1-->
+        <form><input id="field_1" type="date"><button>Save</button></form>
+        <script>
+          rootRecords.list();
+          document.querySelector('form').onsubmit = event => {
+            event.preventDefault();
+            rootRecords.create({field_1: document.querySelector('input').value}).catch(() => {});
+          };
+        </script>"""
+        field = {"id": "field_1", "type": "date"}
+        verify(source, [], record_field=field)
+        for broken in (
+            source.replace(b'type="date"', b'type="text"'),
+            source.replace(b"field_1: document.querySelector('input').value", b"other: '2026-01-17'"),
+        ):
+            with self.subTest(source=broken), self.assertRaises(ApiError) as rejected:
+                verify(broken, [], record_field=field)
+            self.assertEqual(getattr(rejected.exception, "diagnostic", None), "record_field_behavior")
+
     def test_runtime_diagnostics_distinguish_script_exception_from_inert_website_tabs(self):
         with self.assertRaises(ApiError) as startup:
             verify(artifact("throw new Error('private-model-text');"), [])

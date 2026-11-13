@@ -68,7 +68,7 @@ def _command():
     return [node, str(HELPER), chrome]
 
 
-def verify(html, entries, *, backup=False, storage_limit=TOOL_STORAGE_BYTES, website=False):
+def verify(html, entries, *, backup=False, storage_limit=TOOL_STORAGE_BYTES, website=False, record_field=None):
     """Require isolated startup and the applicable website checks for the fixed snapshot."""
     packed = pack_entries(entries, limit=storage_limit)
     if not isinstance(html, bytes) or not html.lower().startswith(b"<!doctype html>"):
@@ -88,7 +88,7 @@ def verify(html, entries, *, backup=False, storage_limit=TOOL_STORAGE_BYTES, web
             for name in ("XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_DATA_HOME", "XDG_RUNTIME_DIR"):
                 env[name] = directory
             payload = json.dumps({"html": source, "entries": json.loads(packed), "backup": backup,
-                                  "limit": storage_limit, "website": website}).encode()
+                                  "limit": storage_limit, "website": website, "recordField": record_field}).encode()
             with subprocess.Popen([*command, directory], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                   stderr=subprocess.DEVNULL, env=env, start_new_session=True) as process:
                 try:
@@ -109,7 +109,7 @@ def verify(html, entries, *, backup=False, storage_limit=TOOL_STORAGE_BYTES, web
         return
     if process.returncode == 0:
         for reason in ("script_exception", "frame_changed", "isolation_event", "document_not_ready",
-                       "website_tabs", "record_initialization", "runtime_timeout", "storage_not_allowed"):
+                       "website_tabs", "record_initialization", "record_field_behavior", "runtime_timeout", "storage_not_allowed"):
             if output == f"failed:{reason}\n".encode("ascii"):
                 raise RuntimeVerificationError(reason)
     raise _unavailable()

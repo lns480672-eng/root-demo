@@ -18,7 +18,7 @@ import staged_record_code
 
 MAX_ATTEMPTS = 8
 MAX_CLARIFICATION_ROUNDS = 2
-RUNTIME_PROOF_VERSION = 5
+RUNTIME_PROOF_VERSION = 6
 LEASE_SECONDS = 90
 RETAIN_SECONDS = 48 * 60 * 60
 ZERO = "0" * 40
@@ -879,8 +879,14 @@ class StagedJobs:
             raise ApiError(503, "staged_artifact_invalid", "生成候选的规格无法校验。") from None
         try:
             verifier_entries = [] if staged_record_code.matches(spec) else data["entries"]
+            verifier_options = {"website": spec.get("kind") == "website"}
+            if revision and staged_record_code.matches(spec):
+                original = json.loads(revision["context"])["source"]["spec"]["fields"]
+                if len(spec["fields"]) == len(original) + 1:
+                    field = spec["fields"][-1]
+                    verifier_options["record_field"] = {name: field[name] for name in ("id", "type")}
             self.runtime_verifier(html, verifier_entries, backup=self.permits_backup(row), storage_limit=limit,
-                                  website=spec.get("kind") == "website")
+                                  **verifier_options)
         except RuntimeVerificationError as error:
             logging.getLogger(__name__).warning("staged runtime rejected task=%s candidate=%s reason=%s",
                                                 identifier, identity["sha256"], error.diagnostic)
