@@ -5,7 +5,7 @@ import { verifyStagedFlow, verifyStagedCalculator, verifyStagedRegistration, ver
 import { execFileSync, spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { createServer } from 'node:http';
-import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -158,7 +158,7 @@ try {
     callback?.(reply);
   }
   socket = await connectBrowser(profile);
-  const coverageSources = ['/workbench.js', '/entry.js', '/assistant.js', '/table.js'];
+  const coverageSources = ['/workbench.js', '/assistant.js', '/table.js'];
   const coverage = [];
   async function startCoverage() {
     if (!collectCoverage) return;
@@ -647,6 +647,8 @@ try {
   if (!live) await screenshot('initial');
   if (entryFlow) {
     stage = 'TEST-011/016 registration, navigation, and centered entry';
+    assert.deepEqual(await evaluate('Array.from(document.querySelectorAll("#new-tool-options button strong"), node => node.textContent)'), ['需求助手', '从表格生成']);
+    assert.deepEqual(await evaluate('Array.from(document.querySelectorAll("#requirement-examples button"), node => node.textContent)'), ['试试读书清单', '试试 AA 分账', '试试交付跟进板']);
     const navOrder = ['新建工具', '需求助手', '我的需求', '我的工具'];
     assert.deepEqual(await evaluate('Array.from(document.querySelectorAll(".workspace-navigation nav button"), button => button.textContent)'), navOrder);
     assert.equal(await visible('#requirement'), true);
@@ -668,6 +670,7 @@ try {
           right: document.documentElement.clientWidth - shell.right,
           centerOffset: Math.abs((input.left + input.right - contentLeft - contentRight) / 2),
           navigationOnLeft: nav.checkVisibility() && contentLeft <= input.left + 1,
+          modeColumns: getComputedStyle(document.querySelector('.mode-cards')).gridTemplateColumns.split(' ').length,
           overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth || input.right > shell.right,
         };
       })()`);
@@ -675,6 +678,7 @@ try {
       assert.equal(layout.left, 0, '工作台左侧贴边，视口 ' + width);
       assert.equal(layout.right, 0, '工作台右侧贴边，视口 ' + width);
       assert.ok(layout.centerOffset <= 1, '输入区在导航右侧居中，视口 ' + width);
+      assert.equal(layout.modeColumns, 2, '两张入口卡片并排，视口 ' + width);
       assert.equal(layout.overflow, false, '工作台无横向溢出，视口 ' + width);
       await screenshot('workspace-edge-' + width);
     }
@@ -717,65 +721,37 @@ try {
     await sampleCoverage();
     socket = primary;
 
-    stage = 'three local samples are usable without upstream calls or saved tools';
-    const generatedDirectories = async () => (await readdir(join(root, 'runs'))).filter(name => name.startsWith('run-')).sort();
-    const before = await generatedDirectories();
+    stage = 'new tool cards open the assistant and table';
+    await click('#assistant-entry');
+    await until(() => visible('#assistant-panel'));
+    await click('#new-tool');
+    await click('#table-entry');
+    await until(() => visible('#table-panel'));
+    await click('#table-exit');
+    await until(() => visible('#requirement'));
     assert.deepEqual((await library()).items, []);
     await monitorGeneration();
-    await click('#quick-entry');
-    assert.equal(await visible('#entry-coachmark'), false);
-    assert.equal(await visible('#quick-panel'), true);
-    for (const [key, title] of [['board', '交付跟进板'], ['list', '读书清单'], ['budget', 'AA 分账']]) {
-      await click(`[data-entry-template="${key}"]`);
-      await click('#template-sample');
-      assert.equal(await visible('#sample-preview'), true);
-      assert.match(await evaluate('document.querySelector("#sample-title").textContent'), new RegExp(title));
-      const previous = await evaluate('document.querySelector("#sample-result").textContent');
-      if (key === 'budget') {
-        await evaluate('document.querySelector("#sample-amount").value = ""; document.querySelector("#sample-people").value = "";');
-        await type('#sample-amount', '96');
-        await type('#sample-people', '4');
-        await click('#sample-calculate');
-        assert.match(await evaluate('document.querySelector("#sample-result").textContent'), /24(?:\.00)?/);
-      } else {
-        const checkbox = '#sample-preview [data-sample-toggle]';
-        const checked = await evaluate(`document.querySelector(${JSON.stringify(checkbox)}).checked`);
-        await click(checkbox);
-        assert.equal(await evaluate(`document.querySelector(${JSON.stringify(checkbox)}).checked`), !checked);
-        assert.notEqual(await evaluate('document.querySelector("#sample-result").textContent'), previous);
-      }
-      await click('#sample-close');
-      assert.equal(await visible('#sample-preview'), false);
+    const beforeExamples = (await appRequest('/api/trial')).body.generation;
+    for (const [id, expected] of [['example-reading', '读书清单'], ['example-split', 'AA 分账'], ['example-board', '交付跟进板']]) {
+      await click('#' + id);
+      const input = await evaluate('document.querySelector("#requirement").value');
+      assert.match(input, new RegExp(expected));
+      assert.equal(await evaluate('document.activeElement.id'), 'requirement');
+      await type('#requirement', '。可编辑');
+      assert.equal(await evaluate('document.querySelector("#requirement").value.endsWith("可编辑")'), true);
+      assert.deepEqual(await evaluate('window.testGenerationPosts'), []);
     }
-    assert.deepEqual(await generatedDirectories(), before);
-    assert.deepEqual((await library()).items, []);
-    assert.deepEqual(await evaluate('window.testGenerationPosts'), []);
-
-    stage = 'customize template prefills an editable direct requirement without generating';
-    await click('[data-entry-template="list"]');
-    await click('#template-customize');
-    assert.equal(await visible('#requirement'), true);
-    assert.match(await evaluate('document.querySelector("#requirement").value'), /读书清单/);
-    assert.equal(await evaluate('document.querySelector("#requirement").readOnly'), false);
-    assert.deepEqual(await evaluate('window.testGenerationPosts'), []);
-    await click('#quick-entry');
-    await click('[data-entry-template="list"]');
-    stage = 'explicit template generation creates one real fixture tool';
-    await click('#template-generate');
-  } else {
-    assert.equal(await evaluate('document.querySelector("#generate").disabled'), true);
-    await type('#requirement', '   ');
-    assert.equal(await evaluate('document.querySelector("#generate").disabled'), true);
-    await click('#example');
-    assert.match(await evaluate('document.querySelector("#requirement").value'), /读书清单/);
-    assert.equal(await evaluate('document.querySelector("#preview iframe") === null'), true);
-    await evaluate('document.querySelector("#requirement").value = ""');
-    await type('#requirement', requirements[0]);
-    assert.equal(await evaluate('document.querySelector("#generate").disabled'), false,
-      '输入新需求后应允许点击生成');
-    stage = 'generate reading tool';
-    await click('#generate');
+    assert.deepEqual((await appRequest('/api/trial')).body.generation, beforeExamples);
+    await evaluate('document.querySelector("#requirement").value = ""; document.querySelector("#requirement").dispatchEvent(new Event("input"));');
   }
+  assert.equal(await evaluate('document.querySelector("#generate").disabled'), true);
+  await type('#requirement', '   ');
+  assert.equal(await evaluate('document.querySelector("#generate").disabled'), true);
+  await evaluate('document.querySelector("#requirement").value = ""');
+  await type('#requirement', requirements[0]);
+  assert.equal(await evaluate('document.querySelector("#generate").disabled'), false);
+  stage = 'generate reading tool';
+  await click('#generate');
   const first = await activeTool();
   await recordRun(first);
   assert.match(await evaluate('document.querySelector("h1").innerText', first.context), /读书清单/);
@@ -1339,7 +1315,7 @@ try {
         assert.equal(await visible('#requirement'), true);
         assert.equal(await evaluate('document.activeElement.id'), 'requirement');
         assert.match(await evaluate('document.querySelector("#composer-title").textContent'), /修改/);
-        for (const id of ['quick-entry', 'direct-entry', 'table-entry', 'staged-task-list']) {
+        for (const id of ['table-entry', 'assistant-entry', 'staged-task-list']) {
           assert.equal(await visible('#' + id), false, '修改时隐藏 ' + id);
         }
         await type('#requirement', '保持这条修改草稿');
@@ -1540,7 +1516,6 @@ try {
     const previous = await evaluate('document.querySelector("#preview iframe[data-tool]")?.dataset.tool || ""');
     await monitorGeneration();
     await click('#new-tool');
-    await click('#direct-entry');
     assert.equal(await visible('#requirement'), true);
     await evaluate('document.querySelector("#requirement").value = ""');
     const custom = '做一个夜读笔记的读书清单，支持新增书名并保存。';
@@ -1639,7 +1614,6 @@ try {
         assert.equal(await evaluate('document.querySelector("#requirement").readOnly'), false);
         await click('#generate');
       } else {
-        await click('#direct-entry');
         if (path === 'table') {
           await click('#table-entry');
           await click('#table-example');

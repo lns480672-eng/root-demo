@@ -7,7 +7,6 @@
   <link rel="stylesheet" href="/workbench.css">
   <link rel="stylesheet" href="/assistant.css">
   <link rel="stylesheet" href="/table.css">
-  <script src="/entry.js" defer></script>
   <script src="/assistant.js" defer></script>
   <script src="/table.js" defer></script>
   <script src="/workbench.js" defer></script>
@@ -91,23 +90,6 @@
       </aside>
       <section class="elys-composer" aria-labelledby="composer-title">
           <h2 id="composer-title">你想做什么工具？</h2>
-          <section id="quick-panel" class="quick-panel" aria-labelledby="quick-title" hidden>
-            <h3 id="quick-title">先试一个模板</h3>
-            <div class="entry-actions" aria-label="可选模板">
-              <button type="button" data-entry-template="board" aria-pressed="true">交付跟进板</button>
-              <button type="button" data-entry-template="list" aria-pressed="false">读书清单</button>
-              <button type="button" data-entry-template="budget" aria-pressed="false">AA 分账</button>
-            </div>
-            <div class="template-description">
-              <p class="auth-eyebrow">示例需求</p>
-              <p id="template-prompt"></p>
-            </div>
-            <div class="entry-actions">
-              <button id="template-sample" type="button">先试样例</button>
-              <button id="template-customize" type="button">修改示例需求</button>
-              <button id="template-generate" class="elys-primary" type="button">用此模板生成</button>
-            </div>
-          </section>
           <section id="table-panel" hidden></section>
           <p id="generation-balance" class="elys-config" role="status" hidden></p>
           <p id="generation-block" class="elys-error" role="status" hidden></p>
@@ -128,15 +110,17 @@
               <textarea id="requirement" rows="5" maxlength="2000" placeholder="例如：做一个读书清单，添加书名后，刷新页面还能看见。"></textarea>
             </div>
             <div class="elys-actions">
-              <button id="example" class="elys-example" type="button">试试读书清单</button>
               <p id="error" class="elys-error" role="alert" hidden></p>
+              <div id="requirement-examples" class="requirement-examples" role="group" aria-label="需求示例">
+                <button id="example-reading" type="button" data-example="做一个读书清单，可以添加书名、标记已读，刷新后保留记录。">试试读书清单</button>
+                <button id="example-split" type="button" data-example="做一个 AA 分账计算器，输入总金额和人数，算出每人应付多少。">试试 AA 分账</button>
+                <button id="example-board" type="button" data-example="做一个交付跟进板，记录事项、负责人和进度，可以按状态筛选，刷新后保留记录。">试试交付跟进板</button>
+              </div>
               <button id="generate" class="elys-primary" type="submit" disabled>生成工具</button>
             </div>
             <p id="generation-retry-note" class="auth-muted" hidden>生成失败不扣个人次数。</p>
           </form>
           <nav id="new-tool-options" class="mode-cards" aria-label="新建方式">
-            <button id="quick-entry" type="button" aria-pressed="false" aria-controls="quick-panel"><strong>快速体验</strong><span>先试一个现成示例</span></button>
-            <button id="direct-entry" type="button" aria-pressed="true"><strong>直接开发</strong><span>写下明确的需求</span></button>
             <button id="assistant-entry" type="button"><strong>需求助手</strong><span>把想法梳理成需求</span></button>
             <button id="table-entry" type="button" aria-pressed="false" aria-controls="table-panel"><strong>从表格生成</strong><span>用现有数据开始</span></button>
           </nav>
@@ -227,18 +211,6 @@
           <p id="empty-copy">输入需求后，工具会在这里出现。</p>
         </div>
         <div id="preview" class="preview-frames"></div>
-        <section id="sample-preview" class="sample-preview" aria-labelledby="sample-title" hidden>
-          <header>
-            <div>
-              <p class="auth-eyebrow">试用样例</p>
-              <h3 id="sample-title"></h3>
-            </div>
-            <button id="sample-close" type="button">关闭样例</button>
-          </header>
-          <p class="auth-muted">可以直接操作。试用不会发起生成，也不会保存到「我的工具」。</p>
-          <div id="sample-content"></div>
-          <p id="sample-result" role="status"></p>
-        </section>
         <footer class="elys-preview-footer">
           隔离预览 <span id="storage-warning" class="elys-error" role="status" hidden></span>
         </footer>
@@ -261,15 +233,5 @@
       </form>
     </dialog>
   </main>
-  <template id="sample-checklist">
-    <ul class="sample-checklist"></ul>
-  </template>
-  <template id="sample-budget">
-    <form class="sample-budget">
-      <label>总金额（元）<input id="sample-amount" type="number" min="0" step="0.01" value="120" required></label>
-      <label>人数<input id="sample-people" type="number" min="1" step="1" value="3" required></label>
-      <button id="sample-calculate" class="elys-primary" type="submit">计算人均费用</button>
-    </form>
-  </template>
 </body>
 </html>

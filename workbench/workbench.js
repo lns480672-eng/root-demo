@@ -5,7 +5,6 @@ const product = document.querySelector('.elys-product');
 const form = byId('composer');
 const requirement = byId('requirement');
 const generate = byId('generate');
-const example = byId('example');
 const preview = byId('preview');
 const workspace = byId('workspace');
 const composer = form.closest('section');
@@ -37,8 +36,6 @@ let restored = false;
 let editing = false;
 let pendingPublication = null;
 let entryMode = 'direct';
-let templateKey = 'board';
-let sampleTemplate = null;
 let assistantDestination = 'idea-entry';
 let trial = null;
 let trialRequest = 0;
@@ -108,8 +105,7 @@ function render() {
   const returning = !editing && stagedTask?.requirement === requirement.value.trim() &&
     isActiveStagedTask(stagedTask) && (stagedTask.category || 'auto') === generationCategory.value;
   const tableMode = entryMode === 'table';
-  const showingSample = Boolean(sampleTemplate);
-  const showingTool = Boolean(active) && !showingSample;
+  const showingTool = Boolean(active);
   product.dataset.state = pending ? 'loading' : failure ? 'failure' : active ? 'success' : 'initial';
   const atStart = workspace.dataset.mode === 'start';
   generate.textContent = pending ? '生成中…' : failure ? '重试' : editing && stagedEnabled ? '查看修改方案' : editing ? '生成新版' : atStart ? '开始' : '直接生成';
@@ -124,8 +120,8 @@ function render() {
   byId('library-entry').setAttribute('aria-expanded', String(browsing));
   markNavigation(assistantOpen ? assistantDestination : browsing ? 'library-entry' : 'new-tool');
   for (const id of primaryNavigation) byId(id).disabled = blocked || (starting && id === 'library-entry');
-  byId('new-tool-options').hidden = !atStart && !['fast', 'table'].includes(entryMode);
-  previewSection.hidden = !browsing && !editing && !showingSample && !syncing && !stagedPendingId;
+  byId('new-tool-options').hidden = !atStart && !tableMode;
+  previewSection.hidden = !browsing && !editing && !syncing && !stagedPendingId;
   const returnToLibrary = byId('return-to-library');
   returnToLibrary.hidden = !active;
   returnToLibrary.disabled = blocked;
@@ -139,7 +135,7 @@ function render() {
       labelTool(button, active.version);
     }
   }
-  byId('preview-title').textContent = showingSample ? quickTemplates[sampleTemplate].title : currentTitle;
+  byId('preview-title').textContent = currentTitle;
   byId('composer-title').textContent = editing ? '要怎样修改这个工具？' :
     atStart || entryMode !== 'direct' ? '你想做什么工具？' : '生成工具';
   byId('requirement-label').textContent = editing ? '修改「' + currentTitle + '」' : '工具需求';
@@ -157,7 +153,7 @@ function render() {
     ? pending ? '正在核对已发布版本，编辑暂时暂停。'
       : '暂时无法确认发布结果。编辑已暂停，请点击「同步工具」后继续。'
     : pending ? '正在核对新工具是否已保存。' : '暂时无法确认新工具是否已保存，请先点击「同步工具」。';
-  example.hidden = editing || blocked || Boolean(failure);
+  byId('requirement-examples').hidden = !atStart || editing || blocked || Boolean(failure);
   byId('error').textContent = failure;
   byId('error').hidden = !failure;
   byId('admin-entry').hidden = !session || !trial?.admin;
@@ -188,25 +184,17 @@ function render() {
   const status = byId('preview-status');
   status.toggleAttribute('data-usable', showingTool && !pausingEdits && !stagedEditsPaused);
   status.textContent = stagedEditsPaused ? '待核对保存 · 暂停编辑'
-    : pausingEdits ? '待同步 · 暂停编辑' : showingSample ? '样例试用 · 不保存' : active
+    : pausingEdits ? '待同步 · 暂停编辑' : active
     ? pending || failure || syncing ? '上次工具仍可用' : tableMode ? '上次工具 · 可用' : restored ? '已恢复' : '已就绪'
     : syncing ? '新工具待同步' : pending ? '等待预览' : '待生成';
-  byId('empty').hidden = showingTool || showingSample || syncing;
+  byId('empty').hidden = showingTool || syncing;
   byId('empty-title').textContent = pending ? '等待预览' : '还没有生成工具';
   byId('empty-copy').textContent = pending ? '工具准备好后，会在这里显示。' : '输入需求后，工具会在这里出现。';
-  const fast = entryMode === 'fast';
-  byId('quick-panel').hidden = !fast;
   byId('table-panel').hidden = !tableMode;
   byId('table-panel').inert = syncing;
-  form.hidden = tableMode || (fast && !failure);
-  byId('quick-entry').setAttribute('aria-pressed', String(fast));
-  byId('direct-entry').setAttribute('aria-pressed', String(entryMode === 'direct' && !editing));
+  form.hidden = tableMode;
   byId('table-entry').setAttribute('aria-pressed', String(tableMode));
-  for (const button of [byId('quick-entry'), byId('direct-entry'), byId('table-entry'), byId('assistant-entry'), byId('template-sample'),
-    byId('template-customize'), ...document.querySelectorAll('[data-entry-template]')]) {
-    button.disabled = blocked;
-  }
-  byId('template-generate').disabled = blocked || !configured || !networkIsolated;
+  byId('table-entry').disabled = byId('assistant-entry').disabled = blocked;
   byId('guide-start').disabled = blocked || editing;
   renderStagedTasks(blocked, restriction);
 }
@@ -730,25 +718,6 @@ document.addEventListener('keydown', event => {
   if (event.key === 'Escape' && !coachmark.hidden) dismissCoachmark();
 });
 
-function hideSample() {
-  if (!sampleTemplate) return;
-  sampleTemplate = null;
-  closeSample();
-  preview.hidden = false;
-}
-
-function enterQuickExperience() {
-  clearStagedSelection();
-  if (entryMode === 'table') tableImport.close();
-  byId('generation-category').value = 'auto';
-  editing = false;
-  entryMode = 'fast';
-  failure = '';
-  compose(true);
-  render();
-  byId('quick-panel').querySelector('[aria-pressed="true"]')?.focus();
-}
-
 const tableImport = setupTableImport({
   request: workspaceApi,
   generate: generateTable,
@@ -770,11 +739,8 @@ const requirementAssistant = setupRequirementAssistant({
   },
 });
 
-byId('quick-entry').addEventListener('click', enterQuickExperience);
-byId('direct-entry').addEventListener('click', () => beginComposition(false, editing ? '' : requirement.value));
 byId('table-entry').addEventListener('click', () => {
   clearStagedSelection();
-  hideSample();
   editing = false;
   failure = '';
   entryMode = 'table';
@@ -784,7 +750,6 @@ byId('table-entry').addEventListener('click', () => {
 });
 function openAssistant(destination) {
   dismissCoachmark();
-  hideSample();
   requirementAssistant.open(destination);
   assistantDestination = destination === 'drafts' ? 'drafts-entry' : 'idea-entry';
   render();
@@ -800,34 +765,6 @@ byId('guide-start').addEventListener('click', () => {
   byId('new-tool').focus();
   showCoachmark();
 });
-for (const button of document.querySelectorAll('[data-entry-template]')) {
-  button.addEventListener('click', () => {
-    templateKey = button.dataset.entryTemplate;
-    renderEntryTemplate(templateKey);
-  });
-}
-byId('template-sample').addEventListener('click', () => {
-  sampleTemplate = templateKey;
-  showToolHistory(false);
-  preview.hidden = true;
-  openSample(templateKey);
-  render();
-  byId('sample-close').focus();
-});
-byId('sample-close').addEventListener('click', () => {
-  hideSample();
-  render();
-  byId('template-sample').focus();
-});
-byId('template-customize').addEventListener('click', () => {
-  beginComposition(false, quickTemplates[templateKey].requirement);
-});
-byId('template-generate').addEventListener('click', () => {
-  requirement.value = quickTemplates[templateKey].requirement;
-  render();
-  form.requestSubmit();
-});
-
 function versionRecord({ version, note, current, date, label, build }) {
   const row = document.createElement('li');
   const header = document.createElement('div');
@@ -1491,7 +1428,6 @@ async function openStagedCandidate(task, approvedTool = null) {
   selectedStagedId = task.id;
   stagedMessage = '';
   stagedActivity = '检查预览';
-  hideSample();
   phase = 'preview';
   render();
   try {
@@ -1770,11 +1706,14 @@ requirement.addEventListener('input', () => {
   if (selectedStagedTask()?.requirement !== requirement.value.trim()) clearStagedSelection();
   render();
 });
-example.addEventListener('click', () => {
-  requirement.value = '做一个读书清单，可以输入并添加书名。刷新后保留已添加的书。';
+byId('requirement-examples').addEventListener('click', event => {
+  const button = event.target.closest('button[data-example]');
+  if (!button) return;
+  requirement.value = button.dataset.example;
   requirement.focus();
-  render();
+  requirement.dispatchEvent(new Event('input'));
 });
+
 function finishComposition(saved = false) {
   if (saved && !latestToolId) byId('first-tool-saved').hidden = false;
   editing = false;
@@ -1812,7 +1751,6 @@ byId('generation-category').addEventListener('change', render);
 form.addEventListener('submit', async event => {
   event.preventDefault();
   if (generate.disabled) return;
-  hideSample();
   compose(true);
   failure = '';
   phase = 'model';
@@ -1879,7 +1817,6 @@ async function selectTool(id, source) {
   if (!networkIsolated || pendingPublication || stagedPendingId || phase !== 'idle' || !validToolId(id)) return;
   const returnFocus = document.activeElement === source || composer.contains(document.activeElement);
   clearStagedSelection();
-  hideSample();
   if (entryMode === 'table') tableImport.close();
   phase = 'restore';
   failure = '';
@@ -1905,7 +1842,6 @@ function beginComposition(revise, value = '', category = 'auto', focus = true) {
   requirementAssistant.close();
   byId('first-tool-saved').hidden = true;
   clearStagedSelection();
-  hideSample();
   if (entryMode === 'table') tableImport.close();
   editing = revise;
   entryMode = 'direct';
@@ -1923,7 +1859,6 @@ function browseLibrary(focus) {
   const trigger = byId(focus);
   byId('first-tool-saved').hidden = true;
   clearStagedSelection();
-  hideSample();
   if (entryMode === 'table') tableImport.close();
   failure = '';
   finishComposition();
@@ -2049,7 +1984,6 @@ async function start(registration = null) {
   phase = 'startup';
   try {
     compose(true, 'start');
-    renderEntryTemplate(templateKey);
     loadReleases();
     renderRoute();
     const identity = registration || await api('/api/session');

@@ -39,7 +39,6 @@ STATIC = {
     "/admin-login.js": ("admin-login.js", "text/javascript; charset=utf-8"),
     "/admin-setup.js": ("admin-setup.js", "text/javascript; charset=utf-8"),
     "/workbench.css": ("workbench.css", "text/css; charset=utf-8"),
-    "/entry.js": ("entry.js", "text/javascript; charset=utf-8"),
     "/assistant.js": ("assistant.js", "text/javascript; charset=utf-8"),
     "/assistant.css": ("assistant.css", "text/css; charset=utf-8"),
     "/table.js": ("table.js", "text/javascript; charset=utf-8"),

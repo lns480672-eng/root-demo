@@ -449,7 +449,7 @@ try {
       && document.querySelector('#preview iframe[data-tool]')?.dataset.tool === ${JSON.stringify(savedTableId)}`));
     const canGenerate = await returnPage.evaluate(`(() => {
       document.querySelector('#guide-skip').click();
-      document.querySelector('#direct-entry').click();
+      document.querySelector('#new-tool').click();
       const input = document.querySelector('#requirement');
       input.value = '生成一个简单的读书清单';
       input.dispatchEvent(new Event('input'));
