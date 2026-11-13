@@ -74,6 +74,21 @@ class StageArtifactTests(unittest.TestCase):
         self.assertNotIn('id="record-board"', page)
         self.assertFalse(blueprint.permits_backup(previous))
 
+    def test_record_code_accepts_native_form_validation_opt_out(self):
+        for markup in ("<form novalidate></form>", '<form novalidate=""></form>',
+                       '<form novalidate="novalidate"></form>'):
+            with self.subTest(markup=markup):
+                blueprint.staged_record_code.validate({
+                    "format": "record-code-v1", "markup": markup, "style": "", "script": "void 0;",
+                })
+        for markup in ('<div novalidate></div>', '<form novalidate="false"></form>',
+                       '<form novalidate novalidate></form>',
+                       '<form novalidate action="/external"></form>'):
+            with self.subTest(markup=markup), self.assertRaisesRegex(ValueError, "bad_program_attribute"):
+                blueprint.staged_record_code.validate({
+                    "format": "record-code-v1", "markup": markup, "style": "", "script": "void 0;",
+                })
+
     def test_record_code_accepts_semantic_table_headers_without_opening_attribute_policy(self):
         import staged_record_code
         code = {

@@ -22,7 +22,10 @@ accept aria-label autocomplete checked class cols colspan datetime disabled for 
 href id inputmode label low max maxlength min minlength multiple name open optimum pattern placeholder
 readonly required role rows rowspan selected size spellcheck step tabindex title type value width
 """.split())
-TABLE_HEADER_SCOPES = frozenset({"row", "col", "rowgroup", "colgroup"})
+ELEMENT_ATTRIBUTES = {
+    ("th", "scope"): frozenset({"row", "col", "rowgroup", "colgroup"}),
+    ("form", "novalidate"): frozenset({None, "", "novalidate"}),
+}
 SAFE_ATTRIBUTE = re.compile(r"(?:aria|data)-[a-z][a-z0-9_-]{0,59}\Z")
 SCRIPT_BOUNDARY = re.compile(r"</?script|<!--|-->", re.IGNORECASE)
 
@@ -40,8 +43,9 @@ class Fragment(HTMLParser):
             raise ValueError("bad_program_markup")
         seen = set()
         for name, value in attrs:
-            allowed_scope = tag == "th" and name == "scope" and value in TABLE_HEADER_SCOPES
-            if name in seen or (not allowed_scope and name not in ATTRIBUTES and not SAFE_ATTRIBUTE.fullmatch(name)):
+            allowed_values = ELEMENT_ATTRIBUTES.get((tag, name), ())
+            if (name in seen or (value not in allowed_values and name not in ATTRIBUTES
+                                 and not SAFE_ATTRIBUTE.fullmatch(name))):
                 raise ValueError("bad_program_attribute")
             seen.add(name)
             if name == "href" and not (tag == "a" and value and value.startswith("#")):
