@@ -66,6 +66,11 @@ def provide(stage, requirement, prior, key, dispatch, *, base=None, timeout_seco
             "若含多个独立操作，可附 choices，逐字列出原话中每个操作。已选定一项时直接处理该项。"
             "明确超出能力时返回 {\"status\":\"unsupported\",\"reason\":\"具体原因\"}。"
         )
+        if website:
+            system += (
+                "文字新增或修改先只改 markup，沿用现有类名、样式与脚本。"
+                "即使原 CSS 已达容量上限，也可提交只修改 markup 的候选。"
+            )
     if base and record:
         task.update(new_field_id=staged_revision.next_record_field_id(spec), selected_field=base.get("selected_field"))
         system += (
@@ -92,6 +97,9 @@ def provide(stage, requirement, prior, key, dispatch, *, base=None, timeout_seco
         status = decision.get("status")
         if base and status in ("clarify", "unsupported") and not (
                 status == "clarify" and base.get("selected_field")):
+            if website and status == "unsupported" and re.search(
+                    r"(?:css|样式).{0,80}(?:字节|4096|上限|容量)", str(decision.get("reason", "")), re.I):
+                raise ValueError("website_style_budget_retry")
             allowed = {"status", "reason"} if status == "unsupported" else {"status", "question", "field", "choices"}
             result = json.dumps({name:value for name,value in decision.items() if name in allowed},
                                 ensure_ascii=False).encode()
@@ -199,6 +207,7 @@ def run(request, key, dispatch, validate, timeout_seconds):
                                    "missing_tool_js": "在 script 提供非空 JS，静态工具用 void 0;。",
                                    "bad_website_anchor_target": "让每个页内链接的 href 指向页面内实际存在的 id。",
                                    "bad_website_style_size": "CSS 必须不超过 4096 字节。如果需求无需改样式，请省略 style 参数以沿用原 CSS。",
+                                   "website_style_budget_retry": "先尝试复用已有样式，只提交 HTML 内容变更，保留原 CSS 与脚本。若确实要改样式，压缩原 CSS 后再提交。",
                                    "bad_revision_data_control": "同时提交改好的 markup 和 script。保留目标字段的输入框 id，并将 type 对应改成 number、date 或 text；同步调整提交值类型。",
                                    "undeclared_record_field": "新增保存字段须填写 field_label、field_type 和用户明确类型的原话 type_evidence。用户未明确日期、时长或具体时间时，先提交 clarify，勿提交源码。",
                                    "missing_record_data_proposal": "用户要求修改已保存的数据。仅改页面不能完成；空值回填用 propose_backfill，改型用 propose_type_change，缺少信息先澄清。",
