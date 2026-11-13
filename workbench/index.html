@@ -191,6 +191,7 @@
           <span id="preview-status" class="elys-status" role="status">待生成</span>
           <h2 id="preview-title">工具预览</h2>
           <div class="preview-actions">
+            <button id="open-generated-tool" type="button" hidden>打开工具</button>
             <button id="revise-tool" type="button" hidden>继续修改</button>
             <button id="tool-history" type="button" aria-expanded="false" aria-controls="tool-version-panel" hidden>版本历史</button>
             <button id="sync-tool" type="button" hidden>同步工具</button>
@@ -204,6 +205,7 @@
           <strong id="record-save-title"></strong>
           <span id="record-save-detail"></span>
         </div>
+        <p id="generation-saved" class="elys-config" role="status" hidden>生成完成，已保存到「我的工具」。</p>
         <p id="first-tool-saved" class="elys-config" role="status" hidden>工具已保存，可从「我的工具」找回。</p>
         <p id="publication-message" class="elys-config" role="status" hidden></p>
         <div id="empty" class="elys-empty">

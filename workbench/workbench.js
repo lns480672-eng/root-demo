@@ -108,6 +108,7 @@ function render() {
   const showingTool = Boolean(active);
   product.dataset.state = pending ? 'loading' : failure ? 'failure' : active ? 'success' : 'initial';
   const atStart = workspace.dataset.mode === 'start';
+  const showingResult = workspace.dataset.mode === 'result' && Boolean(active) && !editing;
   generate.textContent = pending ? '生成中…' : failure ? '重试' : editing && stagedEnabled ? '查看修改方案' : editing ? '生成新版' : atStart ? '开始' : '直接生成';
   generate.disabled = !session || !configured || !networkIsolated || starting || blocked ||
     tableMode || returning || Boolean(pendingRevision) || !requirement.value.trim();
@@ -121,7 +122,9 @@ function render() {
   markNavigation(assistantOpen ? assistantDestination : browsing ? 'library-entry' : 'new-tool');
   for (const id of primaryNavigation) byId(id).disabled = blocked || (starting && id === 'library-entry');
   byId('new-tool-options').hidden = !atStart && !tableMode;
-  previewSection.hidden = !browsing && !editing && !syncing && !stagedPendingId;
+  previewSection.hidden = !browsing && !editing && !syncing && !stagedPendingId && (!showingResult || assistantOpen);
+  byId('open-generated-tool').hidden = !showingResult || blocked || Boolean(failure);
+  byId('generation-saved').hidden = !showingResult || blocked || Boolean(failure);
   const returnToLibrary = byId('return-to-library');
   returnToLibrary.hidden = !active;
   returnToLibrary.disabled = blocked;
@@ -141,7 +144,8 @@ function render() {
   byId('requirement-label').textContent = editing ? '修改「' + currentTitle + '」' : '工具需求';
   requirement.placeholder = editing ? '例如：增加一个按负责人筛选。'
     : '描述你想做的工具、怎么用、需要保存哪些数据。';
-  byId('revise-tool').hidden = byId('tool-history').hidden = byId('publish-lock').hidden = syncing || !showingTool;
+  byId('revise-tool').hidden = byId('tool-history').hidden = syncing || !showingTool || showingResult;
+  byId('publish-lock').hidden = syncing || !showingTool;
   byId('revise-tool').disabled = blocked || !configured;
   byId('tool-history').textContent = active ? '工具 v' + active.version + ' · 版本历史' : '版本历史';
   const sync = byId('sync-tool');
@@ -529,7 +533,8 @@ async function refreshStagedTasks() {
   const running = stagedTasks.some(item => ['queued', 'running'].includes(item.state));
   render();
   if (wasRunning && !running) refreshTrial();
-  if (['complete', 'published'].includes(task?.state) && task.id === stagedAutoId && !stagedPendingId && !pendingPublication) {
+  if (['complete', 'published'].includes(task?.state) && task.id === stagedAutoId && !stagedPendingId && !pendingPublication
+      && byId('assistant-panel').hidden && !workspace.hidden) {
     if (phase === 'idle') return openStagedCandidate(task);
     scheduleStagedRefresh();
   } else if (running || (stagedAutoId && stagedLoadError)) {
@@ -749,6 +754,7 @@ byId('table-entry').addEventListener('click', () => {
   tableImport.open();
 });
 function openAssistant(destination) {
+  clearStagedSelection();
   dismissCoachmark();
   requirementAssistant.open(destination);
   assistantDestination = destination === 'drafts' ? 'drafts-entry' : 'idea-entry';
@@ -851,7 +857,10 @@ function loadReleases() {
 
 function renderRoute(focus = false) {
   const updates = location.pathname === '/updates';
-  if (updates) dismissCoachmark();
+  if (updates) {
+    stagedAutoId = null;
+    dismissCoachmark();
+  }
   byId('updates').hidden = byId('updates-back').hidden = !updates;
   byId('account').open = false;
   byId('auth').hidden = updates || !identityResolved || Boolean(session);
@@ -1322,7 +1331,7 @@ async function synchronizePublication() {
     }
     clearPublication();
     if (current.applied) {
-      finishComposition(true);
+      finishComposition(true, !runId && !editing && Boolean(requirement.value.trim()));
       await loadLibrary().catch(error => warnStorage(error.message));
     }
     else if (editing) failure = '本次修改未发布，已同步当前工具。你可以重试。';
@@ -1389,7 +1398,7 @@ async function commitStaged(frame, tool) {
 async function finishStagedComposition(id) {
   stagedTasks = stagedTasks.filter(task => task.id !== id);
   clearStagedSelection();
-  finishComposition(true);
+  finishComposition(true, !editing && workspace.dataset.mode !== 'browse' && Boolean(requirement.value.trim()));
   await loadLibrary(publicationTimeout).catch(error => warnStorage(error.message));
 }
 
@@ -1714,13 +1723,24 @@ byId('requirement-examples').addEventListener('click', event => {
   requirement.dispatchEvent(new Event('input'));
 });
 
-function finishComposition(saved = false) {
-  if (saved && !latestToolId) byId('first-tool-saved').hidden = false;
+function finishComposition(saved = false, stay = false) {
+  byId('first-tool-saved').hidden = !(saved && !stay && !latestToolId);
   editing = false;
   entryMode = 'direct';
+  if (stay) {
+    compose(true, 'result');
+    return;
+  }
   requirement.value = '';
   compose(false);
 }
+
+byId('open-generated-tool').addEventListener('click', () => {
+  if (phase !== 'idle' || workspace.dataset.mode !== 'result' || !active) return;
+  finishComposition();
+  render();
+  byId('revise-tool').focus();
+});
 
 async function generateTable(table) {
   if (!networkIsolated || phase !== 'idle' || pendingPublication || stagedPendingId) {
@@ -1783,7 +1803,7 @@ form.addEventListener('submit', async event => {
     render();
     if (editing) await openRevision(tool);
     else await openTool(tool);
-    finishComposition(true);
+    finishComposition(true, !editing);
     await loadLibrary().catch(error => warnStorage(error.message));
   } catch (error) {
     if (pendingPublication) {

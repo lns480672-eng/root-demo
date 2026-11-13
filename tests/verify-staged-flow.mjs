@@ -99,10 +99,14 @@ export async function verifyStagedFlow(ctx) {
   assert.equal(await visible('.elys-preview'), false, '新工具在保存前不显示预览');
   assert.match(JSON.stringify((await stored(old.id)).entries), /从我的工具找回原记录/);
   await evaluate('window.releaseFixturePreview()');
-  const board = await until(async () => {
-    const current = await activeTool().catch(() => null);
-    return current && current.id !== old.id && current;
-  }, 12000);
+  const board = await activeTool(old.id).catch(async error => {
+    const current = await task(publishingTask);
+    const message = await evaluate('document.querySelector("#staged-reason").textContent');
+    throw new Error(`${error.message}，任务 ${current.state} / ${current.reason || '-'}，${message}`);
+  });
+  assert.equal(await visible('#generation-saved'), true);
+  assert.equal(await visible('#open-generated-tool'), true);
+  assert.equal(await evaluate('document.querySelector("#requirement").value'), requirement);
   assert.equal(await sandbox(), 'allow-scripts allow-forms allow-downloads');
   assert.equal((await library()).items.length, 2);
   assert.equal(await used(), before + 1);
@@ -127,6 +131,9 @@ export async function verifyStagedFlow(ctx) {
   await fill({...record,[company]:'合成乙公司',[role]:'材料核对',[note]:''});
   await click('#add-record', board.context);
   assert.equal(await count(), 2);
+  await click('#open-generated-tool');
+  assert.equal(await visible('#requirement'), false);
+  assert.equal((await activeTool()).id, board.id);
   assert.equal(await inBoard('document.querySelectorAll("[data-board-column=待投递] article").length'), 2);
   await click('[data-record="1"] [data-move-stage="面试中"]', board.context);
   await click('[data-edit-record="1"]', board.context);

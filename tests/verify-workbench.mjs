@@ -762,9 +762,13 @@ try {
     assert.match(await evaluate('window.testGenerationPosts.join(" ")'), /读书清单/);
     assert.equal(await evaluate('window.testGenerationPosts.length'), 1);
     assert.deepEqual((await library()).items.map(item => item.id), [first.id]);
-    stage = 'first tool saved ends guide and publish remains locked';
+    stage = 'first tool stays on the generation page after saving';
+    assert.equal(await visible('#requirement'), true);
+    assert.equal(await evaluate('document.querySelector("#requirement").value'), requirements[0]);
+    assert.equal(await visible('#open-generated-tool'), true);
+    assert.equal(await evaluate('document.querySelector("#new-tool").getAttribute("aria-current")'), 'page');
     assert.equal(await visible('#entry-coachmark'), false);
-    assert.equal(await visible('#first-tool-saved'), true);
+    assert.equal(await visible('#generation-saved'), true);
     assert.equal(await visible('#publish-tool'), true);
     assert.equal(await evaluate('document.querySelector("#publish-tool").disabled'), true);
     assert.match(await evaluate('document.querySelector("#publish-explanation").textContent'), /应用发布暂未开放/);
@@ -787,7 +791,10 @@ try {
   let operatedTool = first;
   if (entryFlow) {
     stage = 'first saved tool is available from the library';
-    operatedTool = await selectHistory(first.id);
+    await click('#open-generated-tool');
+    assert.equal(await visible('#requirement'), false);
+    operatedTool = await activeTool();
+    assert.equal(operatedTool.id, first.id);
     assert.match(await evaluate('document.querySelector("#list").innerText', operatedTool.context), /星际旅行手记/);
     assert.equal(await visible('#entry-coachmark'), false);
     await screenshot('entry-guide-completed');
@@ -1286,6 +1293,13 @@ try {
 
     if (!live) {
       stage = 'TEST-006-02 separates library, creation and revision';
+      assert.equal(await visible('#open-generated-tool'), true);
+      assert.equal(await evaluate('document.querySelector("#requirement").value'), requirements[1]);
+      await cdp('Emulation.setDeviceMetricsOverride', {width:390,height:844,deviceScaleFactor:1,mobile:true});
+      assert.equal(await evaluate('document.documentElement.scrollWidth <= innerWidth'), true);
+      await screenshot('second-generated-result-390');
+      await click('#open-generated-tool');
+      assert.equal((await activeTool()).id, second.id);
       for (const width of [1360, 390]) {
         await cdp('Emulation.setDeviceMetricsOverride', { width, height: 844, deviceScaleFactor: 1, mobile: width === 390 });
         assert.equal(await visible('.elys-composer'), false, '浏览已保存工具时隐藏整个新建区');
@@ -1631,7 +1645,7 @@ try {
       }
       await activeTool();
       assert.equal(await visible('#entry-coachmark'), false);
-      assert.equal(await visible('#first-tool-saved'), true);
+      assert.equal(await visible(path === 'table' ? '#first-tool-saved' : '#generation-saved'), true);
       assert.equal(await evaluate('document.documentElement.scrollWidth <= innerWidth'), true);
       await screenshot('first-saved-' + path);
     }
