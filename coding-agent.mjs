@@ -48,12 +48,13 @@ const tools = [
       decision.type_evidence = type_evidence;
     }
     const changes = {'tool.html':markup,'tool.js':script,'tool.css':style};
+    const changed = new Map(files);
     for (const [name, content] of Object.entries(changes)) {
       if (content === undefined) continue;
       if (!files.has(name) || Buffer.byteLength(content) > 24576 || content.includes(key)) throw Error('invalid file');
-      files.set(name,content);
+      changed.set(name,content);
     }
-    return submit(files, decision);
+    return submit(changed, decision);
   }),
 ];
 if (request.recordRevision) {
