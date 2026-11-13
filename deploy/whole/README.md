@@ -37,7 +37,7 @@ AC-021 候选版本的首次交付需要已启用新版认证限流的 HTTPS 后
 
 本地回归使用 `python3 -B -m unittest discover -s tests -p 'test_agent_production.py'`。
 
-运维在维护模式下停旧服务，使用旧服务账号在生产主机创建候选副本。root 预建独立父目录 `/var/lib/root-demo-agent`，所有者为 `root-demo:root-demo`，模式为 0700。保持 `/var/lib` 及原状态目录权限配置。准备、切换及验证时使用相同的目标绝对路径。
+运维在维护模式下停旧服务，使用旧服务账号在生产主机创建候选副本。root 预建独立父目录 `/var/lib/root-demo-agent`，所有者为 `root-demo:root-demo`，模式为 0700。保持 `/var/lib` 及原状态目录权限配置。准备、切换及验证时使用相同的目标绝对路径。目标机须核对 systemd 启动后的实际目录权限和旧目录写入隔离。若恢复备份导致数据库文件身份改变，须按维护流程在新路径重新准备并核对状态。
 
 ```sh
 python3 -B workbench.py --prepare-coding-agent-production-from /var/lib/root-demo-whole \
@@ -49,6 +49,7 @@ python3 -B workbench.py --prepare-coding-agent-production-from /var/lib/root-dem
 ```ini
 StateDirectory=
 StateDirectory=root-demo-agent
+StateDirectoryMode=0700
 RestartPreventExitStatus=2
 ExecStart=
 ExecStart=/usr/bin/python3 -B workbench.py --port 8774 --runs-dir /var/lib/root-demo-agent/v08 --coding-agent-production
