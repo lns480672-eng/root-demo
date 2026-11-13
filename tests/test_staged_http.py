@@ -29,6 +29,7 @@ from unittest.mock import patch
 import assistant_model
 import generate
 from runtime_verify import RuntimeVerificationError
+import staged_blueprint
 import staged_revision
 from staged_jobs import StagedJobs
 import workbench
@@ -64,6 +65,21 @@ modules = {
 
 failed = set()
 def stages(stage, requirement, prior, key, admit, record, *, category="auto"):
+    if requirement.startswith("代码台账") and requirement.endswith(("一次无效", "持续无效", "属性无效")):
+        def exchange(payload, dispatch, **kwargs):
+            dispatch()
+            content = json.dumps({**spec, "kind":"ledger", "modules":[]}, ensure_ascii=False)
+            if stage == "implementation":
+                markup = '<main onclick="bad()"><h1>代码台账</h1></main>' if requirement.endswith("属性无效") else "<main><h1>代码台账</h1></main>"
+                content = json.dumps({"format":"record-code-v1", "markup":markup, "style":"", "script":"rootRecords.list();"})
+                if requirement.endswith("持续无效") or (requirement.endswith("一次无效") and requirement not in failed):
+                    failed.add(requirement)
+                    content = '{"format":'
+            return {"status":200, "body":json.dumps({
+                "choices":[{"finish_reason":"stop", "message":{"content":content}}],
+            })}
+        with patch.object(assistant_model, "_exchange", exchange):
+            return staged_blueprint.provide(stage, requirement, prior, key, admit, record, record_code=True)
     admit()
     if requirement.startswith("超出"):
         record({"stage":stage,"status":"staged_unsupported","dispatched":True})
@@ -71,11 +87,6 @@ def stages(stage, requirement, prior, key, admit, record, *, category="auto"):
     if requirement.startswith("代码台账"):
         content = {**spec, "kind":"ledger", "modules":[], "implementation":"record-code-v1"}
         if stage == "implementation":
-            if requirement.endswith(("持续无效", "属性无效")) or (requirement.endswith("一次无效") and requirement not in failed):
-                failed.add(requirement)
-                validation = "bad_program_attribute" if requirement.endswith("属性无效") else "invalid_model_json"
-                record({"stage":stage,"status":"invalid_staged_result","validation":validation,"dispatched":True})
-                raise ApiError(502, "invalid_staged_result", "无效 JSON")
             content = {"format":"record-code-v1", "markup":"<main><h1>代码台账</h1></main>",
                        "style":"main { color: #174838 }", "script":"rootRecords.list();"}
         record({"stage":stage,"status":"ok","dispatched":True})
