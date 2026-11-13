@@ -374,14 +374,18 @@ def apply_code_edits(implementation, edits):
             chunks.extend((original[cursor:start], after))
             cursor = end
         result[part] = "".join([*chunks, original[cursor:]])
-    if "markup" in by_part:
-        original = markup_bindings(implementation["markup"])
-        revised = markup_bindings(result["markup"])
-        if (original.bindings - revised.bindings or revised.forms != original.forms
-                or any(count > max(1, original.identifiers[identifier])
-                       for identifier, count in revised.identifiers.items())):
-            raise RevisionPatchError("bindings_changed", part="markup")
+    check_markup_bindings(implementation["markup"], result["markup"])
     return result
+
+
+def check_markup_bindings(before, after):
+    if before == after:
+        return
+    original, revised = markup_bindings(before), markup_bindings(after)
+    if (original.bindings - revised.bindings or revised.forms != original.forms
+            or any(count > max(1, original.identifiers[identifier])
+                   for identifier, count in revised.identifiers.items())):
+        raise RevisionPatchError("bindings_changed", part="markup")
 
 
 def website_text_edit(implementation, edit):
@@ -423,8 +427,8 @@ def record_field_artifacts(base, plan):
         raise ValueError("bad_revision_operation")
     field_id = next_record_field_id(spec)
     field = {"id": field_id, "label": label, "type": kind, "required": False, "options": []}
-    edits = plan["edits"]
-    implementation = apply_code_edits(base["source"]["implementation"], edits)
+    implementation = (plan["implementation"] if "implementation" in plan else
+                      apply_code_edits(base["source"]["implementation"], plan["edits"]))
     markup = markup_bindings(implementation["markup"])
     if markup.bindings[("input", "id", field_id)] != 1:
         raise ValueError("bad_revision_operation")
@@ -437,13 +441,14 @@ def next_record_field_id(spec):
 
 
 def ground_record_field_plan(payload, base, requirement):
-    plan = blueprint.read_artifact(payload)
+    plan = blueprint.read_artifact(payload, limit=2 * staged_program.MAX_ARTIFACT_BYTES)
     if not isinstance(plan, dict) or plan.get("status") != "proposed":
         return payload
     field = base.get("selected_field")
-    if field and plan.keys() == {"status", "edits"}:
+    code_key = "implementation" if "implementation" in plan else "edits"
+    if field and plan.keys() == {"status", code_key}:
         plan["operation"] = {"kind": "add_field", **field, "required": False}
-    elif plan.keys() in ({"status", "operation", "edits"}, {"status", "operation", "edits", "type_evidence"}):
+    elif plan.keys() in ({"status", "operation", code_key}, {"status", "operation", code_key, "type_evidence"}):
         operation = plan["operation"]
         if not isinstance(operation, dict) or operation.get("kind") != "add_field":
             return payload
@@ -472,8 +477,12 @@ def check_plan(payload, base, requirement=None, *, operation_selected=False, mod
 
 
 def _check_plan(payload, base, requirement, *, model_response=False):
-    plan = blueprint.read_artifact(payload)
+    plan = blueprint.read_artifact(payload, limit=2 * staged_program.MAX_ARTIFACT_BYTES)
     status = plan.get("status") if isinstance(plan, dict) else None
+    if (status == "proposed" and base["kind"] in ("program", "website", "record_code")
+            and plan.keys() in ({"status", "implementation"}, {"status", "implementation", "operation"})):
+        agent_artifacts(base, plan)
+        return plan
     if status == "proposed" and plan.keys() == {"status", "operation", "edits"} and base["kind"] == "record_code":
         field_answer = base.get("selected_field")
         artifacts = encode_source(record_field_artifacts(base, plan))
@@ -556,10 +565,39 @@ def _check_plan(payload, base, requirement, *, model_response=False):
     raise ValueError("bad_revision_plan")
 
 
+def agent_artifacts(base, plan):
+    source = base["source"]
+    original = source["implementation"]
+    implementation = plan["implementation"]
+    if "operation" in plan:
+        if base["kind"] != "record_code":
+            raise ValueError("bad_revision_operation")
+        if base.get("selected_field") and any(
+                plan["operation"].get(key) != value for key, value in base["selected_field"].items()):
+            raise ValueError("bad_revision_operation")
+        result = record_field_artifacts(base, plan)
+    else:
+        if base.get("selected_field"):
+            raise ValueError("bad_revision_operation")
+        result = {"spec": source["spec"], "implementation": implementation}
+    artifacts = encode_source(result)
+    blueprint.validate("spec", artifacts["spec"], {})
+    blueprint.validate("implementation", artifacts["implementation"], {"spec.json": artifacts["spec"]})
+    if implementation == original:
+        raise _no_change()
+    check_markup_bindings(original["markup"], implementation["markup"])
+    if (base["kind"] == "program" and source["spec"].get("storage") != "none"
+            and implementation["script"] != original["script"]):
+        raise ApiError(422, "revision_script_data", REVISION_GUIDANCE["revision_script_data"])
+    return artifacts
+
+
 def plan_artifacts(payload, base):
     plan = check_plan(payload, base)
     if plan["status"] != "proposed":
         raise ValueError("bad_revision_plan")
+    if "implementation" in plan:
+        return agent_artifacts(base, plan)
     if "operation" in plan:
         if base["kind"] == "record_code":
             return encode_source(record_field_artifacts(base, plan))
@@ -1041,6 +1079,11 @@ def describe(base, files, requirement, entries):
             return [change, "保留现有样式、脚本与记录。"]
         if "alignment" in plan:
             return ["工具内容区水平居中，最大宽度 720 像素。保留现有脚本与记录。"]
+        if "implementation" in plan:
+            original = base["source"]["implementation"]
+            updated = plan["implementation"]
+            labels = {"markup": "页面内容", "style": "样式", "script": "交互脚本"}
+            return [f"更新{label}。" for part, label in labels.items() if original.get(part) != updated.get(part)]
         changes = []
         script_changed = any(edit["part"] == "script" for edit in plan["edits"])
         if script_changed and entries and base["kind"] != "record_code":

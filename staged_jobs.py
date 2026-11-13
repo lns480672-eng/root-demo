@@ -44,7 +44,7 @@ def filename(stage):
 class StagedJobs:
     def __init__(self, store, budget, runs, blueprint, *, clock=time.time, record=None,
                  max_attempts=MAX_ATTEMPTS, lease_seconds=LEASE_SECONDS, retain_seconds=RETAIN_SECONDS,
-                 revision=None, runtime_verifier=None):
+                 revision=None, runtime_verifier=None, coding_provider=None):
         self.store = store
         self.budget = budget
         self.runs = Path(runs)
@@ -54,6 +54,7 @@ class StagedJobs:
         self.runtime_verifier = runtime_verifier
         self.clock = clock
         self.record = record
+        self.coding_provider = coding_provider
         self.max_attempts = max_attempts
         self.lease_seconds = lease_seconds
         self.retain_seconds = retain_seconds
@@ -365,7 +366,7 @@ class StagedJobs:
             self.check_table_schema(revision, current)
             decision = json.loads(self.read(row, row["head"], "revision-plan.json"))
             operation = decision.get("operation", {})
-            field = (operation.get("label") if state == "complete" and operation.get("kind") == "add_field" and "edits" not in decision
+            field = (operation.get("label") if state == "complete" and operation.get("kind") == "add_field" and not {"edits", "implementation"} & decision.keys()
                      else decision.get("field"))
             if state == "complete" and (selection != "field" or not field or answer == operation.get("type")):
                 raise ApiError(409, "revision_question_changed", "此修改方案没有可调整的字段类型。")
@@ -701,6 +702,19 @@ class StagedJobs:
                 "kind":"add_field", "label":field, "type":answer["answer"],
             }})
 
+    def generate_code(self, identifier, fence, index, stage, requirement, prior, base):
+        def dispatch():
+            dispatch_id = uuid.uuid4().hex
+            self.dispatch(identifier, fence, index, dispatch_id)
+
+            def record(receipt):
+                if self.record is not None:
+                    self.record(identifier, dispatch_id, receipt)
+
+            return record
+
+        return self.coding_provider(stage, requirement, prior, dispatch, base=base)
+
     def generate_stage(self, identifier, fence, index, stage, row, prior, provider, revision_provider):
         retryable = (
             stage == "implementation"
@@ -749,7 +763,13 @@ class StagedJobs:
                     row = self.worker(db, identifier, fence, index)
                 stage = self.steps(row)[index]
                 prior = self.files(row)
-                if stage == "assemble":
+                base = self.revision_context(identifier) if self.coding_provider and stage == "revision-plan" else None
+                if self.coding_provider and (
+                    (stage == "implementation" and "revision-plan.json" not in prior)
+                    or (base and base["kind"] in ("program", "website", "record_code"))
+                ):
+                    content = self.generate_code(identifier, fence, index, stage, row["requirement"], prior, base)
+                elif stage == "assemble":
                     content = self.blueprint.assemble(prior)
                 elif stage == "revision-plan" and (selected := self.selected_field_plan(row)):
                     content = selected
@@ -832,7 +852,9 @@ class StagedJobs:
         files = self.files(row)
         decision = json.loads(files.get("revision-plan.json", b"{}"))
         operation = decision.get("operation", {})
-        if operation.get("kind") == "add_field" and "edits" not in decision:
+        if "implementation" in decision:
+            plan["trialPreview"] = True
+        if operation.get("kind") == "add_field" and not {"edits", "implementation"} & decision.keys():
             plan["fieldType"] = {"id":row["head"], "label":operation["label"], "type":operation["type"]}
         plan["confirmation"] = digest(encoded({**plan, "nonce":candidate["nonce"], "sha256":candidate["digest"]}))
         return plan
@@ -950,9 +972,10 @@ class StagedJobs:
                 raise ApiError(409, "revision_conflict", "已有更新的数据，请重新查看并确认修改方案。")
             candidate = self.candidate_record(db, row["id"])
             confirmation = data.get("confirmation")
-            trial = verifying and bool(self.revision_repairs(db, row["id"]))
+            plan = self.revision_plan(row, revision, current, candidate)
+            trial = verifying and (plan.get("trialPreview") or bool(self.revision_repairs(db, row["id"])))
             if (not confirmation or (not trial and candidate["confirmation"] != confirmation)
-                    or confirmation != self.revision_plan(row, revision, current, candidate)["confirmation"]):
+                    or confirmation != plan["confirmation"]):
                 raise ApiError(409, "revision_confirmation_required", "请先确认当前工具的修改方案。")
         limit = TABLE_STORAGE_BYTES if current and current["table_tool"] else TOOL_STORAGE_BYTES
         packed = pack_entries(data.get("entries"), limit=limit)

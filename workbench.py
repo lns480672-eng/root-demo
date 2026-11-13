@@ -23,7 +23,7 @@ import table_import
 import staged_blueprint
 import staged_revision
 import runtime_verify
-from staged_jobs import StagedJobs
+from staged_jobs import MAX_ATTEMPTS, StagedJobs
 from accounts import ApiError, InviteError, SESSION_SECONDS, Store, TABLE_STORAGE_BYTES
 from trial_budget import TrialBudget
 
@@ -123,13 +123,16 @@ class ToolTitle(HTMLParser):
         return fallback
 
 
-def build_id(assets):
+def build_id(assets, coding_agent_enabled=False):
     digest = hashlib.sha256()
     for name in ("generate.py", "workbench.py", "accounts.py", "assistant_fixture.py", "assistant_model.py",
                  "table_import.py", "trial_budget.py", "staged_blueprint.py", "staged_jobs.py", "staged_program.py", "staged_revision.py",
                  "staged_website.py", "staged_record_code.py", "runtime_verify.py", "runtime-verify.mjs",
                  "workbench/staged-runtime.js"):
         digest.update(name.encode() + b"\0" + (ROOT / name).read_bytes() + b"\0")
+    if coding_agent_enabled:
+        for name in ("coding_agent.py", "coding-agent.mjs"):
+            digest.update(name.encode() + (ROOT / name).read_bytes())
     for path, body in assets.items():
         digest.update(path.encode() + b"\0" + body + b"\0")
     return "v4-" + digest.hexdigest()[:12]
@@ -157,7 +160,8 @@ def session_cookie(token, max_age=SESSION_SECONDS, *, admin=False):
 def serve(key, port, runs=generate.RUNS, *, generation_limits=(5, 30), analysis_limits=(6, 60),
           admin_usernames=(), analysis_provider=assistant_model.analyze, table_limits=None,
           staged_enabled=False, public_site_url=LOCAL_SITE, staged_provider=staged_blueprint.provide,
-          staged_revision_provider=staged_revision.provide, staged_runtime_verifier=runtime_verify.verify):
+          staged_revision_provider=staged_revision.provide, staged_runtime_verifier=runtime_verify.verify,
+          coding_agent_enabled=False):
     model_lock = threading.Lock()
     store = Store(runs / "workspace.sqlite3")
     budget = TrialBudget(store, runs, generation_limits=generation_limits, analysis_limits=analysis_limits,
@@ -176,8 +180,21 @@ def serve(key, port, runs=generate.RUNS, *, generation_limits=(5, 30), analysis_
         except OSError:
             pass
 
+    coding_provider = None
+    if coding_agent_enabled:
+        from coding_agent import provide
+
+        def coding_provider(stage, requirement, prior, dispatch, *, base):
+            if not model_lock.acquire(timeout=20):
+                raise ApiError(409, "staged_busy", "模型服务正在处理其他请求，请稍后继续。")
+            try:
+                return provide(stage, requirement, prior, key, dispatch, base=base)
+            finally:
+                model_lock.release()
+
     history = StagedJobs(store, budget, runs, staged_blueprint, record=stage_receipt, revision=staged_revision,
-                         runtime_verifier=staged_runtime_verifier)
+                         runtime_verifier=staged_runtime_verifier, coding_provider=coding_provider,
+                         max_attempts=12 if coding_agent_enabled else MAX_ATTEMPTS)
     staged = history if staged_enabled else None
 
     def stage_provider(stage, requirement, prior, admit, record, base=None, category="auto"):
@@ -215,7 +232,7 @@ def serve(key, port, runs=generate.RUNS, *, generation_limits=(5, 30), analysis_
               for url, (name, _) in STATIC.items()}
     setup_page = (ROOT / "workbench" / "admin-setup.html").read_bytes()
     login_page = (ROOT / "workbench" / "admin-login.html").read_bytes()
-    build = build_id({**assets, "admin-setup.html": setup_page, "admin-login.html": login_page})
+    build = build_id({**assets, "admin-setup.html": setup_page, "admin-login.html": login_page}, coding_agent_enabled)
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, format, *args):
@@ -709,12 +726,22 @@ def main():
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--prompt-key", action="store_true", help="在本机终端隐藏输入 Key")
     parser.add_argument("--runs-dir", type=Path, default=generate.RUNS)
+    parser.add_argument("--coding-agent", action="store_true", help="使用本机 Pi Agent 试用实现")
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--create-invite", action="store_true")
     mode.add_argument("--create-admin-setup-code", action="store_true")
     parser.add_argument("--invite-hours", type=int, default=24)
     parser.add_argument("--invite-uses", type=int, default=1)
     args = parser.parse_args()
+    if args.coding_agent:
+        if args.runs_dir.resolve() == generate.RUNS.resolve():
+            parser.error("Agent 试用请用 --runs-dir 指定独立数据目录。")
+        trial_db = args.runs_dir / "workspace.sqlite3"
+        marker = args.runs_dir / ".root-coding-agent-trial"
+        if trial_db.exists() and not marker.is_file():
+            parser.error("已有数据库未标记为 Agent 试用库，请另选空目录。")
+        args.runs_dir.mkdir(parents=True, exist_ok=True)
+        marker.touch()
     if args.create_admin_setup_code:
         if any(name.strip() for name in os.environ.get("ROOT_TRIAL_ADMINS", "").split(",")):
             parser.error("管理员已由部署配置指定。")
@@ -757,7 +784,7 @@ def main():
         parser.error(str(error))
     serve(key, args.port, args.runs_dir, generation_limits=generation_limits, analysis_limits=analysis_limits,
           admin_usernames=admins, table_limits=table_limits, public_site_url=public_site_url,
-          staged_enabled=os.environ.get("ROOT_STAGED_ENABLED", "1") != "0")
+          staged_enabled=os.environ.get("ROOT_STAGED_ENABLED", "1") != "0", coding_agent_enabled=args.coding_agent)
     return 0
 
 

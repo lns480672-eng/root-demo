@@ -571,6 +571,8 @@ function renderStagedTasks(blocked, restriction) {
   supplement.hidden = !editing || !task?.baseToolId || !['failed', 'expired', 'exhausted'].includes(task.state);
   repair.disabled = supplement.disabled = !canAct || quotaBlocked;
   byId('revision-trial-note').hidden = !repairTrial;
+  byId('revision-trial-note').textContent = repairTrial?.tool.revisionPlan.trialPreview
+    ? '正在试用新版，试填数据不会保存。' : '正在试用修复结果，试填数据不会保存。';
   for (const id of ['revision-apply-repair', 'revision-close-trial']) {
     byId(id).hidden = !repairTrial;
     byId(id).disabled = !canAct;
@@ -594,6 +596,7 @@ function renderStagedTasks(blocked, restriction) {
     }));
   }
   byId('revision-field-type').disabled = !canAct;
+  byId('revision-confirm').textContent = proposal?.trialPreview ? '试用新版' : '确认并修改';
   for (const id of ['revision-confirm', 'revision-adjust', 'revision-cancel']) byId(id).disabled = !canAct;
   const reopen = byId('staged-preview');
   reopen.hidden = task?.state !== 'complete' || Boolean(stagedPendingId) || Boolean(proposal) || Boolean(repairTrial);
@@ -1613,12 +1616,13 @@ async function openStagedCandidate(task, approvedTool = null, applyRepair = fals
         pendingRevision = tool;
         return;
       }
-      if (approvedTool && (!task.repairs?.length || applyRepair)) {
+      const trial = tool.revisionPlan?.trialPreview || task.repairs?.length;
+      if (approvedTool && (!trial || applyRepair)) {
         const { confirmed } = await workspaceApi('/api/staged/' + task.id + '/confirm-revision',
           { nonce:tool.staged.nonce, confirmation:tool.revisionPlan.confirmation }, publicationTimeout);
         if (!confirmed) throw new Error('未能确认当前修改方案。');
       }
-      if (task.repairs?.length && !applyRepair) {
+      if (trial && !applyRepair) {
         await openTool(tool, false, true);
         return;
       }
@@ -1859,7 +1863,7 @@ async function openTool(tool, restore = false, trialOnly = false) {
         entries:tool.entries, confirmation:tool.revisionPlan.confirmation,
       }, runtimeVerificationTimeout);
       repairTrial = {frame, tool};
-      iframe.title = '修复预览，试填不会保存';
+      iframe.title = tool.revisionPlan.trialPreview ? '新版预览，试填不会保存' : '修复预览，试填不会保存';
       iframe.dataset.repairTrial = '';
       iframe.removeAttribute('tabindex');
       iframe.inert = false;

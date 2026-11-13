@@ -4668,6 +4668,10 @@
                     "type": "string",
                     "pattern": "^[a-f0-9]{64}$"
                   },
+                  "trialPreview": {
+                    "type": "boolean",
+                    "description": "可在隔离预览中试用候选，再确认应用。"
+                  },
                   "fieldType": {
                     "type": "object",
                     "required": [
