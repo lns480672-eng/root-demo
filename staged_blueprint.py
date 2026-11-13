@@ -178,8 +178,6 @@ def validate_spec(value):
     for field in fields:
         keys(field, "id", "label", "type", "required", "options")
         identifier, name, kind, options = field["id"], field["label"], field["type"], field["options"]
-        if staged_record_code.matches(value):
-            require(identifier not in {"id", "__proto__", "constructor", "prototype"}, "bad_record_field_id")
         require(isinstance(identifier, str) and re.fullmatch("[a-z][a-z0-9_]{0,31}", identifier)
                 and identifier not in {"id", "__proto__", "constructor", "prototype"} and identifier not in ids,
                 "bad_field_id")
