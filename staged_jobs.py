@@ -631,21 +631,27 @@ class StagedJobs:
             and self.steps(row)[0] == "spec"
             and staged_record_code.matches(self.blueprint.read_artifact(prior["spec.json"]))
         )
-        for attempt in range(2 if retryable else 1):
+        context = self.revision_context(identifier) if stage == "revision-plan" else None
+        patch_retry = bool(context and context.get("selected_field"))
+        for attempt in range(2 if retryable or patch_retry else 1):
             dispatch_id = uuid.uuid4().hex
-            invalid_json = False
+            recoverable = False
 
             def record(receipt):
-                nonlocal invalid_json
-                invalid_json = receipt.get("dispatched") is True and receipt.get("validation") == "invalid_model_json"
+                nonlocal recoverable
+                recoverable = receipt.get("dispatched") is True and (
+                    (retryable and receipt.get("validation") == "invalid_model_json"
+                     and receipt.get("status") == "invalid_staged_result")
+                    or (patch_retry and receipt.get("status") == "revision_patch_invalid")
+                )
                 if self.record is not None:
                     self.record(identifier, dispatch_id, receipt)
 
             try:
                 return provider(stage, row["requirement"], prior,
                                 lambda: self.dispatch(identifier, fence, index, dispatch_id), record)
-            except ApiError as error:
-                if not (retryable and attempt == 0 and invalid_json and error.code == "invalid_staged_result"):
+            except ApiError:
+                if attempt != 0 or not recoverable:
                     raise
 
     def run(self, identifier, fence, provider):

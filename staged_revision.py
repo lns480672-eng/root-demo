@@ -1150,6 +1150,8 @@ def provide(stage, requirement, previous, key, admit, record, *, base):
                            '{"status":"proposed","operation":{"kind":"add_field","label":"字段名","type":"date","required":false},"edits":[...]}。'
                            "使用 revision_source.new_field_id 作为输入框 ID 和记录字段键；更新表单、保存脚本及需要的展示。"
                            "日期用 input type=date，保存 YYYY-MM-DD，旧记录缺值时显示为空。"
+                           "每个 before 选最短的唯一源码片段，逐字核对，保持原有空格和引号。"
+                           "不要返回没有实际变化的编辑；补丁不要重叠。"
                            "字段类型不清楚时先问是日期、时分还是时长。"
                            "例如『帮我加一栏阅读时间』必须先澄清，不能直接选择日期或写补丁。"
                            "revision_source.selected_field 存在时，它是用户点选的标签和类型，逐字沿用并生成新增字段补丁。"

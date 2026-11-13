@@ -203,8 +203,12 @@ def revise(stage, requirement, prior, key, admit, record, *, base):
                 plan["operation"] = {"kind":"add_field", "label":"阅读日期", "type":"date", "required":False}
                 if selected_field:
                     plan["operation"].update(selected_field)
+                anchor = "</main>"
+                if selected_field and requirement not in failed:
+                    failed.add(requirement)
+                    anchor = "</missing>"
                 plan["edits"] = [
-                    {"part":"markup", "before":"</main>", "after":"<input id='field_1' type='date'></main>"},
+                    {"part":"markup", "before":anchor, "after":"<input id='field_1' type='date'></main>"},
                     {"part":"script", "before":"list();", "after":"list(); document.getElementById('field_1');"},
                 ]
         elif base["kind"] == "ledger":
@@ -501,6 +505,9 @@ class StagedHTTP(StagedHTTPFixture):
             "questionId":question["id"], "selection":"field", "answer":"date", "requestId":uuid4().hex,
         }, owner)[0], 202)
         self.wait_task(owner, revised, "complete")
+        with self.store.connection() as db:
+            calls = db.execute("SELECT count(*) FROM staged_dispatches WHERE task=?", (revised,)).fetchone()
+        self.assertEqual(calls[0], 3)
         candidate = self.request(path + "/candidate", {}, owner)[1]
         self.assertIn("已有记录 1 条。", candidate["revisionPlan"]["changes"])
         self.assertEqual(candidate["entries"], saved["entries"])
