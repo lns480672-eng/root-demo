@@ -2512,7 +2512,6 @@
             "$ref": "#/components/parameters/Origin"
           }
         ],
-        "security": [],
         "requestBody": {
           "required": true,
           "content": {
@@ -2568,14 +2567,17 @@
           "400": {
             "description": "补答无效"
           },
+          "401": {
+            "description": "未登录或会话已过期"
+          },
           "403": {
-            "description": "会话无效"
+            "description": "来源不匹配"
           },
           "404": {
             "description": "任务不可见"
           },
           "409": {
-            "description": "任务、版本或问题已变化，或达到追问上限"
+            "description": "会话标识、任务、版本或问题已变化，或达到追问上限"
           }
         }
       }
