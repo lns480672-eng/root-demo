@@ -74,6 +74,25 @@ class StageArtifactTests(unittest.TestCase):
         self.assertNotIn('id="record-board"', page)
         self.assertFalse(blueprint.permits_backup(previous))
 
+    def test_record_code_accepts_semantic_table_headers_without_opening_attribute_policy(self):
+        import staged_record_code
+        code = {
+            "format": "record-code-v1",
+            "markup": '<table><thead><tr><th scope="col">巡检点位</th></tr></thead><tbody></tbody></table>',
+            "style": "table { width: 100% }",
+            "script": "rootRecords.list();",
+        }
+        staged_record_code.validate(code)
+        for markup in (
+            code["markup"].replace('scope="col"', 'scope="other"'),
+            '<div scope="col"></div>',
+            code["markup"].replace('scope="col"', 'scope="col" scope="row"'),
+            code["markup"].replace('scope="col"', 'scope="col" onclick="alert(1)"'),
+            '<form action="https://example.com/"></form>',
+        ):
+            with self.subTest(markup=markup), self.assertRaisesRegex(ValueError, "bad_program_attribute"):
+                staged_record_code.validate({**code, "markup": markup})
+
     def test_record_mutation_only_changes_requested_record_and_validated_fields(self):
         from staged_record_code import mutate
         fields = json.loads(artifacts()["spec.json"])["fields"]

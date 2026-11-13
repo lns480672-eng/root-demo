@@ -36,6 +36,7 @@ def markup_rules(elements):
     return """markup 只能是工具根节点内的 HTML 片段。元素和属性严格使用宿主白名单，省略名单以外的写法。
 可用元素：""" + "、".join(sorted(elements)) + """。
 可用属性：""" + "、".join(sorted(staged_program.ATTRIBUTES)) + """，另可使用小写的 aria-* 和 data-*（后缀以字母开头，只用小写字母、数字、连字符、下划线，最多 60 字符）。
+表头 th 可额外使用 scope，值只能为 row、col、rowgroup、colgroup。
 同一元素不可重复属性，禁止 style、on* 事件属性、action 和 formaction。href 仅用于 a 元素且必须以 # 开头；input 不可用 file 或 image 类型。
 空元素 """ + "、".join(sorted(staged_program.VOID_ELEMENTS)) + """ 不写结束标签，其余元素显式闭合。"""
 
