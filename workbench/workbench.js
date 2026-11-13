@@ -1331,7 +1331,7 @@ async function synchronizePublication() {
     }
     clearPublication();
     if (current.applied) {
-      finishComposition(true, !runId && !editing && Boolean(requirement.value.trim()));
+      finishComposition(true, !runId && !editing && entryMode === 'direct' && Boolean(requirement.value.trim()));
       await loadLibrary().catch(error => warnStorage(error.message));
     }
     else if (editing) failure = '本次修改未发布，已同步当前工具。你可以重试。';
