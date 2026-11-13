@@ -29,6 +29,35 @@ def encode(value):
 
 
 class RevisionContextTests(unittest.TestCase):
+    def test_record_date_plan_extends_schema_and_code_without_rewriting_records(self):
+        spec = {"kind": "ledger", "title": "读书清单", "modules": [], "implementation": "record-code-v1",
+                "fields": [{"id": "book", "label": "书名", "type": "text", "required": True, "options": []}]}
+        implementation = {"format": "record-code-v1", "style": "", "markup": "<form><input id='book'></form>",
+                          "script": "window.rootRecords.list(); function save(book) { return window.rootRecords.create({book}); }"}
+        base = revision.prepare({"spec.json": encode(spec), "implementation.json": encode(implementation)})
+        plan = {"status": "proposed", "operation": {"kind": "add_field", "label": "阅读日期",
+                "type": "date", "required": False}, "edits": [
+            {"part": "markup", "before": "</form>", "after": "<label>阅读日期<input type='date' id='field_1'></label></form>"},
+            {"part": "script", "before": "create({book})",
+             "after": "create({book, field_1: document.getElementById('field_1').value})"},
+        ]}
+        proposed = revision.plan_artifacts(encode(plan), base)
+        fields = json.loads(proposed["spec"])["fields"]
+        self.assertEqual(fields[:-1], spec["fields"])
+        self.assertEqual(fields[-1], {"id": "field_1", "label": "阅读日期", "type": "date", "required": False, "options": []})
+        self.assertIn("field_1", json.loads(proposed["implementation"])["script"])
+        entries = [["root-structured-records-v1", '[{"id":1,"book":"海边"}]']]
+        changes = revision.describe(base, {"revision-plan.json": encode(plan)}, "", entries)
+        self.assertIn("已有记录 1 条。", changes)
+        self.assertEqual(json.loads(entries[0][1]), [{"id": 1, "book": "海边"}])
+        with self.assertRaises(ApiError) as rejected:
+            revision.plan_artifacts(encode({**plan, "operation": {**plan["operation"], "required": True}}), base)
+        self.assertEqual(rejected.exception.code, "revision_required_field")
+        mismatched = {**plan, "edits": [{**edit, "after": edit["after"].replace("field_1", "unknown")}
+                                         for edit in plan["edits"]]}
+        with self.assertRaisesRegex(ValueError, "bad_revision_operation"):
+            revision.plan_artifacts(encode(mismatched), base)
+
     def test_structured_revision_uses_reasoning_without_changing_user_text(self):
         base = revision.prepare(artifacts())
         requirement = "按日期加一个观测时间字段"

@@ -285,7 +285,7 @@ class StagedJobs:
             self.check_table_schema(revision, current)
             decision = json.loads(self.read(row, row["head"], "revision-plan.json"))
             operation = decision.get("operation", {})
-            field = (operation.get("label") if state == "complete" and operation.get("kind") == "add_field"
+            field = (operation.get("label") if state == "complete" and operation.get("kind") == "add_field" and "edits" not in decision
                      else decision.get("field"))
             if state == "complete" and (selection != "field" or not field or answer == operation.get("type")):
                 raise ApiError(409, "revision_question_changed", "此修改方案没有可调整的字段类型。")
@@ -733,7 +733,7 @@ class StagedJobs:
         files = self.files(row)
         decision = json.loads(files.get("revision-plan.json", b"{}"))
         operation = decision.get("operation", {})
-        if operation.get("kind") == "add_field":
+        if operation.get("kind") == "add_field" and "edits" not in decision:
             plan["fieldType"] = {"id":row["head"], "label":operation["label"], "type":operation["type"]}
         plan["confirmation"] = digest(encoded({**plan, "nonce":candidate["nonce"], "sha256":candidate["digest"]}))
         return plan

@@ -379,6 +379,39 @@ def website_text_edit(implementation, edit):
 
 
 
+def record_field_artifacts(base, plan):
+    operation = plan["operation"]
+    if (not isinstance(operation, dict) or operation.keys() != {"kind", "label", "type", "required"}
+            or operation["kind"] != "add_field"):
+        raise ValueError("bad_revision_operation")
+    if operation["required"] is True:
+        raise ApiError(422, "revision_required_field", REVISION_GUIDANCE["revision_required_field"])
+    if operation["required"] is not False and operation["required"] is not None:
+        raise ValueError("bad_revision_required")
+    label, kind = operation["label"], operation["type"]
+    spec = base["source"]["spec"]
+    fields = spec["fields"]
+    if (not blueprint.label(label) or label != label.strip() or any(field["label"] == label for field in fields)
+            or kind not in ("date", "integer", "text") or len(fields) >= 12):
+        raise ValueError("bad_revision_operation")
+    field_id = next_record_field_id(spec)
+    field = {"id": field_id, "label": label, "type": kind, "required": False, "options": []}
+    edits = plan["edits"]
+    implementation = apply_code_edits(base["source"]["implementation"], edits)
+    original = base["source"]["implementation"]
+    markup = markup_bindings(implementation["markup"])
+    if (markup.bindings[("input", "id", field_id)] != 1
+            or implementation["markup"] == original["markup"] or implementation["script"] == original["script"]
+            or not re.search(r"\b" + re.escape(field_id) + r"\b", implementation["script"])):
+        raise ValueError("bad_revision_operation")
+    return {"spec": {**spec, "fields": [*fields, field]}, "implementation": implementation}
+
+
+def next_record_field_id(spec):
+    used = {field["id"] for field in spec["fields"]}
+    return next(f"field_{i}" for i in range(1, 14) if f"field_{i}" not in used)
+
+
 def check_plan(payload, base, requirement=None, *, operation_selected=False, model_response=False):
     try:
         plan = _check_plan(payload, base, requirement, model_response=model_response)
@@ -392,6 +425,11 @@ def check_plan(payload, base, requirement=None, *, operation_selected=False, mod
 def _check_plan(payload, base, requirement, *, model_response=False):
     plan = blueprint.read_artifact(payload)
     status = plan.get("status") if isinstance(plan, dict) else None
+    if status == "proposed" and plan.keys() == {"status", "operation", "edits"} and base["kind"] == "record_code":
+        artifacts = encode_source(record_field_artifacts(base, plan))
+        blueprint.validate("spec", artifacts["spec"], {})
+        blueprint.validate("implementation", artifacts["implementation"], {"spec.json": artifacts["spec"]})
+        return plan
     if status == "proposed" and plan.keys() == {"status", "operation"} and base["kind"] in ("ledger", "table"):
         operation = plan["operation"]
         if not isinstance(operation, dict):
@@ -469,6 +507,8 @@ def plan_artifacts(payload, base):
     if plan["status"] != "proposed":
         raise ValueError("bad_revision_plan")
     if "operation" in plan:
+        if base["kind"] == "record_code":
+            return encode_source(record_field_artifacts(base, plan))
         source, _ = structured_operation(base, plan["operation"])
         return encode_source(source)
     spec = base["source"]["spec"]
@@ -928,6 +968,12 @@ def describe(base, files, requirement, entries):
     if "revision-plan.json" in files:
         plan = check_plan(files["revision-plan.json"], base)
         if "operation" in plan:
+            if base["kind"] == "record_code":
+                source = record_field_artifacts(base, plan)
+                field = source["spec"]["fields"][-1]
+                label = {"text": "文本", "integer": "整数", "date": "日期"}[field["type"]]
+                return [f"新增可空{label}字段「{field['label']}」。已有记录在此字段显示为空。",
+                        ledger_record_impact(base, source["spec"], entries)]
             source, change = structured_operation(base, plan["operation"])
             changes = [change, "保留已有记录和未要求修改的内容。"]
             if base["kind"] == "ledger":
@@ -1095,7 +1141,13 @@ def provide(stage, requirement, previous, key, admit, record, *, base):
                            "逐字复制能唯一匹配的最短 before 片段，保留原空白、标点和大小写。"
                            "不要把整理过格式的 CSS 当作原代码。"
                            "可修改 UI 及交互脚本，保留 rootRecords 的字段 ID、数据接口和现有记录。"
-                           "不提交字段、存储或数据库迁移。脚本修改适用当前工具。")
+                           "新增一个可空的文本、整数或日期字段时，返回 "
+                           '{"status":"proposed","operation":{"kind":"add_field","label":"字段名","type":"date","required":false},"edits":[...]}。'
+                           "使用 revision_source.new_field_id 作为输入框 ID 和记录字段键；更新表单、保存脚本及需要的展示。"
+                           "日期用 input type=date，保存 YYYY-MM-DD，旧记录缺值时显示为空。"
+                           "字段类型不清楚时先问是日期、时分还是时长，只返回 status 和 question。"
+                           "不删除、改型、改键、回填旧记录或迁移数据库。")
+                context = {**context, "new_field_id": next_record_field_id(base["source"]["spec"])}
         system += (
             '\n在判断字段类型或可执行性之前，先看是否要求多个独立操作。若用户要求多个独立操作，先返回 {"status":"clarify","question":"请选择本次要做的一项",'
             '"choices":["第一项原话","第二项原话"]}。每个选项逐字引用原话，保留各自的条件。'

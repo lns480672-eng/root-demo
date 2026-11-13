@@ -192,6 +192,13 @@ def revise(stage, requirement, prior, key, admit, record, *, base):
                 plan["operation"] = {"kind":"title","label":"每周交付台账"}
             else:
                 plan["operation"] = {"kind":"table_filter","column":1}
+        elif base["kind"] == "record_code":
+            assert request["revision_source"]["new_field_id"] == "field_1"
+            plan["operation"] = {"kind":"add_field", "label":"阅读日期", "type":"date", "required":False}
+            plan["edits"] = [
+                {"part":"markup", "before":"</main>", "after":"<input id='field_1' type='date'></main>"},
+                {"part":"script", "before":"list();", "after":"list(); document.getElementById('field_1');"},
+            ]
         elif base["kind"] == "ledger":
             if scope == "加一个可空文本项目字段，再把名称改为设备名称":
                 plan = {"status":"clarify","question":"请选择本次改动",
@@ -455,6 +462,49 @@ class StagedHTTP(StagedHTTPFixture):
         self.assertFalse(failed["resumable"])
         self.assertEqual(self.request(path + "/publish", payload, owner)[0], 409)
         self.assertEqual(self.request("/api/trial", auth=owner)[1]["generation"]["used"], 0)
+
+    def test_generated_record_date_revision_confirms_schema_and_preserves_records(self):
+        owner = self.account("record-date-owner")
+        identifier = self.gen(owner, "代码台账日期")[1]["task"]["id"]
+        self.wait_task(owner, identifier, "complete")
+        path = "/api/staged/" + identifier
+        candidate = self.request(path + "/candidate", {}, owner)[1]
+        proof = {**candidate["staged"], "toolId":candidate["id"], "entries":[]}
+        self.assert_preview_verified(path, proof, owner)
+        status, published, _ = self.request(path + "/publish", proof, owner)
+        self.assertEqual(status, 200)
+        tool = "/api/tools/" + candidate["id"]
+        write = {"version":1, "revision":published["revision"], "operation":{
+            "action":"create", "values":{"name":"读书", "count":1, "status":"待处理"},
+        }}
+        status, saved, _ = self.request(tool + "/records", write, owner)
+        self.assertEqual(status, 200)
+        status, response, _ = self.request(tool + "/revise", {
+            "version":1, "requirement":"增加可空阅读日期", "requestId":uuid4().hex,
+        }, owner)
+        self.assertEqual(status, 202)
+        revised = response["task"]["id"]
+        self.wait_task(owner, revised, "complete")
+        path = "/api/staged/" + revised
+        candidate = self.request(path + "/candidate", {}, owner)[1]
+        self.assertIn("已有记录 1 条。", candidate["revisionPlan"]["changes"])
+        self.assertEqual(candidate["entries"], saved["entries"])
+        self.assertEqual(self.request(tool, auth=owner)[1]["version"], 1)
+        proof = {**candidate["staged"], "toolId":candidate["id"], "runId":candidate["runId"],
+                 "revision":candidate["revision"], "entries":candidate["entries"],
+                 "confirmation":candidate["revisionPlan"]["confirmation"]}
+        self.assertEqual(self.request(path + "/publish", proof, owner)[0], 409)
+        self.confirm_revision(path, proof, owner)
+        self.assert_preview_verified(path, proof, owner)
+        status, updated, _ = self.request(path + "/publish", proof, owner)
+        self.assertEqual(status, 200)
+        self.assertEqual((updated["version"], updated["entries"]), (2, saved["entries"]))
+        write = {"version":2, "revision":updated["revision"], "operation":{
+            "action":"update", "id":1, "values":{"field_1":"2026-11-13"},
+        }}
+        status, saved, _ = self.request(tool + "/records", write, owner)
+        self.assertEqual(status, 200)
+        self.assertEqual(saved["records"][0]["field_1"], "2026-11-13")
 
     def test_code_record_writes_are_scoped_and_reject_snapshot_replacement(self):
         owner = self.account("record-owner")

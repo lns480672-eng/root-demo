@@ -326,6 +326,7 @@ function stagedReason(task, restriction) {
     staged_balance: '模型服务余额不足，请联系管理员。',
     staged_rate_limit: '模型请求过多，请稍后继续。',
     invalid_staged_result: '本阶段的模型结果未通过校验。',
+    revision_patch_invalid: '这次修改无法匹配当前工具。原工具和记录仍可用，可改写需求后重试。',
     staged_runtime_failed: '这次生成的工具未通过运行检查。可用保留的需求重新生成。',
     staged_storage: '本阶段的结果未能保存。',
   }[task.reason] || (task.state === 'failed' ? '本阶段未完成，可编辑原需求后重新提交。' : '');
