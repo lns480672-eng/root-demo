@@ -642,7 +642,9 @@ class StagedJobs:
                 recoverable = receipt.get("dispatched") is True and (
                     (retryable and receipt.get("validation") == "invalid_model_json"
                      and receipt.get("status") == "invalid_staged_result")
-                    or (patch_retry and receipt.get("status") == "revision_patch_invalid")
+                    or (patch_retry and (receipt.get("status") == "revision_patch_invalid"
+                        or (receipt.get("status") == "invalid_staged_result"
+                            and receipt.get("validation") in ("bad_revision_operation", "bad_revision_plan"))))
                 )
                 if self.record is not None:
                     self.record(identifier, dispatch_id, receipt)

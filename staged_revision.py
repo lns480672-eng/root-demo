@@ -1154,7 +1154,8 @@ def provide(stage, requirement, previous, key, admit, record, *, base):
                            "不要返回没有实际变化的编辑；补丁不要重叠。"
                            "字段类型不清楚时先问是日期、时分还是时长。"
                            "例如『帮我加一栏阅读时间』必须先澄清，不能直接选择日期或写补丁。"
-                           "revision_source.selected_field 存在时，它是用户点选的标签和类型，逐字沿用并生成新增字段补丁。"
+                           "revision_source.selected_field 存在时，operation.label 和 operation.type 必须逐字照抄其中的值，"
+                           "required 必须为 false，不返回任何其他操作或再次询问。"
                            "用户在补答中明确类型时，按补答继续生成方案。"
                            "不删除、改型、改键、回填旧记录或迁移数据库。")
                 context = {**context, "new_field_id": next_record_field_id(base["source"]["spec"])}
