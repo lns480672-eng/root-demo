@@ -142,13 +142,18 @@ def provide(stage, requirement, prior, key, dispatch, *, base=None, timeout_seco
     return run(request, key, dispatch, validate, timeout_seconds)
 
 
-def run(request, key, dispatch, validate, timeout_seconds):
+def dependencies():
     node = shutil.which("node")
     modules = os.environ.get("ROOT_PI_MODULES")
     if not node or not modules or not all(
             (Path(modules) / name / "dist/index.js").is_file() for name in ("pi-agent-core", "pi-ai")):
         raise ApiError(503, "staged_unconfigured", "本地 Agent 依赖尚未配置。")
-    request["modules"] = str(Path(modules).resolve())
+    return node, str(Path(modules).resolve())
+
+
+def run(request, key, dispatch, validate, timeout_seconds):
+    node, modules = dependencies()
+    request["modules"] = modules
     if key in json.dumps(request, ensure_ascii=False):
         raise ApiError(400, "invalid_staged_requirement", "请输入有效需求并移除凭据。")
     deadline = time.monotonic() + timeout_seconds

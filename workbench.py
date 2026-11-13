@@ -17,6 +17,7 @@ from urllib.parse import urlsplit
 from uuid import uuid4
 
 import generate
+import agent_production
 import assistant_fixture
 import assistant_model
 import table_import
@@ -131,7 +132,7 @@ def build_id(assets, coding_agent_enabled=False):
                  "workbench/staged-runtime.js"):
         digest.update(name.encode() + b"\0" + (ROOT / name).read_bytes() + b"\0")
     if coding_agent_enabled:
-        for name in ("coding_agent.py", "coding-agent.mjs"):
+        for name in ("coding_agent.py", "coding-agent.mjs", "agent_production.py"):
             digest.update(name.encode() + (ROOT / name).read_bytes())
     for path, body in assets.items():
         digest.update(path.encode() + b"\0" + body + b"\0")
@@ -728,18 +729,42 @@ def main():
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--prompt-key", action="store_true", help="在本机终端隐藏输入 Key")
     parser.add_argument("--runs-dir", type=Path, default=generate.RUNS)
-    parser.add_argument("--coding-agent", action="store_true", help="使用本机 Pi Agent 试用实现")
+    agent_mode = parser.add_mutually_exclusive_group()
+    agent_mode.add_argument("--coding-agent", action="store_true", help="使用本机 Pi Agent 试用实现")
+    agent_mode.add_argument("--coding-agent-production", action="store_true", help="启用已准备状态副本的生产 Agent")
     mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--prepare-coding-agent-production-from", type=Path, metavar="SOURCE",
+                      help="将停写的完整来源状态目录复制到新的 --runs-dir")
     mode.add_argument("--create-invite", action="store_true")
     mode.add_argument("--create-admin-setup-code", action="store_true")
     parser.add_argument("--invite-hours", type=int, default=24)
     parser.add_argument("--invite-uses", type=int, default=1)
     args = parser.parse_args()
+    if args.prepare_coding_agent_production_from:
+        if args.coding_agent or args.coding_agent_production:
+            parser.error("准备状态副本和启动 Agent 必须分别执行。")
+        if args.runs_dir.resolve() == generate.RUNS.resolve():
+            parser.error("请用 --runs-dir 指定新的生产状态副本目录。")
+        try:
+            agent_production.prepare(args.prepare_coding_agent_production_from, args.runs_dir)
+        except (ValueError, OSError, sqlite3.Error) as error:
+            parser.error(str(error))
+        print("生产 Agent 状态副本已准备。")
+        return 0
+    if args.coding_agent_production:
+        try:
+            agent_production.require_prepared(args.runs_dir)
+            import coding_agent
+            coding_agent.dependencies()
+        except (ValueError, OSError, ApiError) as error:
+            parser.error(str(error))
     if args.coding_agent:
         if args.runs_dir.resolve() == generate.RUNS.resolve():
             parser.error("Agent 试用请用 --runs-dir 指定独立数据目录。")
         trial_db = args.runs_dir / "workspace.sqlite3"
-        marker = args.runs_dir / ".root-coding-agent-trial"
+        marker = args.runs_dir / agent_production.TRIAL_MARKER
+        if (args.runs_dir / agent_production.MARKER).exists():
+            parser.error("生产状态副本必须使用 --coding-agent-production。")
         if trial_db.exists() and not marker.is_file():
             parser.error("已有数据库未标记为 Agent 试用库，请另选空目录。")
         args.runs_dir.mkdir(parents=True, exist_ok=True)
@@ -765,15 +790,19 @@ def main():
         parser.error("DeepSeek Key 格式无效，请检查本机配置。")
     if not key:
         print("尚未配置 DeepSeek Key。可查看工作台及恢复既有工具。", flush=True)
+    coding_agent_enabled = args.coding_agent or args.coding_agent_production
     try:
         account_default, total_default = ("10", "120") if args.coding_agent else ("5", "30")
+        if args.coding_agent_production:
+            total_default = "500"
         generation_limits = (int(os.environ.get("ROOT_ACCOUNT_GENERATIONS", account_default)),
                              int(os.environ.get("ROOT_TOTAL_GENERATIONS", total_default)))
         agent_settings = {}
-        if args.coding_agent:
+        if coding_agent_enabled:
+            attempts_default = "16" if args.coding_agent_production else "12"
             agent_settings = {
                 "coding_agent_timeout": int(os.environ.get("ROOT_AGENT_TIMEOUT_SECONDS", "120")),
-                "coding_agent_max_attempts": int(os.environ.get("ROOT_AGENT_MAX_MODEL_CALLS", "12")),
+                "coding_agent_max_attempts": int(os.environ.get("ROOT_AGENT_MAX_MODEL_CALLS", attempts_default)),
             }
             if min(agent_settings.values()) <= 0:
                 raise ValueError("ROOT_AGENT_TIMEOUT_SECONDS 和 ROOT_AGENT_MAX_MODEL_CALLS 必须是正整数")
@@ -796,7 +825,7 @@ def main():
     serve(key, args.port, args.runs_dir, generation_limits=generation_limits, analysis_limits=analysis_limits,
           admin_usernames=admins, table_limits=table_limits, public_site_url=public_site_url,
           staged_enabled=os.environ.get("ROOT_STAGED_ENABLED", "1") != "0",
-          coding_agent_enabled=args.coding_agent, **agent_settings)
+          coding_agent_enabled=coding_agent_enabled, **agent_settings)
     return 0
 
 

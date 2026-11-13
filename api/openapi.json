@@ -610,13 +610,65 @@
           }}}
         },
         "responses": {
-          "200": {"description": "返回当前记录及修订号，写入同时返回保存后的存储快照供宿主核对。"},
-          "400": {"description": "记录操作、字段或值无效。"},
-          "401": {"description": "未登录或会话已过期。"},
-          "403": {"description": "请求来源不匹配。"},
-          "404": {"description": "工具不可见。"},
-          "409": {"description": "会话、工具版本或数据修订已变化，或工具不支持该接口。"},
-          "413": {"description": "存储额度不足或请求体过大。"}
+          "200": {
+            "description": "返回当前记录及修订号，写入同时返回保存后的存储快照供宿主核对。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "records",
+                    "revision"
+                  ],
+                  "properties": {
+                    "records": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "id"
+                        ],
+                        "properties": {
+                          "id": {
+                            "type": "integer",
+                            "minimum": 1
+                          }
+                        }
+                      }
+                    },
+                    "revision": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "entries": {
+                      "$ref": "#/components/schemas/StorageEntries"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Http400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Http401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Http403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Http404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Http409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Http413"
+          },
+          "415": {
+            "$ref": "#/components/responses/Http415"
+          }
         }
       }
     },

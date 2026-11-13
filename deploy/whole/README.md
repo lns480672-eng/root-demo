@@ -28,3 +28,32 @@ AC-021 候选版本的首次交付需要已启用新版认证限流的 HTTPS 后
 - 代理将 /api/staged/*/verify-preview 与 /publish 放在同一个 16 MiB 请求体规则，代理响应超时 135 秒，工作台预览检查请求超时 20 秒。
 - 新增 admin_sessions 表和 staged_jobs.category、staged_candidates.runtime_proof。旧版写入 staged_candidates 时用固定五列，不能直接复用迁移后的数据库。关闭公网写入并停服务后备份数据库和状态。切换期间若冒烟失败，用切换前备份恢复数据库及状态，再恢复旧指针、服务单元和代理。重新开放后要保留新写入，通过专门的数据兼容方案回退。
 - 官网进程从 current 的工作目录读取源码。切换应用时同时重启官网服务并验证首页实际公告以及工作台链接。
+
+### 0.8 Agent 升级验收
+
+- AC-AGENT-DEPLOY-01。维护窗口内，使用停写后的完整状态目录创建独立副本。保留原目录用于回退。复制前后核对全目录内容和 SQLite 完整性，拒绝复制中的变化、活动 SQLite 日志和符号链接。
+- AC-AGENT-DEPLOY-02。仅正式准备的副本能以生产 Agent 模式启动。校验副本位置和文件身份。用原目录、普通试用目录或拷贝标记直接启动均失败。
+- AC-AGENT-DEPLOY-03。生产默认个人 5 次成功保存、共享 500 次调用、单任务 16 次、单次 120 秒，支持环境变量覆盖。部署前由运维在目标主机验证完整状态副本、依赖、真实模型和回退。试用额度沿用独立配置。
+
+本地回归使用 `python3 -B -m unittest discover -s tests -p 'test_agent_production.py'`。
+
+运维在维护模式下停旧服务，使用旧服务账号在生产主机创建候选副本。root 预建独立父目录 `/var/lib/root-demo-agent`，所有者为 `root-demo:root-demo`，模式为 0700。保持 `/var/lib` 及原状态目录权限配置。准备、切换及验证时使用相同的目标绝对路径。
+
+```sh
+python3 -B workbench.py --prepare-coding-agent-production-from /var/lib/root-demo-whole \
+  --runs-dir /var/lib/root-demo-agent/v08
+```
+
+候选服务的 systemd 配置须允许写入该状态目录，注入 `ROOT_PI_MODULES`，并保留现网 `ROOT_ACCOUNT_GENERATIONS=5`、`ROOT_TOTAL_GENERATIONS=500`。本次固定 `ROOT_AGENT_MAX_MODEL_CALLS=16` 与 `ROOT_AGENT_TIMEOUT_SECONDS=120`。
+
+```ini
+StateDirectory=
+StateDirectory=root-demo-agent
+RestartPreventExitStatus=2
+ExecStart=
+ExecStart=/usr/bin/python3 -B workbench.py --port 8774 --runs-dir /var/lib/root-demo-agent/v08 --coding-agent-production
+```
+
+在维护模式下完成原目录全量指纹、候选准备、目标机真实 Agent 验证和回退演练。准备过程校验 SQLite 和本地裸 Git 仓库，刷盘后才写入生产标记。切换前记录原 systemd 配置、源码指针、状态目录和指纹。放开流量前如需回退，停止候选服务，恢复原 systemd 配置和源码指针，执行 `systemctl daemon-reload`，从原状态目录启动旧服务，再确认版本、状态指纹及冒烟后解除维护。
+
+开放写入后遇到故障，先暂停写入并保留此时最新的完整状态。优先使用当前发布制品在该状态的隔离副本验证关闭 Agent 的路径，或准备修复版本。旧程序回退仅在同一最新副本上验证应用操作、已保存版本与记录全部兼容后执行。无法验证兼容时维持维护并前滚修复。
