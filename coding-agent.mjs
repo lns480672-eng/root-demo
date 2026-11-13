@@ -27,6 +27,11 @@ const tool = (name, description, parameters, handler) => ({
     return { content:[{ type:'text', text }], details:{} };
   }
 });
+async function submit(files, decision) {
+  if (JSON.stringify(decision).includes(key)) throw Error('invalid decision');
+  send({kind:'candidate',files:Object.fromEntries(files),decision});
+  return (await receive()).reason;
+}
 const tools = [
   tool('read_file', '读取当前候选文件', schema({file}), args => files.get(args.file) ?? ''),
   tool('submit_candidate', '提交候选。markup、script、style 是完整文件内容，省略未改部分。', {
@@ -36,28 +41,36 @@ const tools = [
       status:{type:'string',enum:['proposed','clarify','unsupported']}, question:string, reason:string,
       field:string, choices:{type:'array',items:string}, field_label:string,
       field_type:{type:'string',enum:['text','integer','date']}, type_evidence:string,
-      data_change:{type:'object',properties:{
-        kind:{type:'string',enum:['change_type','backfill']}, field:string,
-        type:{type:'string',enum:['text','integer','date']}, value:{anyOf:[string,{type:'integer'}]},
-      },required:['kind','field'],additionalProperties:false},
     },additionalProperties:false,
-  }, async ({markup,script,style,field_label,field_type,type_evidence,data_change,...decision}) => {
+  }, async ({markup,script,style,field_label,field_type,type_evidence,...decision}) => {
     if (field_label && field_type) {
       decision.operation = {kind:'add_field',label:field_label,type:field_type,required:false};
       decision.type_evidence = type_evidence;
     }
-    if (data_change) decision.operation = data_change;
     const changes = {'tool.html':markup,'tool.js':script,'tool.css':style};
     for (const [name, content] of Object.entries(changes)) {
       if (content === undefined) continue;
       if (!files.has(name) || Buffer.byteLength(content) > 24576 || content.includes(key)) throw Error('invalid file');
       files.set(name,content);
     }
-    if (JSON.stringify(decision).includes(key)) throw Error('invalid decision');
-    send({kind:'candidate',files:Object.fromEntries(files),decision});
-    return (await receive()).reason;
+    return submit(files, decision);
   }),
 ];
+if (request.recordRevision) {
+  tools.push(tool('propose_backfill', '为已有工具提出空值回填方案。仅生成提案，由宿主计算影响并在用户确认后执行。',
+    schema({field:string,value:{anyOf:[string,{type:'integer'}]}}),
+    ({field,value}) => submit(files, {operation:{kind:'backfill',field,value}})));
+  tools.push(tool('propose_type_change', '提出字段类型变更。提供修改后的完整 HTML 和 JavaScript，宿主计算旧值转换方案。',
+    schema({field:string,type:{type:'string',enum:['text','integer','date']},markup:string,script:string}),
+    ({field,type,markup,script}) => {
+      const changed = new Map(files);
+      for (const [name, content] of [['tool.html',markup],['tool.js',script]]) {
+        if (Buffer.byteLength(content) > 24576 || content.includes(key)) throw Error('invalid file');
+        changed.set(name,content);
+      }
+      return submit(changed, {operation:{kind:'change_type',field,type}});
+    }));
+}
 const model = {...getModel('deepseek','deepseek-v4-flash'),id:'deepseek-flash',baseUrl:'https://api.deepseek.com'};
 const agent = new Agent({
   initialState:{model,tools,thinkingLevel:'off',systemPrompt:request.system},

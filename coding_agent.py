@@ -69,10 +69,11 @@ def provide(stage, requirement, prior, key, dispatch, *, base=None, timeout_seco
             "明确新增字段时填写 field_label、field_type、type_evidence。"
             "type_evidence 是用户明确说明类型的原话。"
             "用 new_field_id 作输入 ID 及保存键，并在界面中显示新值。旧记录缺值时显示为空。"
-            "用户明确要求改变已有字段的类型或填补空值时，使用 data_change，field 为原字段 ID。"
-            "类型变更用 kind=change_type 和 type，同时更新对应控件及读写逻辑。"
-            "空值回填用 kind=backfill 和 value。若字段、目标类型或回填值不清楚，先澄清。"
-            "宿主计算数据影响并等待用户确认。不要生成数据迁移脚本。"
+            "页面的单条记录接口只约束生成的网页代码。变更已有数据由宿主另行执行。"
+            "明确指定字段和回填值时，直接调用 propose_backfill，field 填原字段 ID。"
+            "明确改型时调用 propose_type_change，同时更新对应控件及读写逻辑。"
+            "仅在字段、目标类型或回填值确实缺失时追问。"
+            "提案工具不会执行数据写入，宿主会展示影响并要求用户确认。"
             "其他已有数据变更、删除或任意数据库操作返回 unsupported。"
         )
     parts = {part: name for part, name in PARTS.items() if part != "style" or website or record}
@@ -121,7 +122,7 @@ def provide(stage, requirement, prior, key, dispatch, *, base=None, timeout_seco
     files = {name:original.get(part, "") for part, name in parts.items()}
     if base:
         task["current_files"] = files
-    request = {"stage":stage, "system":system, "task":task, "files":files}
+    request = {"stage":stage, "system":system, "task":task, "files":files, "recordRevision":bool(base and record)}
     return run(request, key, dispatch, validate, timeout_seconds)
 
 
