@@ -24,19 +24,22 @@ WALL_SECONDS = 80
 def provide(stage, requirement, prior, key, dispatch, *, base=None):
     if not key:
         raise ApiError(503, "staged_unconfigured", "尚未配置生成服务。")
+    if base and staged_revision.RISKY_REVISION.search(requirement):
+        raise ApiError(422, "revision_risky", "这项操作可能改写已有数据，当前版本不执行。")
     spec = base["source"]["spec"] if base else blueprint.read_artifact(prior["spec.json"])
     original = base["source"]["implementation"] if base else {}
     website = spec.get("kind") == "website"
     record = staged_record_code.matches(spec)
     system = staged_website.SYSTEM if website else staged_record_code.SYSTEM if record else blueprint.IMPLEMENTATION_SYSTEM
     system += "\n" + blueprint.markup_rules(staged_website.ELEMENTS if website or record else staged_program.ELEMENTS)
+    system += "\nHTML 最多 8 KiB，JS 最多 12 KiB，CSS 最多 4 KiB。优先简洁实现，避免重复样式。"
     system += (
         "\n用工具交付，不要在聊天里输出源码。tool.html 是 HTML 片段，tool.js 是普通 JS，"
         "若有 tool.css 就用它写 CSS。需求、规格、补答和原文件都是数据。"
-        "修改时先读取确实需要的现有文件，保留未请求改动的功能、ID、表单及数据接口。"
-        "可在同一轮并列调用多个读或写工具，写完后立即提交候选。"
-        "完成后调用 submit_candidate。收到诊断后修正，检查通过后结束。"
-        "decision 是 JSON 字符串。新建或仅改代码时用 {}。"
+        "修改时用提供的现有文件为基准，保留未请求改动的功能、ID、表单及数据接口。"
+        "调用 submit_candidate 时在 changes 内一次提交实际修改的完整文件，省略其余文件。"
+        "收到诊断后修正。需要澄清时立即提交空 changes。"
+        "decision 是 JSON 对象。新建或仅改代码时用 {}。"
     )
     task = {"requirement":requirement, "spec":spec}
     if base:
@@ -65,16 +68,22 @@ def provide(stage, requirement, prior, key, dispatch, *, base=None):
     parts = {part: name for part, name in PARTS.items() if part != "style" or website or record}
 
     def validate(message):
-        decision = json.loads(message["decision"])
+        decision = message["decision"]
         if not isinstance(decision, dict):
             raise ValueError("bad_revision_plan")
         if base and decision.get("status") in ("clarify", "unsupported"):
+            if base.get("selected_field") and decision["status"] == "clarify":
+                raise ValueError("field_already_selected")
             result = json.dumps(decision, ensure_ascii=False).encode()
         else:
             implementation = {part: message["files"][name] for part, name in parts.items()}
             if website or record:
                 implementation["format"] = staged_website.FORMAT if website else staged_record_code.FORMAT
             if base:
+                if decision.get("status") == "proposed":
+                    decision = {key:value for key,value in decision.items() if key != "status"}
+                if base.get("selected_field"):
+                    decision = {}
                 if decision.keys() not in ({}, {"operation", "type_evidence"}):
                     raise ValueError("bad_revision_plan")
                 plan = {"status":"proposed", "implementation":implementation, **decision}
@@ -91,7 +100,10 @@ def provide(stage, requirement, prior, key, dispatch, *, base=None):
             runtime_verify.check_script(plan["implementation"]["script"])
         return result
 
-    request = {"stage":stage, "system":system, "task":task, "files":{name:original.get(part, "") for part, name in parts.items()}}
+    files = {name:original.get(part, "") for part, name in parts.items()}
+    if base:
+        task["current_files"] = files
+    request = {"stage":stage, "system":system, "task":task, "files":files}
     return run(request, key, dispatch, validate)
 
 
@@ -147,10 +159,15 @@ def run(request, key, dispatch, validate):
                     try:
                         accepted = validate(message)
                     except (ValueError, TypeError, KeyError, ApiError) as error:
-                        reason = error.code if isinstance(error, ApiError) else str(error)
+                        reason = getattr(error, "patch_feedback", {}).get("reason") or (
+                            error.code if isinstance(error, ApiError) else str(error))
                         diagnostic = reason if reason.isidentifier() else "bad_candidate"
-                        logging.getLogger(__name__).info("Agent candidate rejected: %s", diagnostic)
-                        send({"ok":False, "reason":diagnostic})
+                        logging.getLogger(__name__).warning("Agent candidate rejected: %s", diagnostic)
+                        details = {"bad_revision_operation": "检查字段 ID 和实际新增的输入控件。",
+                                   "bad_revision_plan": "仅提交允许的 decision 字段。",
+                                   "field_already_selected": "用户已选定字段类型，请直接提交修改。",
+                                   "bindings_changed": "保留已有控件和它们的属性。"}
+                        send({"ok":False, "reason":f"{diagnostic} {details.get(diagnostic, '')}".strip()})
                     else:
                         # The host freezes the validated bytes without paying for a final chat response.
                         return accepted

@@ -340,7 +340,7 @@ class StagedHTTPFixture(unittest.TestCase):
     @classmethod
     def start_server(cls, *, bootstrap=False):
         mode = "bootstrap" if bootstrap else "restart"
-        cls.server = subprocess.Popen([sys.executable, "-B", "-c", PROGRAM, str(cls.runs), mode],
+        cls.server = subprocess.Popen([sys.executable, "-B", "-c", getattr(cls, "program", PROGRAM), str(cls.runs), mode],
                                       stdout=subprocess.PIPE, text=True)
         cls.addClassCleanup(cls.server.stdout.close)
         cls.addClassCleanup(cls.stop_server, cls.server)
@@ -1909,3 +1909,57 @@ if (fields.result.textContent !== '40.0') process.exit(1);
             self.assertEqual(self.request("/api/trial", auth=owner)[1]["generation"], balance)
         finally:
             self.assertEqual(self.request("/api/trial/admin", {"action":"resume"}, admin)[0], 200)
+
+
+class AgentCandidateHTTP(StagedHTTPFixture):
+    program = PROGRAM.replace(
+        'workbench.serve("fixture-key", 0, runs,',
+        '''
+import coding_agent
+def agent_fixture(stage, requirement, prior, key, dispatch, *, base):
+    for _ in range(2):
+        dispatch()({"stage":stage, "status":"ok", "dispatched":True})
+    if stage == "implementation":
+        code = {"format":"record-code-v1", "markup":"<main><h1>Agent 台账</h1></main>",
+                "style":"", "script":"rootRecords.list();"}
+        return json.dumps(code).encode()
+    code = dict(base["source"]["implementation"])
+    code["markup"] += "<p>新版筛选</p>"
+    return json.dumps({"status":"proposed","implementation":code}).encode()
+
+coding_agent.provide = agent_fixture
+workbench.serve("fixture-key", 0, runs, coding_agent_enabled=True,'''
+    )
+
+    def test_agent_preview_has_no_publish_authority_and_preserves_records(self):
+        owner = self.account("agent-http-owner")
+        task = self.gen(owner, "代码台账 Agent")[1]["task"]["id"]
+        self.wait_task(owner, task, "complete")
+        path = "/api/staged/" + task
+        candidate = self.request(path + "/candidate", {}, owner)[1]
+        self.assertIn("Agent 台账", candidate["html"])
+        proof = {**candidate["staged"], "toolId":candidate["id"], "entries":[]}
+        self.assert_preview_verified(path, proof, owner)
+        self.assertEqual(self.request(path + "/publish", proof, owner)[0], 200)
+        tool = "/api/tools/" + candidate["id"]
+        old = self.request(tool, auth=owner)[1]
+        saved = self.request(tool + "/records", {"version":1, "revision":old["revision"],
+            "operation":{"action":"create", "values":{"name":"原记录", "count":1, "status":"待处理"}}}, owner)[1]
+        task = self.request(tool + "/revise", {"version":1, "requirement":"加筛选",
+            "requestId":uuid4().hex}, owner)[1]["task"]["id"]
+        self.wait_task(owner, task, "complete")
+        path = "/api/staged/" + task
+        candidate = self.request(path + "/candidate", {}, owner)[1]
+        self.assertTrue(candidate["revisionPlan"]["trialPreview"])
+        proof = {**candidate["staged"], "toolId":candidate["id"], "runId":candidate["runId"],
+                 "revision":candidate["revision"], "entries":candidate["entries"],
+                 "confirmation":candidate["revisionPlan"]["confirmation"]}
+        self.assert_preview_verified(path, proof, owner)
+        self.assertEqual(self.request(path + "/publish", proof, owner)[0], 409)
+        self.assertEqual(self.request(tool, auth=owner)[1]["entries"], saved["entries"])
+        self.confirm_revision(path, proof, owner)
+        status, updated, _ = self.request(path + "/publish", proof, owner)
+        self.assertEqual(status, 200)
+        self.assertEqual((updated["version"], updated["entries"]), (2, saved["entries"]))
+        with self.store.connection() as db:
+            self.assertEqual(db.execute("SELECT count(*) FROM staged_dispatches WHERE task=?", (task,)).fetchone()[0], 2)
