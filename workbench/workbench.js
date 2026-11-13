@@ -19,7 +19,7 @@ const maxStorageBytes = 256 * 1024;
 const tableStorageBytes = 8 * 1024 * 1024;
 const publicationKey = 'root:pending-publication';
 const publicationTimeout = 6000;
-const runtimeVerificationTimeout = 20000;
+const runtimeVerificationTimeout = 30000;
 const validToolId = id => typeof id === 'string' && /^run-[a-z0-9_]{8}$/.test(id);
 const previewPolicy = "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; "
   + "img-src data:; connect-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'";
@@ -69,6 +69,9 @@ let stagedHistory = [];
 let stagedHistoryRead = 0;
 let stagedHistoryStatus = '';
 let stagedHistoryFailed = false;
+let toolRevisionTasks = [];
+let toolRevisionRead = 0;
+let toolRevisionStatus = '';
 let selectedStagedId = null;
 let stagedAutoId = null;
 let stagedRead = 0;
@@ -80,6 +83,9 @@ let stagedPendingId = null;
 let stagedPendingNonce = null;
 let stagedSubmission = null;
 let pendingRevision = null;
+let repairTrial = null;
+let repairRequest = null;
+let supplementIssue = null;
 
 function currentGenerationRestriction() {
   if (!trial) return;
@@ -109,7 +115,7 @@ function render() {
   product.dataset.state = pending ? 'loading' : failure ? 'failure' : active ? 'success' : 'initial';
   const atStart = workspace.dataset.mode === 'start';
   const showingResult = workspace.dataset.mode === 'result' && Boolean(active) && !editing;
-  generate.textContent = pending ? '生成中…' : failure ? '重试' : editing && stagedEnabled ? '查看修改方案' : editing ? '生成新版' : atStart ? '开始' : '直接生成';
+  generate.textContent = pending ? '生成中…' : supplementIssue ? '提交补充' : failure ? '重试' : editing && stagedEnabled ? '查看修改方案' : editing ? '生成新版' : atStart ? '开始' : '直接生成';
   generate.disabled = !session || !configured || !networkIsolated || starting || blocked ||
     tableMode || returning || Boolean(pendingRevision) || !requirement.value.trim();
   requirement.readOnly = blocked;
@@ -139,10 +145,10 @@ function render() {
     }
   }
   byId('preview-title').textContent = currentTitle;
-  byId('composer-title').textContent = editing ? '要怎样修改这个工具？' :
+  byId('composer-title').textContent = editing ? '修改对话' :
     atStart || entryMode !== 'direct' ? '你想做什么工具？' : '生成工具';
   byId('requirement-label').textContent = editing ? '修改「' + currentTitle + '」' : '工具需求';
-  requirement.placeholder = editing ? '例如：增加一个按负责人筛选。'
+  requirement.placeholder = supplementIssue ? '补充这次修改的要求' : editing ? '例如：增加一个按负责人筛选。'
     : '描述你想做的工具、怎么用、需要保存哪些数据。';
   byId('revise-tool').hidden = byId('tool-history').hidden = syncing || !showingTool || showingResult;
   byId('publish-lock').hidden = syncing || !showingTool;
@@ -281,6 +287,8 @@ function isActiveStagedTask(task) {
 }
 
 function clearStagedSelection() {
+  closeRepairTrial();
+  supplementIssue = null;
   selectedStagedId = stagedAutoId = null;
   pendingRevision = null;
   stagedMessage = '';
@@ -290,7 +298,95 @@ function rememberStagedTask(task) {
   stagedRead += 1;
   const other = stagedTasks.filter(item => item.id !== task.id);
   stagedTasks = task.state === 'published' ? other : [task, ...other];
+  updateToolRevisionLog(task);
 }
+
+function updateToolRevisionLog(task) {
+  if (!editing || !active || task?.baseToolId !== active.id) return;
+  const index = toolRevisionTasks.findIndex(item => item.id === task.id);
+  if (index < 0) toolRevisionTasks.push(task);
+  else toolRevisionTasks[index] = task;
+}
+
+function renderToolRevisionLog(restriction, canAct) {
+  const dialog = byId('tool-revision-dialog');
+  dialog.hidden = !editing || !stagedEnabled || !active;
+  if (dialog.hidden) return;
+  byId('tool-revision-status').textContent = toolRevisionStatus;
+  const list = byId('tool-revision-log');
+  const signature = JSON.stringify([toolRevisionTasks, selectedStagedId, restriction, canAct]);
+  if (list.dataset.signature === signature) return;
+  list.dataset.signature = signature;
+  const focusedTask = document.activeElement?.dataset.revisionTask;
+  list.replaceChildren(...toolRevisionTasks.map(task => {
+    const row = document.createElement('li');
+    const request = document.createElement('p');
+    request.textContent = task.requirement;
+    const detail = document.createElement('p');
+    detail.className = 'auth-muted';
+    const status = task.state === 'published' ? '已应用' : stagedStatus(task, restriction);
+    detail.textContent = [status, stagedReason(task, restriction)].filter(Boolean).join('。');
+    row.append(request);
+    for (const { question, answer } of task.clarification?.answers || []) {
+      const exchange = document.createElement('p');
+      exchange.textContent = question + ' · ' + (Object.hasOwn(revisionFieldTypes, answer) ? revisionFieldTypes[answer] : answer);
+      row.append(exchange);
+    }
+    for (const repair of task.repairs || []) {
+      const message = document.createElement('p');
+      message.textContent = stagedReason({state:'failed', reason:repair.reason}, restriction);
+      row.append(message);
+      const action = document.createElement('p');
+      action.textContent = repair.supplement ? '补充要求 · ' + repair.supplement : '让 AI 修';
+      row.append(action);
+    }
+    row.append(detail);
+    if (!['published', 'cancelled'].includes(task.state)) {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.dataset.revisionTask = task.id;
+      button.textContent = '查看这次修改';
+      button.disabled = !canAct;
+      button.setAttribute('aria-current', String(task.id === selectedStagedId));
+      row.append(button);
+    }
+    return row;
+  }));
+  if (focusedTask && canAct) {
+    [...list.querySelectorAll('button')].find(button => button.dataset.revisionTask === focusedTask)?.focus();
+  }
+}
+
+async function loadToolRevisionLog(id) {
+  const request = ++toolRevisionRead;
+  try {
+    const result = await workspaceApi('/api/tools/' + id + '/revision-tasks', undefined, publicationTimeout);
+    if (request !== toolRevisionRead || !editing || active?.id !== id) return;
+    const latest = new Map(toolRevisionTasks.map(task => [task.id, task]));
+    toolRevisionTasks = result.tasks.map(task => latest.get(task.id) || task);
+    for (const task of result.tasks) latest.delete(task.id);
+    toolRevisionTasks.push(...latest.values());
+    toolRevisionStatus = '';
+  } catch {
+    if (request !== toolRevisionRead || !editing || active?.id !== id) return;
+    toolRevisionStatus = '暂时无法读取修改对话。';
+  }
+  render();
+}
+
+byId('tool-revision-log').addEventListener('click', event => {
+  const id = event.target.closest('button')?.dataset.revisionTask;
+  const task = toolRevisionTasks.find(item => item.id === id);
+  if (!task || !editing || active?.id !== task.baseToolId || phase !== 'idle') return;
+  clearStagedSelection();
+  rememberStagedTask(task);
+  selectedStagedId = id;
+  if (['queued', 'running'].includes(task.state)) {
+    stagedAutoId = id;
+    scheduleStagedRefresh();
+  }
+  render();
+});
 
 function stagedStatus(task, restriction) {
   if (!task) return '';
@@ -399,8 +495,13 @@ function renderStagedTasks(blocked, restriction) {
   const panel = byId('staged-panel');
   const task = selectedStagedTask();
   panel.hidden = !session || !stagedEnabled;
-  if (panel.hidden) return;
+  if (panel.hidden) {
+    byId('tool-revision-dialog').hidden = true;
+    return;
+  }
   const canAct = phase === 'idle' && networkIsolated && !pendingPublication;
+  renderToolRevisionLog(restriction, canAct);
+  byId('staged-history').hidden = editing;
   const list = byId('staged-task-list');
   list.hidden = editing;
   byId('staged-list-status').hidden = editing && !stagedLoadError;
@@ -461,6 +562,19 @@ function renderStagedTasks(blocked, restriction) {
   issue.hidden = !task?.issue || generationRestrictions.has(task.reason) || Boolean(task.resumable && restriction);
   issue.textContent = issue.hidden ? '' : '问题编号 ' + task.issue;
   const resume = byId('staged-resume');
+  const abandon = byId('revision-abandon');
+  abandon.hidden = !editing || task?.baseToolId !== active?.id || task?.state !== 'failed' || !task.issue;
+  abandon.disabled = !canAct;
+  const repair = byId('revision-repair');
+  const supplement = byId('revision-supplement');
+  repair.hidden = abandon.hidden || !task.canRepair || task.baseVersion !== active?.version;
+  supplement.hidden = !editing || !task?.baseToolId || !['failed', 'expired', 'exhausted'].includes(task.state);
+  repair.disabled = supplement.disabled = !canAct || quotaBlocked;
+  byId('revision-trial-note').hidden = !repairTrial;
+  for (const id of ['revision-apply-repair', 'revision-close-trial']) {
+    byId(id).hidden = !repairTrial;
+    byId(id).disabled = !canAct;
+  }
   resume.hidden = !['queued', 'interrupted'].includes(task?.state) || Boolean(stagedPendingId);
   resume.disabled = !canAct || !configured || quotaBlocked;
   renderRevisionQuestion(task, canAct);
@@ -482,7 +596,7 @@ function renderStagedTasks(blocked, restriction) {
   byId('revision-field-type').disabled = !canAct;
   for (const id of ['revision-confirm', 'revision-adjust', 'revision-cancel']) byId(id).disabled = !canAct;
   const reopen = byId('staged-preview');
-  reopen.hidden = task?.state !== 'complete' || Boolean(stagedPendingId) || Boolean(proposal);
+  reopen.hidden = task?.state !== 'complete' || Boolean(stagedPendingId) || Boolean(proposal) || Boolean(repairTrial);
   reopen.disabled = !canAct;
   reopen.textContent = task?.baseToolId ? '查看修改方案' : stagedMessage ? '重新预览' : '检查预览';
   const sync = byId('staged-sync');
@@ -520,6 +634,7 @@ async function refreshStagedTasks() {
       tasks = [selected, ...tasks];
     }
     stagedTasks = tasks;
+    for (const task of tasks) updateToolRevisionLog(task);
     stagedLoadError = '';
   } catch (error) {
     if (request !== stagedRead) return;
@@ -1143,6 +1258,24 @@ async function handleRecordOperation(frame, {request, operation}) {
     reply(null, '请等当前操作完成。');
     return;
   }
+  if (frame === repairTrial?.frame && operation?.action !== 'list') {
+    try {
+      const rows = JSON.parse(new Map(JSON.parse(frame.snapshot)).get('root-structured-records-v1') || '[]');
+      const values = operation.values;
+      if (!values || typeof values !== 'object' || Array.isArray(values)) throw new Error('试填数据无效。');
+      if (operation.action === 'create') {
+        rows.push({...values, id: Math.max(0, ...rows.map(row => row.id)) + 1});
+      } else if (operation.action === 'update' && rows.some(row => row.id === operation.id)) {
+        const index = rows.findIndex(row => row.id === operation.id);
+        rows[index] = {...rows[index], ...values, id:operation.id};
+      } else throw new Error('试填操作无效。');
+      frame.snapshot = serializeEntries([['root-structured-records-v1', JSON.stringify(rows)]], frame.storageLimit);
+      reply(rows);
+    } catch (error) {
+      reply(null, error.message);
+    }
+    return;
+  }
   if (frame === candidate) {
     if (operation?.action !== 'list') {
       frame.reject(new Error('候选预览试图在初始化时写入记录。'));
@@ -1398,6 +1531,15 @@ async function commitStaged(frame, tool) {
 }
 
 async function finishStagedComposition(id) {
+  if (editing && stagedEnabled && active) {
+    stagedTasks = stagedTasks.filter(task => task.id !== id);
+    clearStagedSelection();
+    requirement.value = '';
+    toolRevisionTasks = toolRevisionTasks.filter(task => task.id !== id);
+    await loadToolRevisionLog(active.id);
+    await loadLibrary(publicationTimeout).catch(error => warnStorage(error.message));
+    return;
+  }
   stagedTasks = stagedTasks.filter(task => task.id !== id);
   clearStagedSelection();
   finishComposition(true, !editing && workspace.dataset.mode !== 'browse' && Boolean(requirement.value.trim()));
@@ -1433,7 +1575,17 @@ async function synchronizeStagedPublication({ readOnly = false } = {}) {
   }
 }
 
-async function openStagedCandidate(task, approvedTool = null) {
+function closeRepairTrial() {
+  if (!repairTrial) return;
+  const {frame} = repairTrial;
+  frame.recordPort?.close();
+  frame.iframe.remove();
+  if (candidate === frame) candidate = null;
+  repairTrial = null;
+  if (active) active.iframe.hidden = false;
+}
+
+async function openStagedCandidate(task, approvedTool = null, applyRepair = false) {
   if (phase !== 'idle' || pendingPublication || stagedPendingId || !networkIsolated) return;
   stagedAutoId = null;
   selectedStagedId = task.id;
@@ -1461,16 +1613,24 @@ async function openStagedCandidate(task, approvedTool = null) {
         pendingRevision = tool;
         return;
       }
-      if (approvedTool) {
+      if (approvedTool && (!task.repairs?.length || applyRepair)) {
         const { confirmed } = await workspaceApi('/api/staged/' + task.id + '/confirm-revision',
           { nonce:tool.staged.nonce, confirmation:tool.revisionPlan.confirmation }, publicationTimeout);
         if (!confirmed) throw new Error('未能确认当前修改方案。');
+      }
+      if (task.repairs?.length && !applyRepair) {
+        await openTool(tool, false, true);
+        return;
       }
       await openTool(tool);
     }
     await finishStagedComposition(task.id);
   } catch (error) {
     stagedMessage = generationError(error);
+    if (['staged_runtime_failed', 'revision_conflict', 'version_conflict'].includes(error.code)) {
+      const result = await workspaceApi('/api/staged/' + task.id, undefined, publicationTimeout).catch(() => null);
+      if (result) rememberStagedTask(result.task);
+    }
   } finally {
     phase = 'idle';
     stagedActivity = '';
@@ -1549,6 +1709,83 @@ async function closeRevisionQuestion(rewrite) {
 byId('revision-rewrite').addEventListener('click', () => closeRevisionQuestion(true));
 byId('revision-question-cancel').addEventListener('click', () => closeRevisionQuestion(false));
 
+async function submitRevisionRepair(task, supplement = '') {
+  const signature = JSON.stringify([task.id, task.issue, supplement]);
+  if (repairRequest?.signature !== signature) {
+    repairRequest = {signature, id:crypto.randomUUID().replaceAll('-', '')};
+  }
+  phase = 'sync';
+  render();
+  try {
+    const result = await workspaceApi('/api/staged/' + task.id + '/repair-revision',
+      {issue:task.issue, requestId:repairRequest.id, supplement}, publicationTimeout);
+    repairRequest = null;
+    supplementIssue = null;
+    requirement.value = '';
+    stagedMessage = '';
+    rememberStagedTask(result.task);
+    selectedStagedId = stagedAutoId = result.task.id;
+  } catch (error) {
+    stagedMessage = generationError(error);
+  } finally {
+    phase = 'idle';
+    render();
+    refreshStagedTasks();
+  }
+}
+
+byId('revision-repair').addEventListener('click', () => {
+  const task = selectedStagedTask();
+  if (task?.canRepair && phase === 'idle') submitRevisionRepair(task);
+});
+
+byId('revision-supplement').addEventListener('click', () => {
+  const task = selectedStagedTask();
+  if (!task || phase !== 'idle') return;
+  if (task.state === 'failed' && task.canSupplement && task.baseVersion === active?.version) {
+    supplementIssue = task.issue;
+    requirement.value = '';
+    requirement.placeholder = '补充这次修改的要求';
+  } else {
+    clearStagedSelection();
+    requirement.value = [task.requirement, ...(task.repairs || []).map(item => item.supplement)]
+      .filter(Boolean).join('\n').slice(0, 2000);
+  }
+  requirement.focus();
+});
+
+byId('revision-close-trial').addEventListener('click', () => {
+  closeRepairTrial();
+  render();
+});
+
+byId('revision-apply-repair').addEventListener('click', () => {
+  if (!repairTrial || phase !== 'idle') return;
+  const {tool} = repairTrial;
+  const task = selectedStagedTask();
+  if (task?.id !== tool.staged.taskId) return;
+  closeRepairTrial();
+  openStagedCandidate(task, tool, true);
+});
+
+byId('revision-abandon').addEventListener('click', async () => {
+  const task = selectedStagedTask();
+  if (!editing || !task?.issue || task.state !== 'failed' || task.baseToolId !== active?.id || phase !== 'idle') return;
+  phase = 'sync';
+  render();
+  try {
+    const result = await workspaceApi('/api/staged/' + task.id + '/cancel-revision',
+      { nonce: task.issue }, publicationTimeout);
+    rememberStagedTask(result.task);
+    clearStagedSelection();
+  } catch (error) {
+    stagedMessage = generationError(error);
+  } finally {
+    phase = 'idle';
+    render();
+  }
+});
+
 byId('revision-confirm').addEventListener('click', () => {
   const task = selectedStagedTask();
   const tool = pendingRevision;
@@ -1581,7 +1818,7 @@ async function discardRevision(adjust) {
 byId('revision-adjust').addEventListener('click', () => discardRevision(true));
 byId('revision-cancel').addEventListener('click', () => discardRevision(false));
 
-async function openTool(tool, restore = false) {
+async function openTool(tool, restore = false, trialOnly = false) {
   if (!validToolId(tool.id) || typeof tool.html !== 'string' || !/^<!doctype html>/i.test(tool.html)) {
     throw new Error('工具文件不完整，无法打开预览。');
   }
@@ -1616,6 +1853,19 @@ async function openTool(tool, restore = false) {
   try {
     preview.append(iframe);
     await ready;
+    if (trialOnly) {
+      await workspaceApi('/api/staged/' + tool.staged.taskId + '/verify-preview', {
+        ...tool.staged, toolId:tool.id, runId:tool.runId, revision:tool.revision,
+        entries:tool.entries, confirmation:tool.revisionPlan.confirmation,
+      }, runtimeVerificationTimeout);
+      repairTrial = {frame, tool};
+      iframe.title = '修复预览，试填不会保存';
+      iframe.dataset.repairTrial = '';
+      iframe.removeAttribute('tabindex');
+      iframe.inert = false;
+      if (old) old.iframe.hidden = true;
+      return;
+    }
     let savedSnapshot = original;
     if (tool.staged && !restore) {
       if (tool.runId && old?.id === frame.id) {
@@ -1661,14 +1911,14 @@ async function openTool(tool, restore = false) {
     else if (!toolHistory.hidden) loadToolHistory();
   } finally {
     clearTimeout(deadline);
-    if (active !== frame) {
+    if (active !== frame && repairTrial?.frame !== frame) {
       frame.recordPort?.close();
       iframe.remove();
       if (tool.runId && !pendingPublication && !stagedPendingId && old?.iframe.inert && old.iframe.isConnected) {
         resumeStorage(old);
       }
     }
-    candidate = null;
+    if (repairTrial?.frame !== frame) candidate = null;
   }
 }
 
@@ -1714,7 +1964,7 @@ async function openRevision(tool) {
 }
 
 requirement.addEventListener('input', () => {
-  if (selectedStagedTask()?.requirement !== requirement.value.trim()) clearStagedSelection();
+  if (!supplementIssue && selectedStagedTask()?.requirement !== requirement.value.trim()) clearStagedSelection();
   render();
 });
 byId('requirement-examples').addEventListener('click', event => {
@@ -1773,6 +2023,18 @@ byId('generation-category').addEventListener('change', render);
 form.addEventListener('submit', async event => {
   event.preventDefault();
   if (generate.disabled) return;
+  const selected = selectedStagedTask();
+  if (editing && supplementIssue && selected?.issue === supplementIssue) {
+    const supplement = requirement.value.trim();
+    if (supplement.length > 400) {
+      stagedMessage = '补充要求最多 400 字。';
+      render();
+      return;
+    }
+    await submitRevisionRepair(selected, supplement);
+    return;
+  }
+  closeRepairTrial();
   compose(true);
   failure = '';
   phase = 'model';
@@ -1866,6 +2128,10 @@ function beginComposition(revise, value = '', category = 'auto', focus = true) {
   clearStagedSelection();
   if (entryMode === 'table') tableImport.close();
   editing = revise;
+  toolRevisionRead += 1;
+  toolRevisionTasks = [];
+  toolRevisionStatus = '';
+  if (revise && stagedEnabled && active) loadToolRevisionLog(active.id);
   entryMode = 'direct';
   compose(true, revise ? 'compose' : 'start');
   requirement.value = value;

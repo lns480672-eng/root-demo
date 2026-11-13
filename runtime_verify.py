@@ -69,7 +69,7 @@ def _command():
     return [node, str(HELPER), chrome]
 
 
-def verify(html, entries, *, backup=False, storage_limit=TOOL_STORAGE_BYTES, website=False, record_field=None, record_fields=None):
+def verify(html, entries, *, backup=False, storage_limit=TOOL_STORAGE_BYTES, website=False, record_field=None, record_fields=None, record_visibility=None):
     """Require isolated startup and the applicable website checks for the fixed snapshot."""
     packed = pack_entries(entries, limit=storage_limit)
     if not isinstance(html, bytes) or not html.lower().startswith(b"<!doctype html>"):
@@ -89,7 +89,8 @@ def verify(html, entries, *, backup=False, storage_limit=TOOL_STORAGE_BYTES, web
             for name in ("XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_DATA_HOME", "XDG_RUNTIME_DIR"):
                 env[name] = directory
             payload = json.dumps({"html": source, "entries": json.loads(packed), "backup": backup,
-                                  "limit": storage_limit, "website": website, "recordField": record_field}).encode()
+                                  "limit": storage_limit, "website": website, "recordField": record_field,
+                                  "recordVisibility": record_visibility}).encode()
             with subprocess.Popen([*command, directory], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                   stderr=subprocess.DEVNULL, env=env, start_new_session=True) as process:
                 try:
@@ -106,14 +107,26 @@ def verify(html, entries, *, backup=False, storage_limit=TOOL_STORAGE_BYTES, web
     finally:
         SLOTS.release()
 
-    if process.returncode == 0 and record_field and output.startswith(b"record:"):
+    if process.returncode == 0 and output.startswith(b"record:"):
         try:
-            values = json.loads(output[len(b"record:"):])
-            mutate(record_fields, [], {"action": "create", "values": values})
-        except (ApiError, ValueError, TypeError, RecursionError):
+            result = json.loads(output[len(b"record:"):])
+            if record_field:
+                filled, blank = result["submissions"]
+                mutate(record_fields, [], {"action": "create", "values": filled})
+                mutate(record_fields, [], {"action": "create", "values": blank})
+            if record_visibility is not None:
+                visible = result["visible"]
+                if any(value not in visible for value in record_visibility):
+                    raise RuntimeVerificationError("record_visibility")
+                return visible
+            return
+        except (ApiError, ValueError, TypeError, KeyError, RecursionError) as error:
+            if isinstance(error, RuntimeVerificationError):
+                raise
             raise RuntimeVerificationError("record_field_behavior") from None
-        return
     if process.returncode == 0 and output == b"ok\n":
+        if record_field or record_visibility is not None:
+            raise RuntimeVerificationError("record_field_behavior")
         return
     if process.returncode == 0:
         for reason in ("script_exception", "frame_changed", "isolation_event", "document_not_ready",

@@ -68,6 +68,15 @@ def valid_value(field, value):
         return False
 
 
+def verification_entries(fields):
+    values = {"text": "验证记录", "integer": 7, "date": "2026-01-15"}
+    row = {"id": 1}
+    for field in fields:
+        kind = field["type"]
+        row[field["id"]] = field["options"][0] if kind == "choice" else values[kind]
+    return [[STORAGE_KEY, json.dumps([row], ensure_ascii=False)]]
+
+
 def mutate(fields, records, operation):
     """Compute one record write from the latest host-owned rows."""
     error = ApiError(400, "invalid_record_operation", "记录操作、字段或值无效。")
@@ -84,8 +93,11 @@ def mutate(fields, records, operation):
         raise error
     by_id = {field["id"]: field for field in fields}
     values = operation["values"]
-    if (not isinstance(values, dict) or not values or not values.keys() <= by_id.keys()
-            or any(not valid_value(by_id[key], value) for key, value in values.items())):
+    if not isinstance(values, dict) or not values or not values.keys() <= by_id.keys():
+        raise error
+    values = {key: "" if value is None and not by_id[key]["required"] else value
+              for key, value in values.items()}
+    if any(not valid_value(by_id[key], value) for key, value in values.items()):
         raise error
     if action == "create":
         if any(field["required"] and field["id"] not in values for field in fields):

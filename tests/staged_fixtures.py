@@ -132,6 +132,9 @@ def revise(stage, requirement, prior, key, admit, record, *, base):
             selected = answers[-1]["answer"] if answers else requirement
             if selected in operations:
                 content = {"status":"proposed","operation":operations[selected]}
+        elif base["kind"] == "program" and requirement == "把按钮文案改为收藏，模拟补丁失配":
+            before = ">加入书单<" if base.get("repair_feedback") else ">missing<"
+            content = {"status":"proposed","edits":[{"part":"markup","before":before,"after":">收藏<"}]}
         elif base["kind"] == "program" and "不存在" not in requirement and "加入书单" in requirement:
             content = {"status":"proposed","edits":[{"part":"markup","before":">添加<","after":">加入书单<"}]}
         elif base["kind"] == "table" and requirement.startswith("增加一个"):

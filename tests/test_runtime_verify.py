@@ -8,7 +8,8 @@ from urllib.request import urlopen
 from unittest.mock import patch
 
 from accounts import ApiError
-from runtime_verify import _command, verify
+from runtime_verify import RuntimeVerificationError, _command, verify
+from staged_record_code import verification_entries
 
 
 def artifact(script):
@@ -88,6 +89,7 @@ class RuntimeVerifierTests(unittest.TestCase):
         verify(source, [], record_field=field, record_fields=[{**field, "required":False}])
         for broken in (
             source.replace(b'type="date"', b'type="text"'),
+            source.replace(b"rootRecords.create({field_1:", b"if (document.querySelector('input').value) rootRecords.create({field_1:"),
             source.replace(b"field_1: document.querySelector('input').value", b"other: '2026-01-17'"),
             source.replace(b"event.preventDefault();", b"event.preventDefault(); event.stopImmediatePropagation();")
                   .replace(b"rootRecords.create", b"setTimeout(() => rootRecords.create")
@@ -97,6 +99,34 @@ class RuntimeVerifierTests(unittest.TestCase):
             with self.subTest(source=broken), self.assertRaises(ApiError) as rejected:
                 verify(broken, [], record_field=field, record_fields=[{**field, "required":False}])
             self.assertEqual(getattr(rejected.exception, "diagnostic", None), "record_field_behavior")
+
+    def test_old_record_probe_catches_a_candidate_that_only_works_when_empty(self):
+        baseline = artifact("rootRecords.list();").replace(
+            b"<!doctype html>", b"<!doctype html><!--root:implementation=record-code-v1-->", 1,
+        )
+        candidate = baseline.replace(
+            b"rootRecords.list();",
+            b"rootRecords.list().then(rows => { if (rows.length) throw new Error('old rows'); });",
+        )
+        entries = verification_entries([{"id": "name", "type": "text", "required": True, "options": []}])
+        verify(candidate, [])
+        verify(baseline, entries)
+        with self.assertRaises(ApiError) as rejected:
+            verify(candidate, entries)
+        self.assertEqual(rejected.exception.diagnostic, "script_exception")
+
+    def test_candidate_cannot_hide_old_record_values_visible_in_baseline(self):
+        baseline = b"""<!doctype html><!--root:implementation=record-code-v1-->
+        <p id="value"></p><script>
+        rootRecords.list().then(rows => { document.getElementById('value').textContent = rows[0].book; });
+        </script>"""
+        entries = verification_entries([{"id":"book", "type":"text", "required":True}])
+        visible = verify(baseline, entries, record_visibility=[])
+        self.assertEqual(visible, ["验证记录"])
+        hidden = baseline.replace(b'<p id="value">', b'<p id="value" hidden>')
+        with self.assertRaises(RuntimeVerificationError) as rejected:
+            verify(hidden, entries, record_visibility=visible)
+        self.assertEqual(rejected.exception.diagnostic, "record_visibility")
 
     def test_record_field_probe_rejects_missing_required_value(self):
         source = b"""<!doctype html><!--root:implementation=record-code-v1-->

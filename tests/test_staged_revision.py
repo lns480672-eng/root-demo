@@ -48,6 +48,8 @@ class RevisionContextTests(unittest.TestCase):
         self.assertEqual(fields[:-1], spec["fields"])
         self.assertEqual(fields[-1], {"id": "field_1", "label": "阅读日期", "type": "date", "required": False, "options": []})
         self.assertIn("field_1", json.loads(proposed["implementation"])["script"])
+        markup_only = revision.plan_artifacts(encode({**plan, "edits": plan["edits"][:1]}), base)
+        self.assertEqual(json.loads(markup_only["implementation"])["script"], implementation["script"])
         entries = [["root-structured-records-v1", '[{"id":1,"book":"海边"}]']]
         changes = revision.describe(base, {"revision-plan.json": encode(plan)}, "", entries)
         self.assertIn("已有记录 1 条。", changes)
@@ -118,6 +120,13 @@ class RevisionContextTests(unittest.TestCase):
         ):
             with self.subTest(rejected=rejected), self.assertRaises(ApiError):
                 revision.apply_code_edits(source, rejected)
+
+    def test_patch_rejection_identifies_the_invalid_anchor(self):
+        source = {"markup": "<p>重复</p><p>重复</p>", "script": "void 0;"}
+        for before, reason in ((">找不到<", "before_not_found"), (">重复<", "before_ambiguous")):
+            with self.subTest(before=before), self.assertRaises(ApiError) as result:
+                revision.apply_code_edits(source, [{"part":"markup", "before":before, "after":">新<"}])
+            self.assertEqual(result.exception.patch_feedback, {"part":"markup", "edit":1, "reason":reason})
 
     def test_code_plan_preserves_dom_bindings_and_displays_full_edit(self):
         spec = {"kind": "program", "title": "分账计算", "goal": "平均分摊"}

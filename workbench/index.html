@@ -87,6 +87,10 @@
           <section id="table-panel" hidden></section>
           <p id="generation-balance" class="elys-config" role="status" hidden></p>
           <p id="generation-block" class="elys-error" role="status" hidden></p>
+          <section id="tool-revision-dialog" aria-label="工具修改对话" hidden>
+            <p id="tool-revision-status" class="auth-muted" role="status"></p>
+            <ol id="tool-revision-log" aria-label="修改消息"></ol>
+          </section>
           <form id="composer">
             <div id="generation-scope" hidden>
               <label for="generation-category">生成类别</label>
@@ -157,6 +161,12 @@
               <button id="staged-preview" type="button" hidden>检查预览</button>
               <button id="staged-sync" type="button" hidden>核对保存</button>
               <button id="staged-refresh" type="button" hidden>重新读取任务</button>
+              <button id="revision-repair" type="button" hidden>让 AI 修</button>
+              <button id="revision-supplement" type="button" hidden>补充要求</button>
+              <p id="revision-trial-note" class="auth-muted" hidden>正在试用修复结果，试填数据不会保存。</p>
+              <button id="revision-apply-repair" type="button" hidden>确认并应用</button>
+              <button id="revision-close-trial" type="button" hidden>返回当前版本</button>
+              <button id="revision-abandon" type="button" hidden>放弃这次修改</button>
             </div>
             <details id="staged-history">
               <summary>生成历史</summary>

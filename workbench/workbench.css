@@ -235,7 +235,8 @@ button:enabled { cursor: pointer; }
   border: 0;
   margin-block-start: 16px;
 }
-.preview-frames iframe:not([data-tool]) {
+.preview-frames iframe[hidden] { display: none; }
+.preview-frames iframe:not([data-tool], [data-repair-trial]) {
   position: absolute;
   inset: 0;
   visibility: hidden;
@@ -396,6 +397,33 @@ body:has(#auth:not([hidden])) { padding: 0; }
   font-weight: 650;
 }
 .elys-composer { grid-area: composer; }
+.elys-workspace:has(#tool-revision-dialog:not([hidden])) {
+  grid-template-columns: 158px minmax(0, 340px) minmax(0, 1fr);
+  gap: 12px;
+}
+#tool-revision-log {
+  list-style: none;
+  display: grid;
+  gap: 6px;
+  padding: 0;
+  max-height: 45vh;
+  overflow-y: auto;
+  overflow-wrap: anywhere;
+}
+#tool-revision-log > li {
+  padding: 8px;
+  border: 1px solid var(--elys-line);
+  border-radius: 8px;
+}
+#tool-revision-log p { margin: 0 0 4px; white-space: pre-wrap; }
+@media (max-width: 760px) {
+  .elys-workspace:has(#tool-revision-dialog:not([hidden])) {
+    grid-template-columns: 70px minmax(0, 1fr);
+    grid-template-areas: "sidebar composer" "sidebar content";
+  }
+  #tool-revision-log { max-height: min(240px, 32vh); }
+  #tool-revision-log button { min-height: 44px; }
+}
 .elys-workspace[data-mode="start"] .elys-composer {
   grid-area: content;
   width: min(100%, 660px);

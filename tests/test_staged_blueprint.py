@@ -130,6 +130,14 @@ class StageArtifactTests(unittest.TestCase):
             key: value for key, value in first.items() if key != "id"
         }}), [first, second, {**first, "id": 3}])
 
+    def test_record_null_values_normalize_only_for_optional_fields(self):
+        fields = [{"id":"date", "type":"date", "required":False},
+                  {"id":"name", "type":"text", "required":True}]
+        create = {"action":"create", "values":{"name":"书", "date":None}}
+        self.assertEqual(blueprint.staged_record_code.mutate(fields, [], create), [{"id":1, "name":"书", "date":""}])
+        with self.assertRaises(ApiError):
+            blueprint.staged_record_code.mutate(fields, [], {**create, "values":{"name":None}})
+
     def test_ledger_runs_only_the_requested_optional_modules(self):
         files = artifacts()
         spec = json.loads(files["spec.json"])

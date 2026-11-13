@@ -619,7 +619,7 @@ export async function verifyStagedCalculator(ctx) {
 }
 
 export async function verifyStagedRevision(ctx) {
-  const { cdp, evaluate, until, base, click, pointerClick, type, visible, appRequest, login, generate,
+  const { cdp, evaluate, until, base, click, type, visible, appRequest, login, generate,
     activeTool, accountA, evidence, screenshot, stored, anotherBrowser } = ctx;
   const change = '把页面文案「添加」改为「加入书单」';
   await cdp('Emulation.setDeviceMetricsOverride', {width:1360,height:980,deviceScaleFactor:1,mobile:false});
@@ -634,7 +634,7 @@ export async function verifyStagedRevision(ctx) {
   async function add(title, context = old.context) {
     await evaluate('document.querySelector("#book").value=""', context);
     await type('#book', title, context);
-    await pointerClick('#add', context);
+    await click('#add', context);
     await until(async () => JSON.stringify((await stored(old.id)).entries).includes(title))
       .catch(error => { throw new Error('旧工具添加后未保存：' + title, {cause:error}); });
   }
@@ -683,8 +683,56 @@ export async function verifyStagedRevision(ctx) {
   if (await visible('.elys-composer')) await click('#library-entry');
   assert.equal((await activeTool()).id, old.id);
   assert.equal(await currentVersion(), 2);
+  await click('#revise-tool');
+  await until(() => evaluate('document.querySelector("#tool-revision-log").textContent.includes("加入书单")'));
+  assert.match(await evaluate('document.querySelector("#tool-revision-log").textContent'), /已应用/);
+  assert.equal(await visible('#staged-history'), false);
+  if (process.env.ROOT_STAGED_LIVE !== '1') {
+    const failedChange = '把按钮文案改为收藏，模拟补丁失配';
+    await generate(failedChange);
+    const failed = await until(async () => {
+      const {body} = await appRequest(toolPath + '/revision-tasks');
+      return body.tasks.find(task => task.requirement === failedChange && task.state === 'failed');
+    });
+    await cdp('Page.reload');
+    await until(() => evaluate('document.documentElement.dataset.ready === "true"'));
+    if (await visible('.elys-composer')) await click('#library-entry');
+    assert.equal((await activeTool()).id, old.id);
+    await until(() => evaluate('!document.querySelector("#revise-tool").disabled'));
+    await click('#revise-tool');
+    await cdp('Emulation.setDeviceMetricsOverride', {width:390,height:844,deviceScaleFactor:1,mobile:true});
+    const action = '#tool-revision-log button[data-revision-task="' + failed.id + '"]';
+    await until(() => visible(action)).catch(error => {
+      throw new Error('重开后未显示失败消息操作：' + error.message);
+    });
+    await click(action);
+    await until(() => visible('#revision-abandon'));
+    await click('#revision-repair');
+    await until(() => visible('#revision-confirm'));
+    await click('#revision-confirm');
+    await until(() => visible('#revision-apply-repair'), 30000);
+    assert.equal(await currentVersion(), 2);
+    assert.equal((await trial()).used, before.used + 1);
+    const trialFrame = await activeTool('', '#preview iframe[data-repair-trial]');
+    const beforeTrial = (await stored(old.id)).entries;
+    await type('#book', '只在候选里试填', trialFrame.context);
+    await click('#add', trialFrame.context);
+    await until(() => evaluate('document.querySelector("#list").textContent.includes("只在候选里试填")', trialFrame.context));
+    assert.deepEqual((await stored(old.id)).entries, beforeTrial);
+    await screenshot('staged-repair-trial');
+    await click('#revision-apply-repair');
+    await until(async () => await currentVersion() === 3, 30000);
+    const repaired = await until(async () => {
+      const current = await activeTool();
+      return await evaluate('document.querySelector("#add").textContent', current.context) === '收藏' && current;
+    });
+    assert.match(await evaluate('document.querySelector("#list").textContent', repaired.context), /丙 修改后继续新增/);
+    assert.doesNotMatch(await evaluate('document.querySelector("#list").textContent', repaired.context), /只在候选里试填/);
+    await until(async () => (await trial()).used === before.used + 2);
+    evidence.tests.push({id:'TEST-007-REPAIR-03', failedConversationRestored:true, trialBeforeApply:true, applied:true});
+  }
   evidence.tests.push({id:'TEST-007-program-copy', sameTool:true, staleConfirmationRejected:true,
-    olderAndConcurrentRecordsPreserved:true, originalActionVerified:true, chargedOnce:true});
+    olderAndConcurrentRecordsPreserved:true, originalActionVerified:true, chargedOnce:true, conversationRestored:true});
   await screenshot('staged-revision-restored');
 }
 

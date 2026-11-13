@@ -198,10 +198,9 @@ try {
     storage: document.querySelector('#storage-warning')?.textContent,
   })`);
 
-  async function activeTool(previousId = '') {
-    const selector = '#preview iframe[data-tool]';
+  async function activeTool(previousId = '', selector = '#preview iframe[data-tool]') {
     return until(async () => {
-      const id = await evaluate(`document.querySelector('${selector}')?.checkVisibility() ? document.querySelector('${selector}').dataset.tool : null`);
+      const id = await evaluate(`document.querySelector('${selector}')?.checkVisibility() ? document.querySelector('${selector}').dataset.tool || 'trial' : null`);
       if (!id || id === previousId) {
         const error = await evaluate('document.querySelector("#error")?.textContent');
         if (error) throw new Error(error);

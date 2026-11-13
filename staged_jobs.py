@@ -18,7 +18,11 @@ import staged_record_code
 
 MAX_ATTEMPTS = 8
 MAX_CLARIFICATION_ROUNDS = 2
-RUNTIME_PROOF_VERSION = 6
+RUNTIME_PROOF_VERSION = 8
+REPAIRABLE_REVISION_FAILURES = {"invalid_staged_result", "revision_patch_invalid", "staged_runtime_failed"}
+REPAIRABLE_RUNTIME_ERRORS = frozenset({
+    "script_exception", "document_not_ready", "record_initialization", "record_field_behavior", "record_visibility", "website_tabs",
+})
 LEASE_SECONDS = 90
 RETAIN_SECONDS = 48 * 60 * 60
 ZERO = "0" * 40
@@ -76,6 +80,11 @@ class StagedJobs:
                     task TEXT NOT NULL REFERENCES staged_jobs(id), request_id TEXT NOT NULL,
                     question_id TEXT NOT NULL, question TEXT NOT NULL, answer TEXT NOT NULL, selection TEXT,
                     PRIMARY KEY (task, request_id), UNIQUE (task, question_id)
+                );
+                CREATE TABLE IF NOT EXISTS staged_revision_repairs (
+                    task TEXT NOT NULL REFERENCES staged_jobs(id), issue TEXT NOT NULL,
+                    request_id TEXT NOT NULL, reason TEXT NOT NULL, supplement TEXT NOT NULL,
+                    PRIMARY KEY (task, issue), UNIQUE (task, request_id)
                 );
                 CREATE TABLE IF NOT EXISTS staged_candidates (
                     task TEXT PRIMARY KEY REFERENCES staged_jobs(id), tool_id TEXT NOT NULL UNIQUE,
@@ -175,6 +184,14 @@ class StagedJobs:
             revision = self.revision_record(db, row["id"])
             if revision:
                 result.update(baseToolId=revision["tool_id"], baseVersion=revision["base_version"])
+                repairs = self.revision_repairs(db, row["id"])
+                if repairs:
+                    result["repairs"] = [{"issue": item["issue"], "reason": item["reason"],
+                                          "supplement": item["supplement"]} for item in repairs]
+                if state == "failed" and row["failure"] in REPAIRABLE_REVISION_FAILURES:
+                    attempts = db.execute("SELECT count(*) FROM staged_dispatches WHERE task=?", (row["id"],)).fetchone()[0]
+                    result["canSupplement"] = attempts < self.max_attempts
+                    result["canRepair"] = result["canSupplement"] and not any(not item["supplement"] for item in repairs)
             if state == "published":
                 result["toolId"] = revision["tool_id"] if revision else self.candidate_record(db, row["id"])["tool_id"]
         return result
@@ -196,6 +213,17 @@ class StagedJobs:
                 ORDER BY updated_at DESC, expires DESC LIMIT 30
             """, (owner, self.clock(), not history)).fetchall()
             return [self.view(row, db) for row in rows]
+
+    def list_tool_revisions(self, token, marker, identifier):
+        with self.store.connection() as db:
+            owner = self.store.session(db, token, marker)
+            self.store.owned_tool(db, owner, identifier)
+            rows = db.execute("""
+                SELECT job.* FROM staged_jobs job JOIN staged_revisions revision ON revision.task=job.id
+                WHERE job.owner=? AND revision.tool_id=?
+                ORDER BY job.rowid DESC LIMIT 30
+            """, (owner["id"], identifier)).fetchall()
+            return [self.view(row, db) for row in reversed(rows)]
 
     def create(self, token, marker, requirement, request_id, *, tool_id=None, version=None, category="auto"):
         if (not isinstance(request_id, str) or not IDENTIFIER.fullmatch(request_id)
@@ -241,17 +269,64 @@ class StagedJobs:
             row = self.revision_record(db, identifier)
             if not row:
                 return None
-            context = json.loads(row["context"])
-            answers = self.revision_answers(db, identifier)
-            if context["kind"] == "record_code" and answers and answers[-1]["selection"] == "field":
-                answer = answers[-1]
-                task = self.row(db, identifier)
-                question = json.loads(self.read(task, answer["question_id"], "revision-plan.json"))
-                context["selected_field"] = {"label": question["field"], "type": answer["answer"]}
-            if answers:
-                context["clarification"] = [{"question":item["question"], "answer":item["answer"],
-                                             "selection":item["selection"]} for item in answers]
+            task = self.row(db, identifier)
+            context = self.revision_plan_context(task, row, self.revision_answers(db, identifier))
+            repairs = self.revision_repairs(db, identifier)
+            if repairs:
+                context["repair_feedback"] = [{"reason": item["reason"], "supplement": item["supplement"]}
+                                              for item in repairs]
             return context
+
+    def revision_plan_context(self, task, revision, answers):
+        context = json.loads(revision["context"])
+        if context["kind"] == "record_code" and answers and answers[-1]["selection"] == "field":
+            answer = answers[-1]
+            question = json.loads(self.read(task, answer["question_id"], "revision-plan.json"))
+            context["selected_field"] = {"label": question["field"], "type": answer["answer"]}
+        if answers:
+            context["clarification"] = [{"question":item["question"], "answer":item["answer"],
+                                         "selection":item["selection"]} for item in answers]
+        return context
+
+    @staticmethod
+    def revision_repairs(db, identifier):
+        return db.execute("SELECT * FROM staged_revision_repairs WHERE task=? ORDER BY rowid",
+                          (identifier,)).fetchall()
+
+    def repair_revision(self, token, marker, identifier, data):
+        request_id, issue, supplement = data.get("requestId"), data.get("issue"), data.get("supplement", "")
+        if (not isinstance(request_id, str) or not IDENTIFIER.fullmatch(request_id)
+                or not isinstance(issue, str) or not re.fullmatch(r"[a-f0-9]{12}", issue)
+                or not isinstance(supplement, str) or len(supplement.strip()) > 400):
+            raise ApiError(400, "staged_input", "修复请求无效。")
+        supplement = supplement.strip()
+        with self.store.connection(write=True) as db:
+            row = self.owned(db, token, marker, identifier)
+            revision = self.revision_record(db, identifier)
+            repairs = self.revision_repairs(db, identifier)
+            previous = next((item for item in repairs if item["request_id"] == request_id), None)
+            if previous:
+                if (previous["issue"], previous["supplement"]) != (issue, supplement):
+                    raise ApiError(409, "staged_request_changed", "同一修复请求的内容不能变更。")
+                return
+            if (not revision or self.view(row)["state"] != "failed" or row["issue"] != issue
+                    or row["failure"] not in REPAIRABLE_REVISION_FAILURES):
+                raise ApiError(409, "revision_repair_unavailable", "这次修改已变化，请重新查看对话。")
+            if not supplement and any(not item["supplement"] for item in repairs):
+                raise ApiError(409, "revision_repair_unavailable", "本次 AI 修复机会已用完，可以补充要求。")
+            current = self.store.owned_tool(db, {"id": row["owner"]}, revision["tool_id"])
+            self.store.require_version(revision["base_version"], current["version"])
+            self.check_table_schema(revision, current)
+            attempts = db.execute("SELECT count(*) FROM staged_dispatches WHERE task=?", (identifier,)).fetchone()[0]
+            if attempts >= self.max_attempts:
+                raise ApiError(429, "staged_exhausted", "此任务已达到模型调用上限。")
+            self.budget.require_dispatch_enabled(db)
+            db.execute("INSERT INTO staged_revision_repairs VALUES (?,?,?,?,?)",
+                       (identifier, issue, request_id, row["failure"], supplement))
+            db.execute("DELETE FROM staged_candidates WHERE task=?", (identifier,))
+            db.execute("""UPDATE staged_jobs SET state='queued',next_stage=0,plan=?,fence=fence+1,
+                          lease_until=0,issue=NULL,failure=NULL,updated_at=? WHERE id=?""",
+                       (json.dumps(["revision-plan"]), self.clock(), identifier))
 
     @staticmethod
     def revision_answers(db, identifier):
@@ -514,6 +589,7 @@ class StagedJobs:
             if stage == "revision-plan":
                 answers = self.revision_answers(db, row["id"])
                 selected = next((answer["answer"] for answer in answers if answer["selection"] == "operation"), None)
+                context = self.revision_plan_context(row, revision, answers)
                 self.revision.check_plan(content, context, selected or row["requirement"],
                                          operation_selected=selected is not None)
             elif "revision-plan.json" in prior:
@@ -616,7 +692,7 @@ class StagedJobs:
             if not answers or answers[-1]["selection"] != "field":
                 return None
             revision = self.revision_record(db, row["id"])
-            if json.loads(revision["context"])["kind"] == "record_code":
+            if json.loads(revision["context"])["kind"] == "record_code" or self.revision_repairs(db, row["id"]):
                 return None
             answer = answers[-1]
             question = json.loads(self.read(row, answer["question_id"], "revision-plan.json"))
@@ -625,38 +701,44 @@ class StagedJobs:
                 "kind":"add_field", "label":field, "type":answer["answer"],
             }})
 
-    def generate_stage(self, identifier, fence, index, stage, row, prior, provider):
+    def generate_stage(self, identifier, fence, index, stage, row, prior, provider, revision_provider):
         retryable = (
             stage == "implementation"
             and self.steps(row)[0] == "spec"
             and staged_record_code.matches(self.blueprint.read_artifact(prior["spec.json"]))
         )
-        context = self.revision_context(identifier) if stage == "revision-plan" else None
-        patch_retry = bool(context and context.get("selected_field"))
+        patch_retry = stage == "revision-plan" and revision_provider is not None
+        patch_feedback = None
         for attempt in range(2 if retryable or patch_retry else 1):
             dispatch_id = uuid.uuid4().hex
             recoverable = False
+            validation = None
 
             def record(receipt):
-                nonlocal recoverable
+                nonlocal recoverable, validation
+                validation = receipt.get("validation")
                 recoverable = receipt.get("dispatched") is True and (
                     (retryable and receipt.get("validation") == "invalid_model_json"
                      and receipt.get("status") == "invalid_staged_result")
                     or (patch_retry and (receipt.get("status") == "revision_patch_invalid"
                         or (receipt.get("status") == "invalid_staged_result"
-                            and receipt.get("validation") in ("bad_revision_operation", "bad_revision_plan"))))
+                            and receipt.get("validation") in ("bad_revision_operation", "bad_revision_plan", "invalid_model_json"))))
                 )
                 if self.record is not None:
                     self.record(identifier, dispatch_id, receipt)
 
             try:
-                return provider(stage, row["requirement"], prior,
-                                lambda: self.dispatch(identifier, fence, index, dispatch_id), record)
-            except ApiError:
+                admit = lambda: self.dispatch(identifier, fence, index, dispatch_id)
+                if patch_feedback:
+                    return revision_provider(stage, row["requirement"], prior, admit, record, patch_feedback)
+                return provider(stage, row["requirement"], prior, admit, record)
+            except ApiError as error:
                 if attempt != 0 or not recoverable:
                     raise
+                if patch_retry:
+                    patch_feedback = getattr(error, "patch_feedback", {"reason": validation or error.code})
 
-    def run(self, identifier, fence, provider):
+    def run(self, identifier, fence, provider, revision_provider=None):
         index = 0
         try:
             with self.store.connection() as db:
@@ -671,7 +753,7 @@ class StagedJobs:
                 elif stage == "revision-plan" and (selected := self.selected_field_plan(row)):
                     content = selected
                 else:
-                    content = self.generate_stage(identifier, fence, index, stage, row, prior, provider)
+                    content = self.generate_stage(identifier, fence, index, stage, row, prior, provider, revision_provider)
                 self.checkpoint(identifier, fence, index, stage, content, prior)
                 if stage == "assemble" or (stage == "revision-plan" and json.loads(content)["status"] != "proposed"):
                     return
@@ -773,13 +855,19 @@ class StagedJobs:
         with self.store.connection(write=True) as db:
             row = self.owned(db, token, marker, identifier)
             candidate = self.candidate_record(db, identifier)
-            if (self.revision_record(db, identifier) and self.view(row)["state"] == "clarifying"
-                    and nonce == row["head"]):
+            revision = self.revision_record(db, identifier)
+            state = self.view(row)["state"]
+            if revision and row["issue"] and nonce == row["issue"] and state in ("failed", "cancelled"):
+                if state == "failed":
+                    db.execute("DELETE FROM staged_candidates WHERE task=?", (identifier,))
+                    db.execute("UPDATE staged_jobs SET state='cancelled',updated_at=? WHERE id=?",
+                               (self.clock(), identifier))
+                return self.view(self.row(db, identifier), db)
+            if revision and state == "clarifying" and nonce == row["head"]:
                 db.execute("UPDATE staged_jobs SET state='cancelled',updated_at=? WHERE id=?",
                            (self.clock(), identifier))
                 return self.view(self.row(db, identifier), db)
-            if (not self.revision_record(db, identifier) or candidate is None or candidate["nonce"] != nonce
-                    or self.view(row)["state"] != "complete"):
+            if not revision or candidate is None or candidate["nonce"] != nonce or state != "complete":
                 raise ApiError(409, "revision_cannot_cancel", "此修改方案已变化或无法取消。")
             db.execute("UPDATE staged_candidates SET nonce=?,runtime_proof=NULL,confirmation=NULL WHERE task=?",
                        (uuid.uuid4().hex, identifier))
@@ -851,7 +939,7 @@ class StagedJobs:
             raise ApiError(409, "staged_not_ready", "此任务尚未生成可发布的候选。")
         return row, candidate, revision, result_id
 
-    def publication_snapshot(self, db, row, revision, result_id, data, identity):
+    def publication_snapshot(self, db, row, revision, result_id, data, identity, *, verifying=False):
         current = None
         if revision:
             current = self.store.owned_tool(db, {"id":row["owner"]}, result_id)
@@ -861,7 +949,8 @@ class StagedJobs:
                 raise ApiError(409, "revision_conflict", "已有更新的数据，请重新查看并确认修改方案。")
             candidate = self.candidate_record(db, row["id"])
             confirmation = data.get("confirmation")
-            if (not confirmation or candidate["confirmation"] != confirmation
+            trial = verifying and bool(self.revision_repairs(db, row["id"]))
+            if (not confirmation or (not trial and candidate["confirmation"] != confirmation)
                     or confirmation != self.revision_plan(row, revision, current, candidate)["confirmation"]):
                 raise ApiError(409, "revision_confirmation_required", "请先确认当前工具的修改方案。")
         limit = TABLE_STORAGE_BYTES if current and current["table_tool"] else TOOL_STORAGE_BYTES
@@ -882,7 +971,7 @@ class StagedJobs:
             row, candidate, revision, result_id = self.publication_binding(db, token, marker, identifier, identity, data)
             if row["state"] == "published":
                 return
-            _, limit, proof = self.publication_snapshot(db, row, revision, result_id, data, identity)
+            current, limit, proof = self.publication_snapshot(db, row, revision, result_id, data, identity, verifying=True)
             if candidate["runtime_proof"] == proof:
                 return
         if self.runtime_verifier is None:
@@ -898,6 +987,18 @@ class StagedJobs:
             verifier_options = {"website": spec.get("kind") == "website"}
             if revision and staged_record_code.matches(spec):
                 original = json.loads(revision["context"])["source"]["spec"]["fields"]
+                verifier_entries = staged_record_code.verification_entries(original)
+                try:
+                    baseline = (self.runs / current["run_id"] / "app.html").read_bytes()
+                    if digest(baseline) != revision["source_digest"]:
+                        raise OSError("revision baseline mismatch")
+                    visible = self.runtime_verifier(baseline, verifier_entries, backup=False, storage_limit=limit,
+                                                    website=False, record_visibility=[])
+                    verifier_options["record_visibility"] = visible
+                except OSError:
+                    raise ApiError(503, "staged_artifact_invalid", "当前工具的基准版本暂时无法校验。") from None
+                except RuntimeVerificationError:
+                    raise ApiError(422, "revision_baseline_failed", "当前版本未通过旧记录检查，无法比较此次修改。") from None
                 if len(spec["fields"]) == len(original) + 1:
                     field = spec["fields"][-1]
                     verifier_options["record_field"] = {name: field[name] for name in ("id", "type")}
@@ -911,7 +1012,8 @@ class StagedJobs:
                 (spec.get("kind") == "website" and error.diagnostic == "website_tabs")
                 or (staged_record_code.matches(spec) and error.diagnostic == "record_initialization")
             )
-            if revision is None and permanent_failure and not data["entries"]:
+            if ((revision is None and permanent_failure and not data["entries"])
+                    or (revision and error.diagnostic in REPAIRABLE_RUNTIME_ERRORS)):
                 with self.store.connection(write=True) as db:
                     db.execute("""
                         UPDATE staged_jobs SET state='failed',failure=?,issue=?,updated_at=?
@@ -927,7 +1029,7 @@ class StagedJobs:
             row, _, revision, result_id = self.publication_binding(db, token, marker, identifier, identity, data)
             if row["state"] == "published":
                 return
-            _, _, proof = self.publication_snapshot(db, row, revision, result_id, data, identity)
+            _, _, proof = self.publication_snapshot(db, row, revision, result_id, data, identity, verifying=True)
             db.execute("UPDATE staged_candidates SET runtime_proof=? WHERE task=?", (proof, identifier))
 
     def publish(self, token, marker, identifier, data):

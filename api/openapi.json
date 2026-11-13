@@ -495,6 +495,31 @@
         ]
       }
     },
+    "/api/tools/{toolId}/revision-tasks": {
+      "get": {
+        "operationId": "listToolRevisionTasks",
+        "tags": ["工具"],
+        "summary": "恢复同一工具的修改对话",
+        "description": "按提交顺序返回最近 30 个修改任务及其状态和已保存的澄清问答，包含已应用和已放弃的任务。仅工具所属账号可读取。",
+        "parameters": [
+          {"$ref": "#/components/parameters/ToolId"}
+        ],
+        "responses": {
+          "200": {
+            "description": "该工具的修改任务",
+            "content": {
+              "application/json": {
+                "schema": {"$ref": "#/components/schemas/StagedTaskList"}
+              }
+            }
+          },
+          "401": {"$ref": "#/components/responses/Http401"},
+          "404": {"$ref": "#/components/responses/Http404"},
+          "403": {"$ref": "#/components/responses/Http403"},
+          "default": {"$ref": "#/components/responses/UnexpectedError"}
+        }
+      }
+    },
     "/api/tools/{toolId}/open": {
       "post": {
         "operationId": "markToolOpened",
@@ -1949,6 +1974,48 @@
         ]
       }
     },
+    "/api/staged/{taskId}/repair-revision": {
+      "post": {
+        "operationId": "repairGenerationRevision",
+        "tags": ["生成任务"],
+        "summary": "在原修改任务中发起修复或提交补充",
+        "description": "绑定当前失败编号和原工具版本。相同请求编号重放只受理一次。省略补充表示让 AI 修复。通过运行检查和用户确认后才允许发布新候选。",
+        "parameters": [
+          {"$ref": "#/components/parameters/TaskId"}
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["issue", "requestId"],
+                "properties": {
+                  "issue": {"type": "string", "pattern": "^[a-f0-9]{12}$"},
+                  "requestId": {"type": "string", "pattern": "^[a-f0-9]{32}$"},
+                  "supplement": {"type": "string", "maxLength": 400}
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "已受理或读回原请求",
+            "content": {
+              "application/json": {"schema": {"$ref": "#/components/schemas/StagedTaskEnvelope"}}
+            }
+          },
+          "400": {"$ref": "#/components/responses/Http400"},
+          "401": {"$ref": "#/components/responses/Http401"},
+          "403": {"$ref": "#/components/responses/Http403"},
+          "404": {"$ref": "#/components/responses/Http404"},
+          "409": {"$ref": "#/components/responses/Http409"},
+          "429": {"$ref": "#/components/responses/Http429"},
+          "503": {"$ref": "#/components/responses/Http503"}
+        }
+      }
+    },
     "/api/staged/{taskId}/cancel-revision": {
       "post": {
         "operationId": "cancelGenerationRevision",
@@ -1956,7 +2023,7 @@
           "生成任务"
         ],
         "summary": "撤销待确认的修改方案",
-        "description": "使用当前候选的 nonce 撤销修订方案。成功后保留原工具、记录和个人次数，同一候选无法再发布。",
+        "description": "使用当前候选的 nonce 撤销修订方案，也可用失败修改任务的 issue 放弃该任务。成功后保留原工具、记录和个人次数，该任务无法再继续或发布。",
         "responses": {
           "200": {
             "description": "已撤销修改方案",
@@ -2005,7 +2072,7 @@
                 "properties": {
                   "nonce": {
                     "type": "string",
-                    "pattern": "^[a-f0-9]{32}$"
+                    "pattern": "^(?:[a-f0-9]{32}|[a-f0-9]{12}|[a-f0-9]{40})$"
                   }
                 }
               }
@@ -2115,7 +2182,7 @@
           "生成任务"
         ],
         "summary": "验证候选的实际隔离运行",
-        "description": "服务端独立启动隔离预览。官网已声明的可见标签页会核对切换及对应面板。成功后内部记录账号、任务、候选、nonce 和数据快照的绑定。失败不发布也不计个人成功。 修订需要提供用户已确认的 confirmation。新生成网站的标签行为被确认无效时，该任务进入历史并保留原需求，可重新生成。验证服务暂时不可用时可重查原候选。",
+        "description": "服务端独立启动隔离预览。官网已声明的可见标签页会核对切换及对应面板。生成记录工具的修改使用同一份合成旧记录验证原版和候选的启动。成功后绑定账号、任务、候选、nonce 和数据快照。修订须提供当前候选的 confirmation。普通候选先确认，修复候选可以先检查和试用，发布仍须确认。确定的候选运行错误会将修改任务移入失败历史。验证服务暂时不可用时可重查原候选。失败不发布也不计个人成功。",
         "responses": {
           "200": {
             "description": "实际运行检查通过",
@@ -4273,6 +4340,20 @@
       "StagedTask": {
         "type": "object",
         "properties": {
+          "canRepair": {"type": "boolean"},
+          "canSupplement": {"type": "boolean"},
+          "repairs": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["issue", "reason", "supplement"],
+              "properties": {
+                "issue": {"type": "string"},
+                "reason": {"type": "string"},
+                "supplement": {"type": "string"}
+              }
+            }
+          },
           "id": {
             "type": "string",
             "pattern": "^[a-f0-9]{32}$"

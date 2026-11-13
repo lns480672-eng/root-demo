@@ -30,6 +30,7 @@ import assistant_model
 import generate
 from runtime_verify import RuntimeVerificationError
 import staged_blueprint
+import staged_record_code
 import staged_revision
 from staged_jobs import StagedJobs
 import workbench
@@ -202,8 +203,11 @@ def revise(stage, requirement, prior, key, admit, record, *, base):
                     assert selected_field == {"label":"阅读时间", "type":"date"}
                 plan["operation"] = {"kind":"add_field", "label":"阅读日期", "type":"date", "required":False}
                 if selected_field:
-                    plan["operation"].update(selected_field)
+                    del plan["operation"]
                 anchor = "</main>"
+                if selected_field and requirement in failed:
+                    assert request["revision_source"]["patch_feedback"] == {
+                        "part":"markup", "edit":1, "reason":"before_not_found"}
                 if selected_field and requirement not in failed:
                     failed.add(requirement)
                     anchor = "</missing>"
@@ -249,6 +253,10 @@ def revise(stage, requirement, prior, key, admit, record, *, base):
             targets = request["revision_source"]["text_targets"]
             selected = next(target for target in targets if target["path"] == "main > h1")
             plan["text_edit"] = {"target":selected["id"], "text":"新的课程标题"}
+        elif base.get("repair_feedback") and requirement == "把结果文案改为两数之和":
+            assert request["revision_source"]["repair_feedback"] == [
+                {"reason":"staged_runtime_failed", "supplement":"文案用合计"}]
+            plan["edits"] = [{"part":"markup","before":">相加<","after":">合计<"}]
         elif "只显示一位小数" in requirement:
             plan["edits"] = [{"part":"script","before":".toFixed(2)","after":".toFixed(1)"}]
         elif "垂直居中" in requirement:
@@ -271,9 +279,15 @@ def revise(stage, requirement, prior, key, admit, record, *, base):
     with patch.object(assistant_model, "_exchange", exchange):
         return staged_revision.provide(stage, requirement, prior, key, admit, record, base=base)
 
-def verify_runtime(html, entries, *, backup, storage_limit, website, record_field=None, record_fields=None):
+def verify_runtime(html, entries, *, backup, storage_limit, website, record_field=None, record_fields=None, record_visibility=None):
     if record_field is not None:
         assert record_field == {"id":"field_1", "type":"date"}
+        rows = json.loads(dict(entries)[staged_record_code.STORAGE_KEY])
+        assert len(rows) == 1 and set(rows[0]) == {"id", "name", "count", "status"}
+        assert rows[0]["name"] != "读书"
+        assert json.loads((runs / "record-baseline-verified").read_text()) == entries
+    elif entries and b"<!--root:implementation=record-code-v1-->" in html:
+        (runs / "record-baseline-verified").write_text(json.dumps(entries))
     if b"invalid-record-init-fixture" in html:
         raise RuntimeVerificationError("record_initialization")
     if website and b"invalid-website-tabs-fixture" in html:
@@ -298,6 +312,13 @@ def verify_runtime(html, entries, *, backup, storage_limit, website, record_fiel
         deadline = time.monotonic() + 4
         while not (runs / (gate + "-go")).exists() and time.monotonic() < deadline:
             time.sleep(.01)
+    if gate == "revision-repair-probe" and "两数之和".encode() in html:
+        attempted = runs / "revision-repair-verifier-attempted"
+        if not attempted.exists():
+            attempted.touch()
+            raise ApiError(503, "staged_verifier_unavailable", "固定替身模拟检查暂不可用")
+        raise RuntimeVerificationError("script_exception")
+    return record_visibility
 
 workbench.serve("fixture-key", 0, runs, staged_enabled=True, staged_provider=stages,
                 staged_revision_provider=revise, staged_runtime_verifier=verify_runtime,
@@ -440,6 +461,84 @@ class StagedReconnectHTTP(StagedHTTPFixture):
 
 
 class StagedHTTP(StagedHTTPFixture):
+    def test_failed_revision_can_be_abandoned_without_changing_tool(self):
+        owner = self.account("revision-abandon-owner")
+        task = self.gen(owner, "计算两个数字")[1]["task"]["id"]
+        self.wait_task(owner, task, "complete")
+        path = "/api/staged/" + task
+        candidate = self.request(path + "/candidate", {}, owner)[1]
+        entries = [["result", "revision-repair-probe"]]
+        proof = {**candidate["staged"], "toolId":candidate["id"], "entries":entries}
+        self.assert_preview_verified(path, proof, owner)
+        status, original, _ = self.request(path + "/publish", proof, owner)
+        self.assertEqual(status, 200)
+        tool = "/api/tools/" + original["id"]
+        original = self.request(tool, auth=owner)[1]
+        result = self.request(tool + "/revise", {
+            "version":1, "requirement":"把结果文案改为两数之和", "requestId":uuid4().hex,
+        }, owner)
+        self.assertEqual(result[0], 202)
+        task = result[1]["task"]["id"]
+        self.wait_task(owner, task, "complete")
+        path = "/api/staged/" + task
+        candidate = self.request(path + "/candidate", {}, owner)[1]
+        proof = {**candidate["staged"], "toolId":candidate["id"], "runId":candidate["runId"],
+                 "revision":candidate["revision"], "entries":entries,
+                 "confirmation":candidate["revisionPlan"]["confirmation"]}
+        self.confirm_revision(path, proof, owner)
+        self.assertEqual(self.request(path + "/verify-preview", proof, owner)[0], 503)
+        self.assertEqual(self.request(path, auth=owner)[1]["task"]["state"], "complete")
+        self.assertEqual(self.request(path + "/verify-preview", proof, owner)[0], 422)
+        failed = self.request(path, auth=owner)[1]["task"]
+        self.assertEqual((failed["state"], failed["reason"], failed["resumable"]),
+                         ("failed", "staged_runtime_failed", False))
+        history = self.request("/api/staged/history", auth=owner)[1]["tasks"]
+        self.assertIn(failed, history)
+        self.assertEqual(self.request(path + "/cancel-revision", {"nonce":"wrong"}, owner)[0], 409)
+        abandoned = self.request(path + "/cancel-revision", {"nonce":failed["issue"]}, owner)
+        self.assertEqual((abandoned[0], abandoned[1]["task"]["state"]), (200, "cancelled"))
+        self.assertEqual(self.request(path + "/cancel-revision", {"nonce":failed["issue"]}, owner)[:2], abandoned[:2])
+        self.assertEqual(self.request(path + "/resume", {}, owner)[0], 409)
+        self.assertEqual(self.request(path + "/publish", proof, owner)[0], 409)
+        self.assertEqual(self.request(tool, auth=owner)[1], original)
+        self.assertEqual(self.request("/api/trial", auth=owner)[1]["generation"]["used"], 1)
+        status, conversation, _ = self.request(tool + "/revision-tasks", auth=owner)
+        self.assertEqual(status, 200)
+        self.assertEqual([(item["id"], item["state"]) for item in conversation["tasks"]], [(task, "cancelled")])
+        self.assertEqual(self.request(tool + "/revision-tasks", auth=self.account("revision-abandon-outsider"))[0], 404)
+        task = self.request(tool + "/revise", {
+            "version":1, "requirement":"把结果文案改为两数之和", "requestId":uuid4().hex,
+        }, owner)[1]["task"]["id"]
+        self.wait_task(owner, task, "complete")
+        path = "/api/staged/" + task
+        candidate = self.request(path + "/candidate", {}, owner)[1]
+        proof = {**candidate["staged"], "toolId":candidate["id"], "runId":candidate["runId"],
+                 "revision":candidate["revision"], "entries":entries,
+                 "confirmation":candidate["revisionPlan"]["confirmation"]}
+        self.confirm_revision(path, proof, owner)
+        self.assertEqual(self.request(path + "/verify-preview", proof, owner)[0], 422)
+        failed = self.request(path, auth=owner)[1]["task"]
+        repair = {"requestId":uuid4().hex, "issue":failed["issue"], "supplement":"文案用合计"}
+        self.assertEqual(self.request(path + "/repair-revision", repair, owner)[0], 202)
+        self.assertEqual(self.request(path + "/repair-revision", repair, owner)[0], 202)
+        self.wait_task(owner, task, "complete")
+        repaired = self.request(path + "/candidate", {}, owner)[1]
+        self.assertIn("合计", repaired["html"])
+        self.assertNotEqual(repaired["staged"]["nonce"], candidate["staged"]["nonce"])
+        self.assertEqual(self.request(path + "/publish", proof, owner)[0], 409)
+        fresh_proof = {**repaired["staged"], "toolId":repaired["id"], "runId":repaired["runId"],
+                       "revision":repaired["revision"], "entries":entries,
+                       "confirmation":repaired["revisionPlan"]["confirmation"]}
+        self.assert_preview_verified(path, fresh_proof, owner)
+        self.assertEqual(self.request(path + "/publish", fresh_proof, owner)[1]["code"],
+                         "revision_confirmation_required")
+        self.confirm_revision(path, fresh_proof, owner)
+        self.assertEqual(self.request(path + "/publish", fresh_proof, owner)[0], 200)
+        self.assertEqual(self.request(tool, auth=owner)[1]["entries"], entries)
+        with self.store.connection() as db:
+            self.assertEqual(db.execute("SELECT count(*) FROM staged_dispatches WHERE task=?", (task,)).fetchone()[0], 2)
+
+
     def test_record_generation_retries_one_invalid_model_result_with_separate_dispatch(self):
         owner = self.account("record-generation-retry")
         before = self.request("/api/trial", auth=owner)[1]["generation"]["totalUsed"]

@@ -9,7 +9,7 @@ const chromePath = process.argv[2];
 const profile = process.argv[3];
 const input = [];
 for await (const part of process.stdin) input.push(part);
-const { html, entries, backup, limit, website, recordField } = JSON.parse(Buffer.concat(input).toString());
+const { html, entries, backup, limit, website, recordField, recordVisibility } = JSON.parse(Buffer.concat(input).toString());
 const dateDay = String(10 + Number.parseInt(randomUUID().slice(0, 2), 16) % 18);
 const recordSample = recordField?.type === 'date' ? '2026-01-' + dateDay :
   recordField?.type === 'integer' ? Number(dateDay) : randomUUID();
@@ -338,8 +338,10 @@ async function run() {
           const action = data.operation?.action;
           const field = ${JSON.stringify(recordField ?? null)};
           const sample = ${JSON.stringify(recordSample)};
-          const matched = field && document.documentElement.dataset.recordCheck === 'active' && action === 'create' &&
-            data.operation.values?.[field.id] === sample;
+          const check = document.documentElement.dataset.recordCheck;
+          const value = data.operation.values?.[field?.id];
+          const matched = field && action === 'create' &&
+            ((check === 'filled' && value === sample) || (check === 'blank' && (value == null || value === '')));
           const error = action === 'list' || matched ? undefined : '候选验证期间不能写入记录。';
           if (matched) {
             document.documentElement.dataset.recordCheck = 'passed';
@@ -373,7 +375,13 @@ async function run() {
     } while (Date.now() < deadline);
     if (failure || proof !== 'read') return 'failed:' + (failure || 'record_initialization');
   }
-  if (recordField) {
+  const visible = recordVisibility === null || recordVisibility === undefined ? [] : await evaluate(`(() => {
+    const rows = JSON.parse(${JSON.stringify(new Map(entries).get('root-structured-records-v1') || '[]')});
+    return [...new Set(rows.flatMap(({id, ...values}) => Object.values(values).map(String)))]
+      .filter(value => value && document.body.innerText.includes(value));
+  })()`, observer.executionContextId, sessionId);
+  const submissions = [];
+  if (recordField) for (const check of ['filled', 'blank']) {
     const prepared = await evaluate(`(() => {
       const field = document.getElementById(${JSON.stringify(recordField.id)});
       const kind = ${JSON.stringify(recordField.type)};
@@ -389,7 +397,8 @@ async function run() {
         }
         input.dispatchEvent(new Event('input', {bubbles: true}));
       }
-      field.value = ${JSON.stringify(String(recordSample))};
+      field.value = ${JSON.stringify(check === 'filled' ? String(recordSample) : '')};
+      globalThis.rootVerifiedSubmit = false;
       field.form.addEventListener('submit', event => {
         if (event.isTrusted) globalThis.rootVerifiedSubmit = true;
       }, {capture:true, once:true});
@@ -401,7 +410,7 @@ async function run() {
       return box.width && box.height ? {x:box.x + box.width / 2, y:box.y + box.height / 2} : null;
     })()`, observer.executionContextId, sessionId);
     if (!prepared) return 'failed:record_field_behavior';
-    await evaluate("document.documentElement.dataset.recordCheck = 'active'", executionContextId);
+    await evaluate(`document.documentElement.dataset.recordCheck = "${check}"`, executionContextId);
     const offset = await evaluate(`(() => {
       const iframe = document.querySelector('iframe');
       const box = iframe.getBoundingClientRect();
@@ -422,8 +431,9 @@ async function run() {
     })()`, executionContextId);
     const submitted = await evaluate("globalThis.rootVerifiedSubmit === true", observer.executionContextId, sessionId);
     if (failure || !observed || !submitted) return 'failed:' + (failure || 'record_field_behavior');
-    return 'record:' + observed;
+    submissions.push(JSON.parse(observed));
   }
+  if (recordField || Array.isArray(recordVisibility)) return 'record:' + JSON.stringify({visible, submissions});
   if (website && !await evaluate(
     '(' + verifyWebsiteTabs.toString() + ')()', observer.executionContextId, sessionId,
   )) return 'failed:' + (failure || 'website_tabs');

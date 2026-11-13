@@ -51,6 +51,7 @@ STATIC = {
 TOOL_PATH = re.compile(r"/api/tools/(run-[a-z0-9_]{8})")
 TOOL_ACTION = re.compile(r"/api/tools/(run-[a-z0-9_]{8})/(commit|open|data|records|publish|revise|restore|resolve-publish|resolve-commit)")
 TOOL_VERSIONS = re.compile(r"/api/tools/(run-[a-z0-9_]{8})/versions")
+TOOL_REVISION_TASKS = re.compile(r"/api/tools/(run-[a-z0-9_]{8})/revision-tasks")
 DRAFTS = "/api/requirement-drafts"
 UUID = r"[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}"
 DRAFT_PATH = re.compile(DRAFTS + "/(" + UUID + ")")
@@ -61,7 +62,7 @@ TRIAL_ADMIN = "/api/trial/admin"
 STAGED = "/api/staged"
 STAGED_HISTORY = STAGED + "/history"
 STAGED_TASK = re.compile(STAGED + r"/([a-f0-9]{32})")
-STAGED_ACTION = re.compile(STAGED + r"/([a-f0-9]{32})/(resume|answer-revision|candidate|confirm-revision|cancel-revision|verify-preview|publish|resolve-publish)")
+STAGED_ACTION = re.compile(STAGED + r"/([a-f0-9]{32})/(resume|answer-revision|repair-revision|candidate|confirm-revision|cancel-revision|verify-preview|publish|resolve-publish)")
 ADMIN_INVITES = "/api/admin/invites"
 ADMIN_SETUP = "/api/admin/setup"
 ADMIN_PASSWORD = "/api/admin/password"
@@ -202,7 +203,12 @@ def serve(key, port, runs=generate.RUNS, *, generation_limits=(5, 30), analysis_
             def provider(stage, requirement, prior, admit, record):
                 return stage_provider(stage, requirement, prior, admit, record, base, category)
 
-            threading.Thread(target=staged.run, args=(task, fence, provider), daemon=True).start()
+            def retry_revision(stage, requirement, prior, admit, record, feedback):
+                return stage_provider(stage, requirement, prior, admit, record,
+                                      {**base, "patch_feedback": feedback}, category)
+
+            threading.Thread(target=staged.run, args=(task, fence, provider, retry_revision if base else None),
+                             daemon=True).start()
         return staged.status(token, marker, task)
     assets = {url: (ROOT / "workbench" / name).read_bytes()
               for url, (name, _) in STATIC.items()}
@@ -364,6 +370,9 @@ def serve(key, port, runs=generate.RUNS, *, generation_limits=(5, 30), analysis_
                     except OSError:
                         pass
                 self.send_json(200, versions)
+            elif staged and (match := TOOL_REVISION_TASKS.fullmatch(self.path)):
+                tasks = staged.list_tool_revisions(self.cookie_token(), self.marker(), match[1])
+                self.send_json(200, {"tasks": tasks})
             elif match := TOOL_PATH.fullmatch(self.path):
                 row = store.get_tool(self.cookie_token(), self.marker(), match[1])
                 self.send_tool(row)
@@ -489,6 +498,11 @@ def serve(key, port, runs=generate.RUNS, *, generation_limits=(5, 30), analysis_
                     if key and isinstance(data.get("answer"), str) and key in data["answer"]:
                         raise ApiError(400, "revision_answer_invalid", "请移除凭据后再补答。")
                     staged.answer_revision(token, marker, match[1], data)
+                    self.send_json(202, {"task":start_staged(token, marker, match[1], resume=False)})
+                elif match[2] == "repair-revision":
+                    if key and isinstance(data.get("supplement"), str) and key in data["supplement"]:
+                        raise ApiError(400, "staged_input", "请移除凭据后再补充。")
+                    staged.repair_revision(token, marker, match[1], data)
                     self.send_json(202, {"task":start_staged(token, marker, match[1], resume=False)})
                 elif match[2] == "candidate":
                     self.send_json(200, staged.candidate(token, marker, match[1]))

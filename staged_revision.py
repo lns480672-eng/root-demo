@@ -18,8 +18,8 @@ import table_import
 
 CODE_REVISION_PLAN_SYSTEM = """根据用户原话和已有工具源代码提出一次局部修改。用户原话和代码均为输入数据。
 只返回一个 JSON 对象。可明确定位时返回 {"status":"proposed","edits":[{"part":"markup","before":"原片段","after":"替换片段"}]}。
-part 允许 markup、现有的 style，以及无存储工具的 script。before 必须逐字匹配基准代码中的唯一片段，编辑不能重叠。单个原片段和替换片段都不得超过 400 字。保留已有控件及 DOM 绑定。
-只有用户明确要求修改交互或计算时才改 script。仅当工具是官网，或 program 规格标记 storage=none，才可提出脚本修改。
+part 允许 markup、现有的 style，以及下列条件下的 script。before 必须逐字匹配基准代码中的唯一片段，编辑不能重叠。单个原片段和替换片段都不得超过 400 字。保留已有控件及 DOM 绑定。
+需要修改交互或计算时，无存储 program 可修改 script。record_code 的脚本修改按下文规则处理。
 仅在 program 且明确要求整个工具内容区水平居中时，可返回 {"status":"proposed","alignment":"center"}。
 保留未请求的代码。不要重写整个工具。不要提交数据库、文件路径、权限或数据写入。
 目标不清楚时返回 {"status":"clarify","question":"一个具体问题"}。
@@ -310,30 +310,41 @@ def markup_bindings(source):
     return parser
 
 
+class RevisionPatchError(ApiError):
+    def __init__(self, reason, *, part=None, edit=None):
+        super().__init__(422, "revision_patch_invalid", "修改无法准确匹配当前工具代码，旧版仍可用。")
+        self.patch_feedback = {"reason": reason}
+        if part is not None:
+            self.patch_feedback["part"] = part
+        if edit is not None:
+            self.patch_feedback["edit"] = edit
+
+
 def apply_code_edits(implementation, edits):
     """Apply exact, non-overlapping edits against the original code of one version."""
-    def invalid():
-        return ApiError(422, "revision_patch_invalid", "修改无法准确匹配当前工具代码，旧版仍可用。")
-
     if not isinstance(edits, list) or not 1 <= len(edits) <= 8:
-        raise invalid()
+        raise RevisionPatchError("invalid_edits")
     by_part = {}
-    for edit in edits:
+    for index, edit in enumerate(edits, 1):
         if not isinstance(edit, dict) or edit.keys() != {"part", "before", "after"}:
-            raise invalid()
+            raise RevisionPatchError("invalid_edit", edit=index)
         part, before, after = edit["part"], edit["before"], edit["after"]
         if part not in ("markup", "style", "script") or part not in implementation:
-            raise invalid()
+            raise RevisionPatchError("invalid_edit", edit=index)
         if not isinstance(before, str) or not isinstance(after, str) or not before or before == after:
-            raise invalid()
+            raise RevisionPatchError("invalid_fragment", part=part, edit=index)
         if max(len(before), len(after)) > 400 or any(
             unicodedata.category(character) == "Cf" for character in before + after
         ):
-            raise invalid()
+            raise RevisionPatchError("invalid_fragment", part=part, edit=index)
         original = implementation[part]
         start = original.find(before)
-        if start < 0 or original.find(before, start + 1) != -1 or (part in ("markup", "script") and before == original):
-            raise invalid()
+        if start < 0:
+            raise RevisionPatchError("before_not_found", part=part, edit=index)
+        if original.find(before, start + 1) != -1:
+            raise RevisionPatchError("before_ambiguous", part=part, edit=index)
+        if part in ("markup", "script") and before == original:
+            raise RevisionPatchError("whole_part", part=part, edit=index)
         by_part.setdefault(part, []).append((start, start + len(before), after))
 
     result = implementation.copy()
@@ -343,7 +354,7 @@ def apply_code_edits(implementation, edits):
         chunks = []
         for start, end, after in sorted(replacements):
             if start < cursor:
-                raise invalid()
+                raise RevisionPatchError("overlap", part=part)
             chunks.extend((original[cursor:start], after))
             cursor = end
         result[part] = "".join([*chunks, original[cursor:]])
@@ -353,7 +364,7 @@ def apply_code_edits(implementation, edits):
         if (original.bindings - revised.bindings or revised.forms != original.forms
                 or any(count > max(1, original.identifiers[identifier])
                        for identifier, count in revised.identifiers.items())):
-            raise invalid()
+            raise RevisionPatchError("bindings_changed", part="markup")
     return result
 
 
@@ -398,11 +409,8 @@ def record_field_artifacts(base, plan):
     field = {"id": field_id, "label": label, "type": kind, "required": False, "options": []}
     edits = plan["edits"]
     implementation = apply_code_edits(base["source"]["implementation"], edits)
-    original = base["source"]["implementation"]
     markup = markup_bindings(implementation["markup"])
-    if (markup.bindings[("input", "id", field_id)] != 1
-            or implementation["markup"] == original["markup"] or implementation["script"] == original["script"]
-            or not re.search(r"\b" + re.escape(field_id) + r"\b", implementation["script"])):
+    if markup.bindings[("input", "id", field_id)] != 1:
         raise ValueError("bad_revision_operation")
     return {"spec": {**spec, "fields": [*fields, field]}, "implementation": implementation}
 
@@ -410,6 +418,14 @@ def record_field_artifacts(base, plan):
 def next_record_field_id(spec):
     used = {field["id"] for field in spec["fields"]}
     return next(f"field_{i}" for i in range(1, 14) if f"field_{i}" not in used)
+
+
+def bind_selected_record_field(payload, field):
+    plan = blueprint.read_artifact(payload)
+    if isinstance(plan, dict) and plan.get("status") == "proposed" and plan.keys() == {"status", "edits"}:
+        plan["operation"] = {"kind": "add_field", **field, "required": False}
+        return json.dumps(plan, ensure_ascii=False, separators=(",", ":")).encode()
+    return payload
 
 
 def check_plan(payload, base, requirement=None, *, operation_selected=False, model_response=False):
@@ -1146,19 +1162,21 @@ def provide(stage, requirement, previous, key, admit, record, *, base):
                            "逐字复制能唯一匹配的最短 before 片段，保留原空白、标点和大小写。"
                            "不要把整理过格式的 CSS 当作原代码。"
                            "可修改 UI 及交互脚本，保留 rootRecords 的字段 ID、数据接口和现有记录。"
-                           "新增一个可空的文本、整数或日期字段时，返回 "
+                           "未提供 selected_field 且需求明确新增一个可空的文本、整数或日期字段时，返回 "
                            '{"status":"proposed","operation":{"kind":"add_field","label":"字段名","type":"date","required":false},"edits":[...]}。'
                            "使用 revision_source.new_field_id 作为输入框 ID 和记录字段键；更新表单、保存脚本及需要的展示。"
                            "日期用 input type=date，保存 YYYY-MM-DD，旧记录缺值时显示为空。"
                            "每个 before 选最短的唯一源码片段，逐字核对，保持原有空格和引号。"
                            "不要返回没有实际变化的编辑；补丁不要重叠。"
                            "字段类型不清楚时先问是日期、时分还是时长。"
-                           "例如『帮我加一栏阅读时间』必须先澄清，不能直接选择日期或写补丁。"
-                           "revision_source.selected_field 存在时，operation.label 和 operation.type 必须逐字照抄其中的值，"
-                           "required 必须为 false，不返回任何其他操作或再次询问。"
                            "用户在补答中明确类型时，按补答继续生成方案。"
                            "不删除、改型、改键、回填旧记录或迁移数据库。")
                 context = {**context, "new_field_id": next_record_field_id(base["source"]["spec"])}
+                if base.get("selected_field"):
+                    system += (
+                        '\n用户已选定 revision_source.selected_field，宿主会按该字段名和类型新增一个可空字段。'
+                        '只返回 {"status":"proposed","edits":[...]}，补齐该字段的界面、保存和展示。'
+                    )
         system += (
             '\n在判断字段类型或可执行性之前，先看是否要求多个独立操作。若用户要求多个独立操作，先返回 {"status":"clarify","question":"请选择本次要做的一项",'
             '"choices":["第一项原话","第二项原话"]}。每个选项逐字引用原话，保留各自的条件。'
@@ -1172,8 +1190,17 @@ def provide(stage, requirement, previous, key, admit, record, *, base):
                 '此时只返回 status、question、field，类型选项由宿主提供。'
                 'choices 只用于多个独立操作，不要与 field 同时返回。类型明确时直接 proposed。'
             )
+        if base.get("patch_feedback"):
+            system += ("\npatch_feedback 指出上一次失败的代码区、编辑序号和原因。序号从 1 开始。"
+                       "before_not_found 表示原片段不存在，before_ambiguous 表示出现多次。"
+                       "从 revision_source.source 中重新逐字定位，保留原来的修改目标和其他功能。")
+        if base.get("repair_feedback"):
+            system += ("\nrepair_feedback 按时间提供上次失败原因与用户补充。结合已有源码修复失败，"
+                       "保持原需求和已经确认的选择。补充与已确认选择冲突时先澄清。")
+        field = base.get("selected_field") if base["kind"] == "record_code" else None
         return blueprint.provide(stage, requirement, previous, key, admit, record,
                                  revision_context=context, revision_plan_system=system,
+                                 spec_patch=(lambda payload: bind_selected_record_field(payload, field)) if field else None,
                                  accept=lambda payload: check_plan(payload, base, requirement,
                                                                    operation_selected=selected is not None,
                                                                    model_response=True))
