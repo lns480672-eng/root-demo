@@ -436,9 +436,18 @@ def _check_plan(payload, base, requirement):
         else:
             choices = plan["choices"]
             if (isinstance(choices, list) and 2 <= len(choices) <= 5
-                    and all(isinstance(item, str) and 0 < len(item.strip()) <= 160 and item.isprintable()
-                            and (requirement is None or item in requirement) for item in choices) and len(set(choices)) == len(choices)):
-                return plan
+                    and all(isinstance(item, str) and 2 <= len(item) <= 160 and item.isprintable()
+                            and item == item.strip() for item in choices)
+                    and not any(first in second for i, first in enumerate(choices)
+                                for j, second in enumerate(choices) if i != j)):
+                if requirement is None:
+                    return plan
+                # Assign each option to a distinct span of the original request.
+                spans = [(requirement.find(item), len(item)) for item in choices]
+                spans.sort()
+                if spans[0][0] >= 0 and all(start + size <= next_start
+                                           for (start, size), (next_start, _) in zip(spans, spans[1:])):
+                    return plan
     for decision, field in (("clarify", "question"), ("unsupported", "reason")):
         if status == decision and plan.keys() == {"status", field}:
             message = plan[field]
@@ -1042,15 +1051,17 @@ def provide(stage, requirement, previous, key, admit, record, *, base):
     """Generate one revision stage from source-only context and check before success."""
     if stage == "revision-plan":
         context = base
-        selected = next((item["answer"] for item in base.get("clarification", [])
+        answers = base.get("clarification", [])
+        selected = next((index for index, item in enumerate(answers)
                          if item["selection"] == "operation"), None)
         if selected is not None:
-            requirement = selected
+            requirement = answers[selected]["answer"]
+            context = {**base, "clarification":answers[selected + 1:]}
         if base["kind"] == "website":
             system = WEBSITE_REVISION_PLAN_SYSTEM
             markup = base["source"]["implementation"]["markup"]
             targets = staged_website.text_targets(markup)
-            context = {**base, "text_targets": [
+            context = {**context, "text_targets": [
                 {"id": target, "path": path, "text": text}
                 for target, (_, _, path, text) in targets.items()
             ]}

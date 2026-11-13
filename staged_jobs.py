@@ -303,6 +303,9 @@ class StagedJobs:
             db.execute("INSERT INTO staged_revision_answers VALUES (?,?,?,?,?,?)",
                        (identifier, request_id, question_id, prompt, answer, selection))
             if state == "complete":
+                candidate = self.candidate_record(db, identifier)
+                if candidate is None:
+                    raise ApiError(409, "revision_question_changed", "请重新打开当前修改方案。")
                 db.execute("DELETE FROM staged_candidates WHERE task=?", (identifier,))
             db.execute("UPDATE staged_jobs SET state='queued',next_stage=0,plan=?,failure=NULL,updated_at=? WHERE id=?",
                        (json.dumps(["revision-plan"]), self.clock(), identifier))
