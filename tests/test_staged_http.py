@@ -196,7 +196,9 @@ def revise(stage, requirement, prior, key, admit, record, *, base):
         elif base["kind"] == "record_code":
             assert request["revision_source"]["new_field_id"] == "field_1"
             selected_field = request["revision_source"].get("selected_field")
-            if "阅读时间" in requirement and not selected_field:
+            if requirement == "修改台账标题为归档记录":
+                plan["edits"] = [{"part": "markup", "before": "</missing>", "after": "<h1>归档记录</h1>"}]
+            elif "阅读时间" in requirement and not selected_field:
                 plan = {"status":"clarify", "field":"阅读时间", "question":"要记录日期、时分还是时长？"}
             else:
                 if "阅读时间" in requirement:
@@ -592,6 +594,22 @@ class StagedHTTP(StagedHTTPFixture):
         }}
         status, saved, _ = self.request(tool + "/records", write, owner)
         self.assertEqual(status, 200)
+        original = self.request(tool, auth=owner)[1]
+        self.assertEqual(self.request("/api/trial", auth=owner)[1]["generation"]["used"], 1)
+        status, response, _ = self.request(tool + "/revise", {
+            "version":1, "requirement":"修改台账标题为归档记录", "requestId":uuid4().hex,
+        }, owner)
+        self.assertEqual(status, 202)
+        rejected_task = response["task"]["id"]
+        failed = self.wait_task(owner, rejected_task, "failed")
+        self.assertEqual(failed["reason"], "revision_patch_invalid")
+        rejected_path = "/api/staged/" + rejected_task
+        self.assertEqual(self.request(rejected_path + "/candidate", {}, owner)[0], 409)
+        self.assertEqual(self.request(tool, auth=owner)[1], original)
+        self.assertEqual(self.request("/api/trial", auth=owner)[1]["generation"]["used"], 1)
+        attempts = [json.loads(line) for line in (self.runs / "staged-usage.jsonl").read_text().splitlines()]
+        self.assertEqual([attempt["patch_feedback"]["reason"] for attempt in attempts
+                          if attempt["task"] == rejected_task], ["before_not_found", "before_not_found"])
         status, response, _ = self.request(tool + "/revise", {
             "version":1, "requirement":"帮我加一栏阅读时间。", "requestId":uuid4().hex,
         }, owner)
