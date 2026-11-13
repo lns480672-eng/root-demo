@@ -468,6 +468,23 @@ class StageProviderTests(unittest.TestCase):
                 blueprint.provide("entry", "加法计算", {"spec.json":accepted}, "secret", lambda: None)
         self.assertEqual(seen, ["spec", "implementation"])
 
+    def test_record_spec_distinguishes_form_inputs_from_persisted_workflow_fields(self):
+        spec = json.loads(artifacts()["spec.json"])
+        spec.update(kind="ledger", modules=[])
+        requirement = "雨具借还看板。表单只填雨具名称，新增默认待归还，点击移动到已归还，刷新保留状态。"
+
+        def exchange(payload, admit, **_):
+            messages = json.loads(payload)["body"]["messages"]
+            self.assertIn("表单只填", messages[0]["content"])
+            self.assertIn("持久化的 choice 字段", messages[0]["content"])
+            self.assertEqual(json.loads(messages[1]["content"])["requirement"], requirement)
+            admit()
+            return envelope(json.dumps(spec))
+
+        with patch.object(assistant_model, "_exchange", exchange):
+            result = blueprint.provide("spec", requirement, {}, "fixture-key", lambda: None, record_code=True)
+        self.assertEqual(json.loads(result)["implementation"], "record-code-v1")
+
     def test_program_provider_rejects_attributes_outside_the_markup_contract(self):
         previous = {"spec.json": b'{"kind":"program","title":"Split","goal":"Split a total"}'}
         for attribute in ("style='color:red'", "onclick='calculate()'", "formaction='/other'"):

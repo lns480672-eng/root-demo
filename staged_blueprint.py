@@ -493,6 +493,12 @@ def provide(stage, requirement, previous, key, admit, record=None, *, revision_c
                 tokens = 5200
         elif stage == "spec":
             system, tokens, output_limit = RULES["spec"], 1200, MAX_ARTIFACT_BYTES
+            if record_code:
+                system += (
+                    "\n台账和看板的 fields 是保存的完整记录结构。‘表单只填’只限制用户手动填写的控件。"
+                    "如果需求要求记录跨状态移动并在刷新后保留，必须包含持久化的 choice 字段，"
+                    "其选项包括原话的初始状态和所有目标状态。初始状态由程序写入，用户无需填写。"
+                )
         else:
             system, tokens, output_limit = SYSTEM + "\n" + RULES[stage], 550, MAX_ARTIFACT_BYTES
         if not planning_revision and revision_context is not None and revision_context["kind"] == "table":

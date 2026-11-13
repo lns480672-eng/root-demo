@@ -18,7 +18,8 @@ SYSTEM = """根据需求及已验收字段，为台账或看板生成可操作�
 启动时直接调用 window.rootRecords.list()；例如 window.rootRecords.list().then(render).catch(showError)。
 写入时直接调用 window.rootRecords.create(values)、window.rootRecords.update(id, patch)。
 API 只在 window.rootRecords 上，不在 DOM 节点上。方法名只有 list、create、update，不使用 listRecords、createRecord 或 updateRecord。
-三种方法均返回 Promise。list 返回记录数组，每条是 {id, ...values}。按 accepted_spec 中的稳定字段 ID 读写。
+三种方法均返回 Promise。list 返回记录数组，每条是 {id, ...values}。按 accepted_spec 中的稳定字段 ID 读写。新增和更新只可发送已声明的字段 ID，choice 只能发送规格列出的原始选项。
+必须为用户要求保存的状态使用规格中已声明的字段。若缺少必需状态字段或选项，返回 {"unsupported":true}，不要自行添加 ID 或把状态只留在页面内存。
 create 接受字段对象，update 只提交当前记录的已变动字段。整数字段用数值，日期为 YYYY-MM-DD。
 只在用户操作时写入，每次操作立即调用一个写入方法。初次加载读取并展示已有记录，写入成功后刷新显示，失败提示并保留输入。
 操作结束后先解除忙碌状态，再渲染可操作的记录和按钮，避免新增的卡片因渲染时的忙碌状态无法操作。
