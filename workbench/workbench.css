@@ -83,7 +83,7 @@ button:enabled { cursor: pointer; }
   }
   #composer-title { font-size: clamp(21px, 3vw, 28px); }
   .elys-intro { margin-block-start: 10px; color: var(--elys-muted); }
-  .elys-requirement { margin-block-start: 28px; }
+  .elys-requirement { position: relative; margin-block-start: 28px; }
   #generation-scope label { display: block; font-weight: 650; margin-block-end: 5px; }
   #generation-category {
     box-sizing: border-box;
@@ -417,8 +417,9 @@ button:enabled { cursor: pointer; }
 .entry-coachmark {
   position: absolute;
   z-index: 1;
-  bottom: 48px;
-  left: 12px;
+  bottom: 8px;
+  left: 8px;
+  max-width: calc(100% - 16px);
   pointer-events: none;
   padding: 7px 10px;
   border-radius: 9px;

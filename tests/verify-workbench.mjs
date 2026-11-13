@@ -670,6 +670,8 @@ try {
           right: document.documentElement.clientWidth - shell.right,
           centerOffset: Math.abs((input.left + input.right - contentLeft - contentRight) / 2),
           navigationOnLeft: nav.checkVisibility() && contentLeft <= input.left + 1,
+          coachmarkAboveExamples: document.querySelector('#entry-coachmark').getBoundingClientRect().bottom <=
+            document.querySelector('#requirement-examples').getBoundingClientRect().top,
           modeColumns: getComputedStyle(document.querySelector('.mode-cards')).gridTemplateColumns.split(' ').length,
           overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth || input.right > shell.right,
         };
@@ -678,6 +680,7 @@ try {
       assert.equal(layout.left, 0, '工作台左侧贴边，视口 ' + width);
       assert.equal(layout.right, 0, '工作台右侧贴边，视口 ' + width);
       assert.ok(layout.centerOffset <= 1, '输入区在导航右侧居中，视口 ' + width);
+      assert.equal(layout.coachmarkAboveExamples, true, '引导不遮挡示例，视口 ' + width);
       assert.equal(layout.modeColumns, 2, '两张入口卡片并排，视口 ' + width);
       assert.equal(layout.overflow, false, '工作台无横向溢出，视口 ' + width);
       await screenshot('workspace-edge-' + width);

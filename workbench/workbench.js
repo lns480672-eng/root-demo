@@ -12,7 +12,7 @@ const library = byId('saved-tools');
 const previewSection = preview.closest('section');
 const coachmark = byId('entry-coachmark');
 const primaryNavigation = ['new-tool', 'idea-entry', 'drafts-entry', 'library-entry'];
-form.append(coachmark);
+requirement.closest('.elys-requirement').append(coachmark);
 const toolHistory = byId('tool-version-panel');
 const restoreDialog = byId('restore-version-dialog');
 const maxStorageBytes = 256 * 1024;
