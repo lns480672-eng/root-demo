@@ -17,7 +17,7 @@ SYSTEM = """根据需求及已验收字段，为台账或看板生成可操作�
 使用宿主 rootRecords.list()、rootRecords.create(values)、rootRecords.update(id, patch)。
 三种方法均返回 Promise。list 返回记录数组，每条是 {id, ...values}。按 accepted_spec 中的稳定字段 ID 读写。
 create 接受字段对象，update 只提交当前记录的已变动字段。整数字段用数值，日期为 YYYY-MM-DD。
-只在用户操作时写入。初次加载读取并展示已有记录，写入成功后刷新显示，失败提示并保留输入。
+只在用户操作时写入，每次操作立即调用一个写入方法。初次加载读取并展示已有记录，写入成功后刷新显示，失败提示并保留输入。
 用 textContent 显示记录。不要用 localStorage、网络、外部资源、跳转或依赖。
 CSS 不写 style 标签、URL、注释或转义；仅允许 @media 响应式规则。适配 390px，确保主要操作可以用键盘。
 不写文档外壳，不重复创建 root-record-tool。仅输出 JSON，不用 Markdown。"""

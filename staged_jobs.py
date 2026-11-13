@@ -832,6 +832,10 @@ class StagedJobs:
                 raise ApiError(409, "revision_confirmation_required", "请先确认当前工具的修改方案。")
         limit = TABLE_STORAGE_BYTES if current and current["table_tool"] else TOOL_STORAGE_BYTES
         packed = pack_entries(data.get("entries"), limit=limit)
+        if current is None:
+            spec = self.blueprint.read_artifact(self.read(row, identity["commit"], "spec.json"))
+            if staged_record_code.matches(spec) and packed != "[]":
+                raise ApiError(409, "incompatible_data", "新台账或看板须从空记录开始。")
         if current and dict(json.loads(packed)) != dict(json.loads(current["entries"])):
             raise ApiError(409, "incompatible_data", "此修改无法原样保留已有记录。")
         proof = digest(encoded({**identity, "policy":RUNTIME_PROOF_VERSION, "owner":row["owner"], "nonce":data["nonce"],

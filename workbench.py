@@ -149,7 +149,7 @@ def session_cookie(token, max_age=SESSION_SECONDS, *, admin=False):
 
 def serve(key, port, runs=generate.RUNS, *, generation_limits=(5, 30), analysis_limits=(6, 60),
           admin_usernames=(), analysis_provider=assistant_model.analyze, table_limits=None,
-          staged_enabled=False, record_code=False, staged_provider=staged_blueprint.provide,
+          staged_enabled=False, staged_provider=staged_blueprint.provide,
           staged_revision_provider=staged_revision.provide, staged_runtime_verifier=runtime_verify.verify):
     model_lock = threading.Lock()
     store = Store(runs / "workspace.sqlite3")
@@ -181,7 +181,7 @@ def serve(key, port, runs=generate.RUNS, *, generation_limits=(5, 30), analysis_
                 return staged_revision_provider(stage, requirement, prior, key, admit, record, base=base)
             if staged_provider is staged_blueprint.provide:
                 return staged_provider(stage, requirement, prior, key, admit, record, category=category,
-                                       record_code=record_code)
+                                       record_code=True)
             if category != "auto":
                 return staged_provider(stage, requirement, prior, key, admit, record, category=category)
             return staged_provider(stage, requirement, prior, key, admit, record)
@@ -728,8 +728,7 @@ def main():
         parser.error(str(error))
     serve(key, args.port, args.runs_dir, generation_limits=generation_limits, analysis_limits=analysis_limits,
           admin_usernames=admins, table_limits=table_limits,
-          staged_enabled=os.environ.get("ROOT_STAGED_ENABLED", "1") != "0",
-          record_code=os.environ.get("ROOT_EXPERIMENTAL_RECORD_CODE") == "1")
+          staged_enabled=os.environ.get("ROOT_STAGED_ENABLED", "1") != "0")
     return 0
 
 

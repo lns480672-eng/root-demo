@@ -68,6 +68,13 @@ def stages(stage, requirement, prior, key, admit, record, *, category="auto"):
     if requirement.startswith("超出"):
         record({"stage":stage,"status":"staged_unsupported","dispatched":True})
         raise ApiError(422, "staged_unsupported", "固定替身表示不支持")
+    if requirement.startswith("代码台账"):
+        content = {**spec, "kind":"ledger", "modules":[], "implementation":"record-code-v1"}
+        if stage == "implementation":
+            content = {"format":"record-code-v1", "markup":"<main><h1>代码台账</h1></main>",
+                       "style":"main { color: #174838 }", "script":"rootRecords.list();"}
+        record({"stage":stage,"status":"ok","dispatched":True})
+        return json.dumps(content, ensure_ascii=False).encode()
     if requirement.startswith("官网"):
         content = {"kind":"website","layout":"brand","title":"风筝工坊","goal":"展示课程"}
         if stage == "implementation":
@@ -392,6 +399,28 @@ class StagedReconnectHTTP(StagedHTTPFixture):
 
 
 class StagedHTTP(StagedHTTPFixture):
+    def test_code_record_writes_are_scoped_and_reject_snapshot_replacement(self):
+        owner = self.account("record-owner")
+        outsider = self.account("record-outsider")
+        identifier = self.gen(owner, "代码台账测试")[1]["task"]["id"]
+        self.wait_task(owner, identifier, "complete")
+        path = "/api/staged/" + identifier
+        candidate = self.request(path + "/candidate", {}, owner)[1]
+        tool = "/api/tools/" + candidate["id"]
+        proof = {**candidate["staged"], "toolId":candidate["id"], "entries":[]}
+        self.assertEqual(self.request(path + "/verify-preview", {**proof, "entries":[["forged","record"]]}, owner)[0], 409)
+        self.assert_preview_verified(path, proof, owner)
+        status, published, _ = self.request(path + "/publish", proof, owner)
+        self.assertEqual(status, 200)
+        write = {"version":1, "revision":published["revision"],
+                 "operation":{"action":"create","values":{"name":"风扇","count":1,"status":"待处理"}}}
+        self.assertEqual(self.request(tool + "/records", write, outsider)[0], 404)
+        status, saved, _ = self.request(tool + "/records", write, owner)
+        self.assertEqual(status, 200)
+        self.assertEqual(self.request(tool + "/records", write, owner)[0], 409)
+        self.assertEqual(self.request(tool + "/data", {"version":1,"revision":saved["revision"],"entries":[]}, owner)[0], 409)
+        self.assertEqual(self.request(tool, auth=owner)[1]["entries"], saved["entries"])
+
 
     def test_workbench_page_links_support_both_proxy_paths(self):
         for path in ("/workbench", "/updates", "/admin"):

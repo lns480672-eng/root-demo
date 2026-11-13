@@ -559,6 +559,42 @@
         ]
       }
     },
+    "/api/tools/{toolId}/records": {
+      "post": {
+        "summary": "读取或逐条写入 AI 代码台账与看板记录",
+        "parameters": [
+          {"name": "toolId", "in": "path", "required": true, "schema": {"type": "string"}}
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {"application/json": {"schema": {
+            "type": "object",
+            "required": ["version", "operation"],
+            "properties": {
+              "version": {"type": "integer", "minimum": 1},
+              "revision": {"type": "integer", "minimum": 0, "description": "写入必填，使用当前数据修订号。"},
+              "operation": {"oneOf": [
+                {"type": "object", "required": ["action"], "additionalProperties": false,
+                 "properties": {"action": {"const": "list"}}},
+                {"type": "object", "required": ["action", "values"], "additionalProperties": false,
+                 "properties": {"action": {"const": "create"}, "values": {"type": "object"}}},
+                {"type": "object", "required": ["action", "id", "values"], "additionalProperties": false,
+                 "properties": {"action": {"const": "update"}, "id": {"type": "integer"}, "values": {"type": "object"}}}
+              ]}
+            }
+          }}}
+        },
+        "responses": {
+          "200": {"description": "返回当前记录及修订号，写入同时返回保存后的存储快照供宿主核对。"},
+          "400": {"description": "记录操作、字段或值无效。"},
+          "401": {"description": "未登录或会话已过期。"},
+          "403": {"description": "请求来源不匹配。"},
+          "404": {"description": "工具不可见。"},
+          "409": {"description": "会话、工具版本或数据修订已变化，或工具不支持该接口。"},
+          "413": {"description": "存储额度不足或请求体过大。"}
+        }
+      }
+    },
     "/api/tools/{toolId}/data": {
       "post": {
         "operationId": "saveToolData",

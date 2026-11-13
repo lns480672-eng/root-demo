@@ -984,6 +984,7 @@ function serializeEntries(entries, limit) {
 
 // Runs inside the opaque frame before any generated code. It has only this tool's snapshot.
 function initializeFrame(entries, token, parentOrigin, limit, backup, storageDisabled, recordCode = false) {
+  document.currentScript?.remove();
   const send = parent.postMessage.bind(parent);
   const values = new Map(entries);
   const existing = new Set(values.keys());
@@ -996,6 +997,7 @@ function initializeFrame(entries, token, parentOrigin, limit, backup, storageDis
   const report = (type, extra = {}) => send({ token, type, ...extra }, parentOrigin);
   window.addEventListener('message', event => {
     if (event.source !== parent || event.origin !== parentOrigin || event.data?.token !== token) return;
+    if (recordCode) event.stopImmediatePropagation();
     if (event.data.type === 'pause-storage') {
       paused = true;
       report('storage-paused', { reads: Array.from(reads) });
@@ -1017,8 +1019,22 @@ function initializeFrame(entries, token, parentOrigin, limit, backup, storageDis
     }
   });
   if (recordCode) {
+    let writeUntil = 0;
+    const clock = performance.now.bind(performance);
+    const permitWrite = event => {
+      if (event.isTrusted) writeUntil = clock() + 1000;
+    };
+    window.addEventListener('click', permitWrite, true);
+    window.addEventListener('keydown', event => {
+      if (event.key === 'Enter' || event.key === ' ') permitWrite(event);
+    }, true);
+    window.addEventListener('change', permitWrite, true);
     const call = operation => {
       if (paused || recordRequest) return Promise.reject(new Error('请等当前操作完成。'));
+      if (operation.action !== 'list') {
+        if (!writeUntil || clock() > writeUntil) return Promise.reject(new Error('请通过页面操作修改记录。'));
+        writeUntil = 0;
+      }
       return new Promise((resolve, reject) => {
         recordRequest = {id: ++recordSequence, resolve, reject};
         if (operation.action === 'list' && existing.has('root-structured-records-v1')) {
@@ -1191,6 +1207,10 @@ async function handleRecordOperation(frame, {request, operation}) {
       frame.snapshot = serializeEntries(saved.entries, frame.storageLimit);
       frame.revision = saved.revision;
       showRecordSave(frame, 'saved');
+    }
+    if (!writing && frame.revision !== saved.revision) {
+      reply(null, '记录已在另一处更新，请重新打开工具。');
+      return;
     }
     reply(saved.records);
   } catch (error) {
