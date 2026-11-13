@@ -579,6 +579,8 @@ class StagedJobs:
                 raise ApiError(429, "staged_exhausted", "此任务已达到模型调用上限。")
             self.budget.reserve_generation(db, row["owner"], dispatch_id=dispatch_id)
             db.execute("INSERT INTO staged_dispatches VALUES (?,?,?,?)", (dispatch_id, identifier, index, fence))
+            db.execute("UPDATE staged_jobs SET lease_until=? WHERE id=?",
+                       (self.clock() + self.lease_seconds, identifier))
 
     def checkpoint(self, identifier, fence, index, stage, content, prior):
         if stage != "revision-plan":
@@ -615,6 +617,31 @@ class StagedJobs:
                 "kind":"add_field", "label":field, "type":answer["answer"],
             }})
 
+    def generate_stage(self, identifier, fence, index, stage, row, prior, provider):
+        retryable = (
+            stage == "implementation"
+            and self.steps(row)[0] == "spec"
+            and staged_record_code.matches(self.blueprint.read_artifact(prior["spec.json"]))
+        )
+        for attempt in range(2 if retryable else 1):
+            dispatch_id = uuid.uuid4().hex
+            dispatched = False
+
+            def admit():
+                nonlocal dispatched
+                self.dispatch(identifier, fence, index, dispatch_id)
+                dispatched = True
+
+            def record(receipt):
+                if self.record is not None:
+                    self.record(identifier, dispatch_id, receipt)
+
+            try:
+                return provider(stage, row["requirement"], prior, admit, record)
+            except ApiError as error:
+                if not (retryable and attempt == 0 and dispatched and error.code == "invalid_staged_result"):
+                    raise
+
     def run(self, identifier, fence, provider):
         index = 0
         try:
@@ -630,14 +657,7 @@ class StagedJobs:
                 elif stage == "revision-plan" and (selected := self.selected_field_plan(row)):
                     content = selected
                 else:
-                    dispatch_id = uuid.uuid4().hex
-
-                    def record(receipt):
-                        if self.record is not None:
-                            self.record(identifier, dispatch_id, receipt)
-
-                    content = provider(stage, row["requirement"], prior,
-                                       lambda: self.dispatch(identifier, fence, index, dispatch_id), record)
+                    content = self.generate_stage(identifier, fence, index, stage, row, prior, provider)
                 self.checkpoint(identifier, fence, index, stage, content, prior)
                 if stage == "assemble" or (stage == "revision-plan" and json.loads(content)["status"] != "proposed"):
                     return

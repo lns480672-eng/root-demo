@@ -71,6 +71,10 @@ def stages(stage, requirement, prior, key, admit, record, *, category="auto"):
     if requirement.startswith("代码台账"):
         content = {**spec, "kind":"ledger", "modules":[], "implementation":"record-code-v1"}
         if stage == "implementation":
+            if requirement.endswith("持续无效") or (requirement.endswith("一次无效") and requirement not in failed):
+                failed.add(requirement)
+                record({"stage":stage,"status":"invalid_staged_result","validation":"invalid_model_json","dispatched":True})
+                raise ApiError(502, "invalid_staged_result", "无效 JSON")
             content = {"format":"record-code-v1", "markup":"<main><h1>代码台账</h1></main>",
                        "style":"main { color: #174838 }", "script":"rootRecords.list();"}
         record({"stage":stage,"status":"ok","dispatched":True})
@@ -399,6 +403,22 @@ class StagedReconnectHTTP(StagedHTTPFixture):
 
 
 class StagedHTTP(StagedHTTPFixture):
+    def test_record_generation_retries_one_invalid_model_result_with_separate_dispatch(self):
+        owner = self.account("record-generation-retry")
+        for requirement, expected in (("代码台账一次无效", "complete"), ("代码台账持续无效", "failed")):
+            with self.subTest(requirement=requirement):
+                identifier = self.gen(owner, requirement)[1]["task"]["id"]
+                self.wait_task(owner, identifier, expected)
+                with self.store.connection() as db:
+                    calls = db.execute(
+                        "SELECT count(*), count(DISTINCT id) FROM staged_dispatches WHERE task=?",
+                        (identifier,),
+                    ).fetchone()
+                self.assertEqual(tuple(calls), (3, 3))
+                path = "/api/staged/" + identifier + "/candidate"
+                self.assertEqual(self.request(path, {}, owner)[0], 200 if expected == "complete" else 409)
+        self.assertEqual(self.request("/api/trial", auth=owner)[1]["generation"]["used"], 0)
+
     def test_code_record_writes_are_scoped_and_reject_snapshot_replacement(self):
         owner = self.account("record-owner")
         outsider = self.account("record-outsider")

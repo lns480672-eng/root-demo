@@ -14,6 +14,7 @@ STORAGE_KEY = "root-structured-records-v1"
 SYSTEM = """根据需求及已验收字段，为台账或看板生成可操作的 HTML、CSS、JavaScript。
 返回 JSON：{"format":"record-code-v1","markup":"HTML 片段","style":"CSS","script":"普通 JavaScript"}。
 自己编写布局、响应式样式和交互，宿主不提供表单、卡片、看板或事件处理器。
+用 JSON 字符串分别序列化 HTML、CSS 和 JavaScript，双引号、反斜杠和换行必须按 JSON 规则转义。
 使用宿主 rootRecords.list()、rootRecords.create(values)、rootRecords.update(id, patch)。
 三种方法均返回 Promise。list 返回记录数组，每条是 {id, ...values}。按 accepted_spec 中的稳定字段 ID 读写。
 create 接受字段对象，update 只提交当前记录的已变动字段。整数字段用数值，日期为 YYYY-MM-DD。
