@@ -18,19 +18,23 @@ import staged_website
 
 HELPER = Path(__file__).with_name("coding-agent.mjs")
 PARTS = {"markup": "tool.html", "style": "tool.css", "script": "tool.js"}
-WALL_SECONDS = 80
 
 
-def provide(stage, requirement, prior, key, dispatch, *, base=None):
+def provide(stage, requirement, prior, key, dispatch, *, base=None, timeout_seconds):
     if not key:
         raise ApiError(503, "staged_unconfigured", "尚未配置生成服务。")
-    if base and staged_revision.RISKY_REVISION.search(requirement):
+    if base and base["kind"] != "record_code" and staged_revision.RISKY_REVISION.search(requirement):
         raise ApiError(422, "revision_risky", "这项操作可能改写已有数据，当前版本不执行。")
     spec = base["source"]["spec"] if base else blueprint.read_artifact(prior["spec.json"])
     original = base["source"]["implementation"] if base else {}
     website = spec.get("kind") == "website"
     record = staged_record_code.matches(spec)
     system = staged_website.SYSTEM if website else staged_record_code.SYSTEM if record else blueprint.IMPLEMENTATION_SYSTEM
+    # The underlying direct-model prompts describe a different response protocol.
+    if website:
+        system = "\n".join(system.splitlines()[:1] + system.splitlines()[4:])
+    elif record:
+        system = "\n".join(system.splitlines()[:1] + system.splitlines()[3:]).removesuffix("仅输出 JSON，不用 Markdown。")
     system += "\n" + blueprint.markup_rules(staged_website.ELEMENTS if website or record else staged_program.ELEMENTS)
     system += "\nHTML 最多 8 KiB，JS 最多 12 KiB，CSS 最多 4 KiB。优先简洁实现，避免重复样式。"
     system += (
@@ -59,12 +63,17 @@ def provide(stage, requirement, prior, key, dispatch, *, base=None):
     if base and record:
         task.update(new_field_id=staged_revision.next_record_field_id(spec), selected_field=base.get("selected_field"))
         system += (
-            "只可新增可空字段，不可删除、回填或改型。字段类型含糊时用 "
+            "新增字段须可空。字段类型含糊时用 "
             "{\"status\":\"clarify\",\"field\":\"字段名\",\"question\":\"需要记录什么类型\"}。"
             "类型已选择时按 selected_field 编写并直接提交源码，不要重复澄清。"
             "明确新增字段时填写 field_label、field_type、type_evidence。"
             "type_evidence 是用户明确说明类型的原话。"
             "用 new_field_id 作输入 ID 及保存键，并在界面中显示新值。旧记录缺值时显示为空。"
+            "用户明确要求改变已有字段的类型或填补空值时，使用 data_change，field 为原字段 ID。"
+            "类型变更用 kind=change_type 和 type，同时更新对应控件及读写逻辑。"
+            "空值回填用 kind=backfill 和 value。若字段、目标类型或回填值不清楚，先澄清。"
+            "宿主计算数据影响并等待用户确认。不要生成数据迁移脚本。"
+            "其他已有数据变更、删除或任意数据库操作返回 unsupported。"
         )
     parts = {part: name for part, name in PARTS.items() if part != "style" or website or record}
 
@@ -91,8 +100,10 @@ def provide(stage, requirement, prior, key, dispatch, *, base=None):
             if website or record:
                 implementation["format"] = staged_website.FORMAT if website else staged_record_code.FORMAT
             if base:
-                decision = ({"operation":decision["operation"], "type_evidence":decision.get("type_evidence")}
-                            if "operation" in decision and not base.get("selected_field") else {})
+                operation = decision.get("operation")
+                decision = {"operation":operation} if operation and not base.get("selected_field") else {}
+                if decision and operation.get("kind") == "add_field":
+                    decision["type_evidence"] = message["decision"].get("type_evidence")
                 plan = {"status":"proposed", "implementation":implementation, **decision}
                 result = json.dumps(plan, ensure_ascii=False).encode()
                 if record:
@@ -111,10 +122,10 @@ def provide(stage, requirement, prior, key, dispatch, *, base=None):
     if base:
         task["current_files"] = files
     request = {"stage":stage, "system":system, "task":task, "files":files}
-    return run(request, key, dispatch, validate)
+    return run(request, key, dispatch, validate, timeout_seconds)
 
 
-def run(request, key, dispatch, validate):
+def run(request, key, dispatch, validate, timeout_seconds):
     node = shutil.which("node")
     modules = os.environ.get("ROOT_PI_MODULES")
     if not node or not modules or not all(
@@ -123,7 +134,7 @@ def run(request, key, dispatch, validate):
     request["modules"] = str(Path(modules).resolve())
     if key in json.dumps(request, ensure_ascii=False):
         raise ApiError(400, "invalid_staged_requirement", "请输入有效需求并移除凭据。")
-    deadline = time.monotonic() + WALL_SECONDS
+    deadline = time.monotonic() + timeout_seconds
     receipt = None
     with subprocess.Popen([node, str(HELPER)], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                           stderr=subprocess.DEVNULL, bufsize=0,
@@ -177,6 +188,8 @@ def run(request, key, dispatch, validate):
                                    "bindings_changed": "保留已有控件和它们的属性。",
                                    "missing_tool_html": "在 markup 提供非空 HTML。",
                                    "missing_tool_js": "在 script 提供非空 JS，静态工具用 void 0;。",
+                                   "bad_website_anchor_target": "让每个页内链接的 href 指向页面内实际存在的 id。",
+                                   "bad_revision_data_control": "同时提交改好的 markup 和 script。保留目标字段的输入框 id，并将 type 对应改成 number、date 或 text；同步调整提交值类型。",
                                    "oversize_tool_html": "将 tool.html 缩到 8 KiB 内。",
                                    "oversize_tool_js": "将 tool.js 缩到 12 KiB 内。"}
                         send({"ok":False, "reason":f"{diagnostic} {details.get(diagnostic, '')}".strip()})

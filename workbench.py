@@ -23,7 +23,7 @@ import table_import
 import staged_blueprint
 import staged_revision
 import runtime_verify
-from staged_jobs import MAX_ATTEMPTS, StagedJobs
+from staged_jobs import LEASE_SECONDS, MAX_ATTEMPTS, StagedJobs
 from accounts import ApiError, InviteError, SESSION_SECONDS, Store, TABLE_STORAGE_BYTES
 from trial_budget import TrialBudget
 
@@ -161,7 +161,7 @@ def serve(key, port, runs=generate.RUNS, *, generation_limits=(5, 30), analysis_
           admin_usernames=(), analysis_provider=assistant_model.analyze, table_limits=None,
           staged_enabled=False, public_site_url=LOCAL_SITE, staged_provider=staged_blueprint.provide,
           staged_revision_provider=staged_revision.provide, staged_runtime_verifier=runtime_verify.verify,
-          coding_agent_enabled=False):
+          coding_agent_enabled=False, coding_agent_timeout=120, coding_agent_max_attempts=12):
     model_lock = threading.Lock()
     store = Store(runs / "workspace.sqlite3")
     budget = TrialBudget(store, runs, generation_limits=generation_limits, analysis_limits=analysis_limits,
@@ -188,13 +188,15 @@ def serve(key, port, runs=generate.RUNS, *, generation_limits=(5, 30), analysis_
             if not model_lock.acquire(timeout=20):
                 raise ApiError(409, "staged_busy", "模型服务正在处理其他请求，请稍后继续。")
             try:
-                return provide(stage, requirement, prior, key, dispatch, base=base)
+                return provide(stage, requirement, prior, key, dispatch, base=base,
+                               timeout_seconds=coding_agent_timeout)
             finally:
                 model_lock.release()
 
     history = StagedJobs(store, budget, runs, staged_blueprint, record=stage_receipt, revision=staged_revision,
                          runtime_verifier=staged_runtime_verifier, coding_provider=coding_provider,
-                         max_attempts=12 if coding_agent_enabled else MAX_ATTEMPTS)
+                         max_attempts=coding_agent_max_attempts if coding_agent_enabled else MAX_ATTEMPTS,
+                         lease_seconds=LEASE_SECONDS + coding_agent_timeout if coding_agent_enabled else LEASE_SECONDS)
     staged = history if staged_enabled else None
 
     def stage_provider(stage, requirement, prior, admit, record, base=None, category="auto"):
@@ -764,8 +766,17 @@ def main():
     if not key:
         print("尚未配置 DeepSeek Key。可查看工作台及恢复既有工具。", flush=True)
     try:
-        generation_limits = (int(os.environ.get("ROOT_ACCOUNT_GENERATIONS", "5")),
-                             int(os.environ.get("ROOT_TOTAL_GENERATIONS", "30")))
+        account_default, total_default = ("10", "120") if args.coding_agent else ("5", "30")
+        generation_limits = (int(os.environ.get("ROOT_ACCOUNT_GENERATIONS", account_default)),
+                             int(os.environ.get("ROOT_TOTAL_GENERATIONS", total_default)))
+        agent_settings = {}
+        if args.coding_agent:
+            agent_settings = {
+                "coding_agent_timeout": int(os.environ.get("ROOT_AGENT_TIMEOUT_SECONDS", "120")),
+                "coding_agent_max_attempts": int(os.environ.get("ROOT_AGENT_MAX_MODEL_CALLS", "12")),
+            }
+            if min(agent_settings.values()) <= 0:
+                raise ValueError("ROOT_AGENT_TIMEOUT_SECONDS 和 ROOT_AGENT_MAX_MODEL_CALLS 必须是正整数")
         analysis_limits = (int(os.environ.get("ROOT_ACCOUNT_DAILY_ANALYSES", "6")),
                            int(os.environ.get("ROOT_TOTAL_ANALYSES", "60")))
         if not 0 < generation_limits[0] <= generation_limits[1] or min(analysis_limits) <= 0:
@@ -784,7 +795,8 @@ def main():
         parser.error(str(error))
     serve(key, args.port, args.runs_dir, generation_limits=generation_limits, analysis_limits=analysis_limits,
           admin_usernames=admins, table_limits=table_limits, public_site_url=public_site_url,
-          staged_enabled=os.environ.get("ROOT_STAGED_ENABLED", "1") != "0", coding_agent_enabled=args.coding_agent)
+          staged_enabled=os.environ.get("ROOT_STAGED_ENABLED", "1") != "0",
+          coding_agent_enabled=args.coding_agent, **agent_settings)
     return 0
 
 

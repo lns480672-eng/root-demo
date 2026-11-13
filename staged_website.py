@@ -3,6 +3,7 @@
 from html import escape, unescape
 from html.parser import HTMLParser
 import re
+from urllib.parse import unquote
 
 import staged_program
 
@@ -46,7 +47,11 @@ def validate(value):
 
 
 def validate_fragment(value):
-    staged_program.validate({"markup": value["markup"], "script": value["script"]}, elements=ELEMENTS)
+    fragment = staged_program.validate({"markup": value["markup"], "script": value["script"]}, elements=ELEMENTS)
+    # Browsers recognize an empty fragment and #top as links to the document start.
+    for target in fragment.fragment_links:
+        if target and target.lower() != "top" and unquote(target) not in fragment.ids | {"root-website"}:
+            raise ValueError("bad_website_anchor_target")
     style = value["style"]
     if not isinstance(style, str) or len(style.encode()) > MAX_STYLE_BYTES or "\x00" in style:
         raise ValueError("bad_website_style_size")
@@ -157,6 +162,22 @@ def assemble(spec, value):
 <title>{title}</title><style>{HIDDEN_STYLE}</style><style>{style}</style></head><body>
 <div id="root-website" data-layout="{layout}">{markup}</div>
 <script>
+window.addEventListener('click', event => {{
+  const link = event.target.closest?.('#root-website a[href^="#"]');
+  if (!link || event.defaultPrevented) return;
+  event.preventDefault();
+  const fragment = link.getAttribute('href').slice(1);
+  let id = fragment;
+  try {{ id = decodeURIComponent(fragment); }} catch {{}}
+  const target = document.getElementById(id);
+  if (target) {{
+    target.scrollIntoView();
+    if (!target.hasAttribute('tabindex')) target.setAttribute('tabindex', '-1');
+    target.focus({{preventScroll: true}});
+  }} else if (!fragment || fragment.toLowerCase() === 'top') {{
+    window.scrollTo(0, 0);
+  }}
+}});
 (() => {{
   'use strict';
 {script}

@@ -288,18 +288,26 @@ class MarkupBindings(HTMLParser):
 
     CONTROLS = {"a", "button", "details", "form", "input", "label", "output", "select", "summary", "textarea"}
 
-    def __init__(self):
+    def __init__(self, retyped_field=None):
         super().__init__()
         self.bindings = Counter()
         self.identifiers = Counter()
         self.forms = 0
+        self.retyped_field = retyped_field
+        self.input_types = {}
 
     def handle_starttag(self, tag, attrs):
+        attributes = dict(attrs)
+        if tag == "input" and attributes.get("id"):
+            self.input_types[attributes["id"]] = attributes.get("type", "text")
         if tag == "form":
             self.forms += 1
         if tag in self.CONTROLS:
             self.bindings[(tag, "element", "")] += 1
         for name, value in attrs:
+            if name == "type" and self.retyped_field and (
+                    ("id", self.retyped_field) in attrs or ("name", self.retyped_field) in attrs):
+                continue
             if name == "id":
                 self.identifiers[value] += 1
             if name in ("id", "name", "for") or name.startswith("data-") or (
@@ -311,8 +319,8 @@ class MarkupBindings(HTMLParser):
                     self.bindings[(tag, name, token)] += 1
 
 
-def markup_bindings(source):
-    parser = MarkupBindings()
+def markup_bindings(source, retyped_field=None):
+    parser = MarkupBindings(retyped_field)
     parser.feed(source)
     parser.close()
     return parser
@@ -378,10 +386,10 @@ def apply_code_edits(implementation, edits):
     return result
 
 
-def check_markup_bindings(before, after):
+def check_markup_bindings(before, after, retyped_field=None):
     if before == after:
         return
-    original, revised = markup_bindings(before), markup_bindings(after)
+    original, revised = markup_bindings(before, retyped_field), markup_bindings(after, retyped_field)
     if (original.bindings - revised.bindings or revised.forms != original.forms
             or any(count > max(1, original.identifiers[identifier])
                    for identifier, count in revised.identifiers.items())):
@@ -438,6 +446,52 @@ def record_field_artifacts(base, plan):
 def next_record_field_id(spec):
     used = {field["id"] for field in spec["fields"]}
     return next(f"field_{i}" for i in range(1, 14) if f"field_{i}" not in used)
+
+
+def record_data_field(base, operation):
+    kind = operation.get("kind")
+    keys = {"kind", "field", "type" if kind == "change_type" else "value"}
+    if base["kind"] != "record_code" or operation.keys() != keys or kind not in ("change_type", "backfill"):
+        raise ValueError("bad_revision_operation")
+    field = next((field for field in base["source"]["spec"]["fields"] if field["id"] == operation["field"]), None)
+    if not field:
+        raise ValueError("bad_revision_operation")
+    if kind == "change_type":
+        if operation["type"] not in ("text", "integer", "date") or operation["type"] == field["type"]:
+            raise ValueError("bad_revision_operation")
+        return {**field, "type":operation["type"], "options":[]}
+    if operation["value"] == "" or not staged_record_code.valid_value(field, operation["value"]):
+        raise ValueError("bad_revision_operation")
+    return field
+
+
+def record_data_change(base, operation, entries):
+    field = record_data_field(base, operation)
+    key = staged_record_code.STORAGE_KEY
+    values = dict(entries)
+    records = json.loads(values.get(key, "[]"))
+    examples = []
+    affected = 0
+    for record in records:
+        before = record.get(field["id"], "")
+        after = before
+        if operation["kind"] == "backfill" and before == "":
+            after = operation["value"]
+        if operation["kind"] == "change_type" and before != "":
+            if field["type"] == "text":
+                after = str(before)
+            elif field["type"] == "integer" and isinstance(before, str) and re.fullmatch(r"(?:0|[1-9][0-9]{0,9})", before):
+                after = int(before)
+        if not staged_record_code.valid_value(field, after):
+            raise ApiError(422, "revision_data_conversion", f"记录 #{record['id']} 的「{field['label']}」无法转换，原记录未改动。")
+        if after != before or type(after) is not type(before):
+            record[field["id"]] = after
+            affected += 1
+            if len(examples) < 3:
+                examples.append({"id":record["id"], "before":before, "after":after})
+    if affected:
+        values[key] = json.dumps(records, ensure_ascii=False, separators=(",", ":"))
+    return {"affected":affected, "examples":examples}, list(map(list, values.items()))
 
 
 def ground_record_field_plan(payload, base, requirement):
@@ -575,7 +629,18 @@ def agent_artifacts(base, plan):
         if base.get("selected_field") and any(
                 plan["operation"].get(key) != value for key, value in base["selected_field"].items()):
             raise ValueError("bad_revision_operation")
-        result = record_field_artifacts(base, plan)
+        operation = plan["operation"]
+        if operation.get("kind") in ("change_type", "backfill"):
+            field = record_data_field(base, operation)
+            if operation["kind"] == "change_type":
+                expected = {"text":"text", "integer":"number", "date":"date"}[field["type"]]
+                markup = markup_bindings(implementation["markup"])
+                if implementation == original or markup.input_types.get(field["id"]) != expected:
+                    raise ValueError("bad_revision_data_control")
+            fields = [field if item["id"] == field["id"] else item for item in source["spec"]["fields"]]
+            result = {"spec":{**source["spec"], "fields":fields}, "implementation":implementation}
+        else:
+            result = record_field_artifacts(base, plan)
     else:
         if base.get("selected_field"):
             raise ValueError("bad_revision_operation")
@@ -583,9 +648,11 @@ def agent_artifacts(base, plan):
     artifacts = encode_source(result)
     blueprint.validate("spec", artifacts["spec"], {})
     blueprint.validate("implementation", artifacts["implementation"], {"spec.json": artifacts["spec"]})
-    if implementation == original:
+    if implementation == original and plan.get("operation", {}).get("kind") not in ("change_type", "backfill"):
         raise _no_change()
-    check_markup_bindings(original["markup"], implementation["markup"])
+    operation = plan.get("operation", {})
+    retyped_field = operation.get("field") if operation.get("kind") == "change_type" else None
+    check_markup_bindings(original["markup"], implementation["markup"], retyped_field)
     if (base["kind"] == "program" and source["spec"].get("storage") != "none"
             and implementation["script"] != original["script"]):
         raise ApiError(422, "revision_script_data", REVISION_GUIDANCE["revision_script_data"])
@@ -1061,6 +1128,19 @@ def describe(base, files, requirement, entries):
         plan = check_plan(files["revision-plan.json"], base)
         if "operation" in plan:
             if base["kind"] == "record_code":
+                operation = plan["operation"]
+                if operation.get("kind") in ("change_type", "backfill"):
+                    field = record_data_field(base, operation)
+                    impact, _ = record_data_change(base, operation, entries)
+                    labels = {"text":"文本", "integer":"整数", "date":"日期", "choice":"单选"}
+                    if operation["kind"] == "change_type":
+                        old = next(item for item in base["source"]["spec"]["fields"] if item["id"] == field["id"])
+                        change = f"将字段「{field['label']}」从{labels[old['type']]}改为{labels[field['type']]}。"
+                    else:
+                        change = f"将字段「{field['label']}」的空值填为 {json.dumps(operation['value'], ensure_ascii=False)}。"
+                    return [change, f"已有记录中有 {impact['affected']} 条的值会改变。", *(
+                        f"记录 #{item['id']}：{json.dumps(item['before'], ensure_ascii=False)} → {json.dumps(item['after'], ensure_ascii=False)}"
+                        for item in impact["examples"])]
                 source = record_field_artifacts(base, plan)
                 field = source["spec"]["fields"][-1]
                 label = {"text": "文本", "integer": "整数", "date": "日期"}[field["type"]]

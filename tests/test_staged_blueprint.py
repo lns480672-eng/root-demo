@@ -325,6 +325,18 @@ class StageProviderTests(unittest.TestCase):
                 blueprint.provide("implementation", "品牌官网", previous, "fixture-key", Mock(), category="brand")
             self.assertEqual(error.exception.code, "invalid_staged_result")
 
+    def test_website_fragment_links_require_an_existing_target(self):
+        spec = {"kind": "website", "layout": "landing", "title": "修车铺", "goal": "展示营业时间"}
+        prior = {"spec.json": json.dumps(spec).encode()}
+        code = {"format": "website-code-v1", "style": "", "script": "void 0;"}
+        link = "<a href='#hours'>查看营业时间</a>"
+        heading = "<h2 id='hours-title'>营业时间</h2>"
+        broken = json.dumps({**code, "markup": link + heading}).encode()
+        with self.assertRaisesRegex(ValueError, "bad_website_anchor_target"):
+            blueprint.validate("implementation", broken, prior)
+        fixed = json.dumps({**code, "markup": link + heading.replace("hours-title", "hours")}).encode()
+        blueprint.validate("implementation", fixed, prior)
+
     def test_provider_and_model_json_failures_have_distinct_sanitized_diagnostics(self):
         for payload, code, finish in (
             ({"status": 200, "body": '{"choices":['}, "invalid_provider_json", None),

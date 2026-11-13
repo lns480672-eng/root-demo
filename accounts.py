@@ -515,7 +515,7 @@ class Store:
             record(db, row["owner"], run_id)
             db.execute("DELETE FROM model_candidates WHERE run_id=?", (run_id,))
 
-    def publish_revision(self, db, row, data, record):
+    def publish_revision(self, db, row, data, record, *, migrated_entries=None):
         run_id = data.get("runId")
         if not isinstance(run_id, str):
             raise ApiError(400, "invalid_draft", "修改候选无效。")
@@ -539,6 +539,8 @@ class Store:
         if (not current_entries.items() <= candidate_entries.items()
                 or (restore is not None and current_entries != candidate_entries)):
             raise ApiError(409, "incompatible_data", "新版无法原样保留已有数据，旧版仍可用。")
+        if migrated_entries is not None:
+            packed = pack_entries(migrated_entries, limit=limit)
         db.execute("INSERT OR IGNORE INTO tool_versions VALUES (?,1,?,'首次生成',NULL)",
                    (row["id"], row["id"]))
         version = row["version"] + 1

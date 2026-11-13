@@ -37,6 +37,8 @@ class Fragment(HTMLParser):
         super().__init__(convert_charrefs=False)
         self.elements = elements
         self.open = []
+        self.ids = set()
+        self.fragment_links = set()
 
     def handle_starttag(self, tag, attrs):
         if tag not in self.elements:
@@ -50,6 +52,10 @@ class Fragment(HTMLParser):
             seen.add(name)
             if name == "href" and not (tag == "a" and value and value.startswith("#")):
                 raise ValueError("bad_program_url")
+            if name == "href":
+                self.fragment_links.add(value[1:])
+            if name == "id" and value:
+                self.ids.add(value)
             if tag == "input" and name == "type" and (value or "").lower() in {"file", "image"}:
                 raise ValueError("bad_program_input")
         if tag not in VOID_ELEMENTS:
@@ -92,6 +98,7 @@ def validate(value, *, elements=ELEMENTS):
     parser.close()
     if parser.open:
         raise ValueError("bad_program_markup")
+    return parser
 
 
 def assemble(spec, implementation):

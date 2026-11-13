@@ -36,12 +36,17 @@ const tools = [
       status:{type:'string',enum:['proposed','clarify','unsupported']}, question:string, reason:string,
       field:string, choices:{type:'array',items:string}, field_label:string,
       field_type:{type:'string',enum:['text','integer','date']}, type_evidence:string,
+      data_change:{type:'object',properties:{
+        kind:{type:'string',enum:['change_type','backfill']}, field:string,
+        type:{type:'string',enum:['text','integer','date']}, value:{anyOf:[string,{type:'integer'}]},
+      },required:['kind','field'],additionalProperties:false},
     },additionalProperties:false,
-  }, async ({markup,script,style,field_label,field_type,type_evidence,...decision}) => {
+  }, async ({markup,script,style,field_label,field_type,type_evidence,data_change,...decision}) => {
     if (field_label && field_type) {
       decision.operation = {kind:'add_field',label:field_label,type:field_type,required:false};
       decision.type_evidence = type_evidence;
     }
+    if (data_change) decision.operation = data_change;
     const changes = {'tool.html':markup,'tool.js':script,'tool.css':style};
     for (const [name, content] of Object.entries(changes)) {
       if (content === undefined) continue;
@@ -61,7 +66,7 @@ const agent = new Agent({
   streamFn:async (model, context, options) => {
     send({kind:'dispatch'});
     if (!(await receive()).ok) throw Error('dispatch rejected');
-    const stream = streamSimple(model, context, {...options,maxTokens:5200,maxRetries:0});
+    const stream = streamSimple(model, context, {...options,toolChoice:'required',maxTokens:5200,maxRetries:0});
     stream.result().then(message => send({
       kind:'receipt', status:['error','aborted','length'].includes(message.stopReason) ? 'provider_error' : 'ok',
       usage:{total_tokens:message.usage.totalTokens}, finish_reason:message.stopReason

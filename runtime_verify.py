@@ -111,9 +111,13 @@ def verify(html, entries, *, backup=False, storage_limit=TOOL_STORAGE_BYTES, web
         try:
             result = json.loads(output[len(b"record:"):])
             if record_field:
-                filled, blank = result["submissions"]
+                submissions = result["submissions"]
+                if len(submissions) != (1 if record_field.get("required") else 2):
+                    raise ValueError("bad_record_submissions")
+                filled = submissions[0]
                 mutate(record_fields, [], {"action": "create", "values": filled})
-                mutate(record_fields, [], {"action": "create", "values": blank})
+                if not record_field.get("required"):
+                    mutate(record_fields, [], {"action": "create", "values": submissions[1]})
             if record_visibility is not None:
                 visible = result["visible"]
                 if any(value not in visible for value in record_visibility):

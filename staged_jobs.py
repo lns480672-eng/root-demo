@@ -836,6 +836,10 @@ class StagedJobs:
                 result.update(id=current["id"], runId=candidate["tool_id"], entries=json.loads(current["entries"]),
                               revision=current["revision"], version=current["version"] + 1)
                 result["revisionPlan"] = self.revision_plan(row, revision, current, candidate)
+                migrated = self.migrated_entries(row, revision, current)
+                if migrated is not None:
+                    pack_entries(migrated, limit=TOOL_STORAGE_BYTES)
+                    result["previewEntries"] = migrated
                 if current["table_tool"]:
                     result["storageLimit"] = TABLE_STORAGE_BYTES
             if self.permits_backup(row):
@@ -858,6 +862,15 @@ class StagedJobs:
             plan["fieldType"] = {"id":row["head"], "label":operation["label"], "type":operation["type"]}
         plan["confirmation"] = digest(encoded({**plan, "nonce":candidate["nonce"], "sha256":candidate["digest"]}))
         return plan
+
+    def migrated_entries(self, row, revision, current):
+        decision = json.loads(self.files(row).get("revision-plan.json", b"{}"))
+        operation = decision.get("operation", {})
+        if operation.get("kind") in ("change_type", "backfill"):
+            _, entries = self.revision.record_data_change(json.loads(revision["context"]), operation,
+                                                           json.loads(current["entries"]))
+            return entries
+        return None
 
     def confirm_revision(self, token, marker, identifier, data):
         with self.store.connection(write=True) as db:
@@ -1023,6 +1036,15 @@ class StagedJobs:
                     raise ApiError(503, "staged_artifact_invalid", "当前工具的基准版本暂时无法校验。") from None
                 except RuntimeVerificationError:
                     raise ApiError(422, "revision_baseline_failed", "当前版本未通过旧记录检查，无法比较此次修改。") from None
+                decision = json.loads(self.files(row).get("revision-plan.json", b"{}"))
+                operation = decision.get("operation", {})
+                if operation.get("kind") in ("change_type", "backfill"):
+                    verifier_entries = self.migrated_entries(row, revision, current)
+                    verifier_options["record_visibility"] = []
+                    if operation["kind"] == "change_type":
+                        field = next(field for field in spec["fields"] if field["id"] == operation["field"])
+                        verifier_options["record_field"] = {name: field[name] for name in ("id", "type", "required")}
+                        verifier_options["record_fields"] = spec["fields"]
                 if len(spec["fields"]) == len(original) + 1:
                     field = spec["fields"][-1]
                     verifier_options["record_field"] = {name: field[name] for name in ("id", "type")}
@@ -1077,7 +1099,8 @@ class StagedJobs:
                     raise ApiError(503, "staged_save_failed", "候选尚未保存，可重新检查预览后继续。") from None
                 if revision:
                     self.store.insert_revision_draft(db, current, tool_id, row["requirement"], model=True)
-                    self.store.publish_revision(db, current, data, self.budget.record_generation_success)
+                    self.store.publish_revision(db, current, data, self.budget.record_generation_success,
+                                                migrated_entries=self.migrated_entries(row, revision, current))
                     if json.loads(revision["context"])["kind"] in ("ledger", "table", "website"):
                         spec = json.loads(self.read(row, row["head"], "spec.json"))
                         title = " ".join(spec["title"].split())[:48]

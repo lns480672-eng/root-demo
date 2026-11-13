@@ -381,12 +381,12 @@ async function run() {
       .filter(value => value && document.body.innerText.includes(value));
   })()`, observer.executionContextId, sessionId);
   const submissions = [];
-  if (recordField) for (const check of ['filled', 'blank']) {
+  if (recordField) for (const check of recordField.required ? ['filled'] : ['filled', 'blank']) {
     const prepared = await evaluate(`(() => {
       const field = document.getElementById(${JSON.stringify(recordField.id)});
       const kind = ${JSON.stringify(recordField.type)};
       const expected = {date: 'date', integer: 'number', text: 'text'}[kind];
-      if (!field?.form || field.type !== expected || field.required || field.disabled || field.readOnly) return false;
+      if (!field?.form || field.type !== expected || field.required !== ${Boolean(recordField.required)} || field.disabled || field.readOnly) return false;
       for (const input of field.form.elements) {
         if (input === field || input.disabled || !input.required || input.value) continue;
         if (input instanceof HTMLSelectElement) {

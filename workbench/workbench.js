@@ -1500,7 +1500,7 @@ async function resolveStagedPublication(id) {
 async function commitStaged(frame, tool) {
   const { taskId, commit, sha256, nonce } = tool.staged;
   const payload = {
-    toolId: frame.id, commit, sha256, nonce, entries: JSON.parse(frame.snapshot),
+    toolId: frame.id, commit, sha256, nonce, entries: tool.previewEntries ? tool.entries : JSON.parse(frame.snapshot),
     runId: tool.runId, revision: tool.runId ? frame.revision : undefined,
     confirmation: tool.revisionPlan?.confirmation,
   };
@@ -1826,7 +1826,7 @@ async function openTool(tool, restore = false, trialOnly = false) {
   if (!validToolId(tool.id) || typeof tool.html !== 'string' || !/^<!doctype html>/i.test(tool.html)) {
     throw new Error('工具文件不完整，无法打开预览。');
   }
-  const entries = tool.entries;
+  const entries = tool.previewEntries ?? tool.entries;
   const storageLimit = tool.storageLimit === tableStorageBytes ? tableStorageBytes : maxStorageBytes;
   const original = serializeEntries(entries, storageLimit);
 

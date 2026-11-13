@@ -282,7 +282,10 @@ def revise(stage, requirement, prior, key, admit, record, *, base):
         return staged_revision.provide(stage, requirement, prior, key, admit, record, base=base)
 
 def verify_runtime(html, entries, *, backup, storage_limit, website, record_field=None, record_fields=None, record_visibility=None):
-    if record_field is not None:
+    if record_field == {"id":"count", "type":"text", "required":True}:
+        rows = json.loads(dict(entries)[staged_record_code.STORAGE_KEY])
+        assert all(isinstance(row["count"], str) for row in rows)
+    elif record_field is not None:
         assert record_field == {"id":"field_1", "type":"date"}
         rows = json.loads(dict(entries)[staged_record_code.STORAGE_KEY])
         assert len(rows) == 1 and set(rows[0]) == {"id", "name", "count", "status"}
@@ -1916,14 +1919,18 @@ class AgentCandidateHTTP(StagedHTTPFixture):
         'workbench.serve("fixture-key", 0, runs,',
         '''
 import coding_agent
-def agent_fixture(stage, requirement, prior, key, dispatch, *, base):
+def agent_fixture(stage, requirement, prior, key, dispatch, *, base, timeout_seconds):
     for _ in range(2):
         dispatch()({"stage":stage, "status":"ok", "dispatched":True})
     if stage == "implementation":
-        code = {"format":"record-code-v1", "markup":"<main><h1>Agent 台账</h1></main>",
+        code = {"format":"record-code-v1", "markup":"<main><h1>Agent 台账</h1><input id='count' type='number'></main>",
                 "style":"", "script":"rootRecords.list();"}
         return json.dumps(code).encode()
     code = dict(base["source"]["implementation"])
+    if requirement == "把数量改成文本":
+        code["markup"] = code["markup"].replace("type='number'", "type='text'")
+        return json.dumps({"status":"proposed","implementation":code,
+                           "operation":{"kind":"change_type","field":"count","type":"text"}}).encode()
     code["markup"] += "<p>新版筛选</p>"
     return json.dumps({"status":"proposed","implementation":code}).encode()
 
@@ -1963,3 +1970,56 @@ workbench.serve("fixture-key", 0, runs, coding_agent_enabled=True,'''
         self.assertEqual((updated["version"], updated["entries"]), (2, saved["entries"]))
         with self.store.connection() as db:
             self.assertEqual(db.execute("SELECT count(*) FROM staged_dispatches WHERE task=?", (task,)).fetchone()[0], 2)
+
+    def test_agent_data_change_requires_current_confirmation_and_applies_once(self):
+        owner = self.account("agent-migration-owner")
+        task = self.gen(owner, "代码台账 Agent")[1]["task"]["id"]
+        self.wait_task(owner, task, "complete")
+        path = "/api/staged/" + task
+        candidate = self.request(path + "/candidate", {}, owner)[1]
+        proof = {**candidate["staged"], "toolId":candidate["id"], "entries":[]}
+        self.assert_preview_verified(path, proof, owner)
+        self.assertEqual(self.request(path + "/publish", proof, owner)[0], 200)
+        tool = "/api/tools/" + candidate["id"]
+
+        def add(name, count):
+            current = self.request(tool, auth=owner)[1]
+            return self.request(tool + "/records", {"version":1, "revision":current["revision"],
+                "operation":{"action":"create", "values":{"name":name,"count":count,"status":"待处理"}}}, owner)[1]
+
+        def proposal():
+            task = self.request(tool + "/revise", {"version":1, "requirement":"把数量改成文本",
+                "requestId":uuid4().hex}, owner)[1]["task"]["id"]
+            self.wait_task(owner, task, "complete")
+            path = "/api/staged/" + task
+            candidate = self.request(path + "/candidate", {}, owner)[1]
+            proof = {**candidate["staged"], "toolId":candidate["id"], "runId":candidate["runId"],
+                "revision":candidate["revision"], "entries":candidate["entries"],
+                "confirmation":candidate["revisionPlan"]["confirmation"]}
+            return path, candidate, proof
+
+        original = add("原记录", 12)
+        path, candidate, proof = proposal()
+        self.assertIn('记录 #1：12 → "12"', candidate["revisionPlan"]["changes"])
+        self.assertEqual(json.loads(candidate["previewEntries"][0][1])[0]["count"], "12")
+        self.assertEqual(self.request(tool, auth=owner)[1]["entries"], original["entries"])
+        self.assert_preview_verified(path, proof, owner)
+        self.assertEqual(self.request(path + "/publish", proof, owner)[0], 409)
+        self.assertEqual(self.request(path + "/cancel-revision", {"nonce":proof["nonce"]}, owner)[0], 200)
+        self.assertEqual(self.request(tool, auth=owner)[1]["entries"], original["entries"])
+
+        path, _, proof = proposal()
+        self.confirm_revision(path, proof, owner)
+        self.assert_preview_verified(path, proof, owner)
+        concurrent = add("另一窗口", 25)
+        self.assertEqual(self.request(path + "/publish", proof, owner)[0], 409)
+        self.assertEqual(self.request(tool, auth=owner)[1]["entries"], concurrent["entries"])
+
+        path, _, proof = proposal()
+        self.confirm_revision(path, proof, owner)
+        self.assert_preview_verified(path, proof, owner)
+        status, updated, _ = self.request(path + "/publish", proof, owner)
+        self.assertEqual(status, 200)
+        self.assertEqual(updated["version"], 2)
+        self.assertEqual([row["count"] for row in json.loads(updated["entries"][0][1])], ["12","25"])
+        self.assertEqual(self.request(path + "/publish", proof, owner)[1], updated)

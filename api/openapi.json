@@ -4641,6 +4641,16 @@
               "staged": {
                 "$ref": "#/components/schemas/StagedCandidateBinding"
               },
+              "previewEntries": {
+                "description": "Host-computed preview of a proposed data change. Formal entries remain unchanged until confirmed publication.",
+                "type": "array",
+                "items": {
+                  "type": "array",
+                  "minItems": 2,
+                  "maxItems": 2,
+                  "items": {"type": "string"}
+                }
+              },
               "revisionPlan": {
                 "type": "object",
                 "properties": {
