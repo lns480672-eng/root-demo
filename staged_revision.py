@@ -648,6 +648,13 @@ def agent_artifacts(base, plan):
     artifacts = encode_source(result)
     blueprint.validate("spec", artifacts["spec"], {})
     blueprint.validate("implementation", artifacts["implementation"], {"spec.json": artifacts["spec"]})
+    if base["kind"] == "record_code":
+        declared = {field["id"] for field in result["spec"]["fields"]}
+        bindings = markup_bindings(implementation["markup"]).bindings
+        if any(tag == "input" and attr in ("id", "name") and value
+               and re.fullmatch(r"field_[0-9]+", value) and value not in declared
+               for tag, attr, value in bindings):
+            raise ValueError("undeclared_record_field")
     if implementation == original and plan.get("operation", {}).get("kind") not in ("change_type", "backfill"):
         raise _no_change()
     operation = plan.get("operation", {})

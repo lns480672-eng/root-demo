@@ -31,6 +31,17 @@ class AgentConfigurationTests(unittest.TestCase):
 
 
 class AgentRevisionTests(unittest.TestCase):
+    def test_candidate_cannot_use_an_undeclared_new_record_field(self):
+        spec = {"kind":"ledger", "title":"书单", "modules":[], "implementation":"record-code-v1",
+                "fields":[{"id":"book", "label":"书名", "type":"text", "required":True, "options":[]}]}
+        original = {"format":"record-code-v1", "markup":"<form><input id='book'></form>",
+                    "style":"", "script":"window.rootRecords.list();"}
+        base = {"kind":"record_code", "source":{"spec":spec, "implementation":original}}
+        updated = {**original, "markup":"<form><input id='book'><input id='archive' name='field_1' type='date'></form>"}
+        plan = {"status":"proposed", "implementation":updated}
+        with self.assertRaisesRegex(ValueError, "undeclared_record_field"):
+            staged_revision.plan_artifacts(json.dumps(plan).encode(), base)
+
     def test_data_change_reports_exact_effect_and_preserves_input(self):
         field = {"id":"count", "label":"数量", "type":"text", "required":False, "options":[]}
         base = {"kind":"record_code", "source":{"spec":{"fields":[field]}}}

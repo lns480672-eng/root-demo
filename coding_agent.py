@@ -193,6 +193,7 @@ def run(request, key, dispatch, validate, timeout_seconds):
                                    "bad_website_anchor_target": "让每个页内链接的 href 指向页面内实际存在的 id。",
                                    "bad_website_style_size": "CSS 必须不超过 4096 字节。如果需求无需改样式，请省略 style 参数以沿用原 CSS。",
                                    "bad_revision_data_control": "同时提交改好的 markup 和 script。保留目标字段的输入框 id，并将 type 对应改成 number、date 或 text；同步调整提交值类型。",
+                                   "undeclared_record_field": "新增保存字段须填写 field_label、field_type 和用户明确类型的原话 type_evidence。用户未明确日期、时长或具体时间时，先提交 clarify，勿提交源码。",
                                    "oversize_tool_html": "将 tool.html 缩到 8 KiB 内。",
                                    "oversize_tool_js": "将 tool.js 缩到 12 KiB 内。"}
                         send({"ok":False, "reason":f"{diagnostic} {details.get(diagnostic, '')}".strip()})
