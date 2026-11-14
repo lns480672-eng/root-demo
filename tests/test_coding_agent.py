@@ -30,6 +30,43 @@ class AgentConfigurationTests(unittest.TestCase):
                 )
 
 
+class AgentWebsiteTests(unittest.TestCase):
+    def test_agent_receives_render_diagnostic_before_accepting_website(self):
+        import coding_agent
+        from runtime_verify import RuntimeVerificationError
+
+        spec = {"kind":"website", "title":"花房", "layout":"brand", "goal":"介绍花束"}
+        prior = {"spec.json":json.dumps(spec).encode()}
+        markup = "<h1>花房</h1>"
+        responses = []
+        good_style = "h1 { color: purple; }"
+
+        def browser_check(html, entries, *, website):
+            self.assertTrue(website)
+            self.assertEqual(entries, [])
+            responses.append(html)
+            if good_style.encode() not in html:
+                raise RuntimeVerificationError("website_style")
+
+        def validate_submissions(_request, _key, _dispatch, validate, _timeout):
+            files = {"tool.html":markup, "tool.css":"", "tool.js":"void 0;"}
+            with self.assertRaisesRegex(ValueError, "bad_website_style_empty"):
+                validate({"files":files, "decision":{}})
+            files["tool.css"] = ".missing { color: purple; }"
+            with self.assertRaisesRegex(ValueError, "website_style"):
+                validate({"files":files, "decision":{}})
+            files["tool.css"] = good_style
+            return validate({"files":files, "decision":{}})
+
+        with patch.object(coding_agent, "run", validate_submissions), patch.object(
+            coding_agent.runtime_verify, "verify", browser_check
+        ):
+            result = coding_agent.provide("implementation", "做个花店官网", prior, "fixture-key", None,
+                                          timeout_seconds=120)
+        self.assertEqual(json.loads(result)["style"], good_style)
+        self.assertEqual(len(responses), 2)
+
+
 class AgentRevisionTests(unittest.TestCase):
     def test_backfill_request_cannot_be_satisfied_with_page_code_alone(self):
         import coding_agent

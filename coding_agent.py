@@ -129,6 +129,14 @@ def provide(stage, requirement, prior, key, dispatch, *, base=None, timeout_seco
                 result = json.dumps(implementation, ensure_ascii=False).encode()
                 blueprint.validate(stage, result, prior)
                 runtime_verify.check_script(implementation["script"])
+                if website:
+                    if not implementation["style"].strip():
+                        raise ValueError("bad_website_style_empty")
+                    html = staged_website.assemble(spec, implementation)
+                    try:
+                        runtime_verify.verify(html, [], website=True)
+                    except runtime_verify.RuntimeVerificationError as error:
+                        raise ValueError(error.diagnostic) from error
                 return result
         plan = staged_revision.check_plan(result, base, requirement, operation_selected=selection is not None)
         if "implementation" in plan:
@@ -199,6 +207,8 @@ def run(request, key, dispatch, validate, timeout_seconds):
                     try:
                         accepted = validate(message)
                     except (ValueError, TypeError, KeyError, ApiError) as error:
+                        if isinstance(error, ApiError) and error.code == "staged_verifier_unavailable":
+                            raise
                         reason = getattr(error, "patch_feedback", {}).get("reason") or (
                             error.code if isinstance(error, ApiError) else str(error))
                         diagnostic = reason if reason.isidentifier() else "bad_candidate"
@@ -211,6 +221,9 @@ def run(request, key, dispatch, validate, timeout_seconds):
                                    "missing_tool_html": "在 markup 提供非空 HTML。",
                                    "missing_tool_js": "在 script 提供非空 JS，静态工具用 void 0;。",
                                    "bad_website_anchor_target": "让每个页内链接的 href 指向页面内实际存在的 id。",
+                                   "bad_website_style_empty": "在 style 参数提交完整的非空 CSS。",
+                                   "website_style": "CSS 未改变桌面或窄屏首页的可见样式。检查选择器、声明和媒体查询。",
+                                   "website_tabs": "检查导航点击、面板可见性和 aria-selected 是否正确切换。",
                                    "bad_website_style_size": "CSS 必须不超过 4096 字节。如果需求无需改样式，请省略 style 参数以沿用原 CSS。",
                                    "website_style_budget_retry": "先尝试复用已有样式，只提交 HTML 内容变更，保留原 CSS 与脚本。若确实要改样式，压缩原 CSS 后再提交。",
                                    "bad_revision_data_control": "同时提交改好的 markup 和 script。保留目标字段的输入框 id，并将 type 对应改成 number、date 或 text；同步调整提交值类型。",
