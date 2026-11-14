@@ -10,6 +10,7 @@ import time
 from contextlib import closing, contextmanager
 
 SESSION_SECONDS = 12 * 60 * 60
+DEFAULT_INVITE_HOURS = 72
 ADMIN_SETUP_SECONDS = 60 * 60
 LOGIN_ATTEMPT_WINDOW = 60
 LOGIN_ATTEMPT_LIMIT = 12
@@ -156,7 +157,7 @@ class Store:
                 db.execute("BEGIN IMMEDIATE")
             yield db
 
-    def create_invite(self, code=None, uses=1, hours=24):
+    def create_invite(self, code=None, uses=1, hours=DEFAULT_INVITE_HOURS):
         code = secrets.token_urlsafe(24) if code is None else code
         with self.connection(write=True) as db:
             self.insert_invite(db, code, uses, int(time.time() + 3600 * hours))

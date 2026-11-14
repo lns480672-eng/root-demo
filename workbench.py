@@ -25,7 +25,7 @@ import staged_blueprint
 import staged_revision
 import runtime_verify
 from staged_jobs import LEASE_SECONDS, MAX_ATTEMPTS, StagedJobs
-from accounts import ApiError, InviteError, SESSION_SECONDS, Store, TABLE_STORAGE_BYTES
+from accounts import ApiError, DEFAULT_INVITE_HOURS, InviteError, SESSION_SECONDS, Store, TABLE_STORAGE_BYTES
 from trial_budget import TrialBudget
 
 ROOT = Path(__file__).resolve().parent
@@ -744,7 +744,7 @@ def main():
                       help="将停写的完整来源状态目录复制到新的 --runs-dir")
     mode.add_argument("--create-invite", action="store_true")
     mode.add_argument("--create-admin-setup-code", action="store_true")
-    parser.add_argument("--invite-hours", type=int, default=24)
+    parser.add_argument("--invite-hours", type=int, default=DEFAULT_INVITE_HOURS)
     parser.add_argument("--invite-uses", type=int, default=1)
     args = parser.parse_args()
     if args.prepare_coding_agent_production_from:

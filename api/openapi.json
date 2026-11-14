@@ -3,7 +3,7 @@
   "info": {
     "title": "ROOT 工作台 API",
     "version": "0.2.0",
-    "description": "ROOT 工作台的同源 JSON HTTP API。除明确标记为公开的操作外，需要 root_session Cookie 和从会话接口取得的 X-Root-Session。所有 POST 必须提供同源 Origin 与 application/json。默认模型新建和现有工具修订均走统一任务编排。管理员可发放有效期 24 小时的单次邀请码，明文只在发码成功时返回。"
+    "description": "ROOT 工作台的同源 JSON HTTP API。除明确标记为公开的操作外，需要 root_session Cookie 和从会话接口取得的 X-Root-Session。所有 POST 必须提供同源 Origin 与 application/json。默认模型新建和现有工具修订均走统一任务编排。管理员可发放有效期 72 小时的单次邀请码，明文只在发码成功时返回。"
   },
   "servers": [
     {
@@ -2508,7 +2508,7 @@
           "试用"
         ],
         "summary": "管理员生成单次邀请码",
-        "description": "仅管理员可发码，使用 UUID v4 请求标识。成功创建一枚 24 小时有效的单次码，并在响应中一次性返回明文。同一操作者重放同一发码 requestId 返回 409 invite_already_issued，不再发码也不回放原明文。该标识已用于另一种管理动作时返回 admin_request_conflict。审计记录发码动作，不公开明文或摘要。",
+        "description": "仅管理员可发码，使用 UUID v4 请求标识。成功创建一枚 72 小时有效的单次码，并在响应中一次性返回明文。同一操作者重放同一发码 requestId 返回 409 invite_already_issued，不再发码也不回放原明文。该标识已用于另一种管理动作时返回 admin_request_conflict。审计记录发码动作，不公开明文或摘要。",
         "parameters": [
           {
             "$ref": "#/components/parameters/Origin"
@@ -4964,7 +4964,7 @@
           "expiresAt": {
             "type": "integer",
             "minimum": 1,
-            "description": "UTC Unix 秒，创建后 24 小时到期。"
+            "description": "UTC Unix 秒，创建后 72 小时到期。"
           },
           "uses": {
             "const": 1,
