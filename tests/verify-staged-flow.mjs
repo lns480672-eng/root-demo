@@ -96,7 +96,7 @@ export async function verifyStagedFlow(ctx) {
     return evaluate('typeof window.releaseFixturePreview === "function"');
   }, 120000);
   assert.equal((await library()).items.length, 1);
-  assert.equal(await visible('.elys-preview'), false, '新工具在保存前不显示预览');
+  assert.equal(await visible('#preview iframe[data-tool]'), false, '新工具在保存前不显示工具内容');
   assert.match(JSON.stringify((await stored(old.id)).entries), /从我的工具找回原记录/);
   await evaluate('window.releaseFixturePreview()');
   const board = await activeTool(old.id).catch(async error => {
