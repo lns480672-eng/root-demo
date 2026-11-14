@@ -644,3 +644,27 @@ body:has(#auth:not([hidden])) { padding: 0; }
 @media (max-width: 480px) {
   .tool-heading { flex-direction: column; align-items: flex-start; }
 }
+
+.elys-product .preview-actions #open-standalone {
+  min-height: 44px;
+  margin-inline-start: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--elys-white);
+  color: var(--elys-ink);
+}
+#open-standalone:focus-visible, #standalone-back:focus-visible {
+  outline: 2px solid #4565b9;
+  outline-offset: 2px;
+}
+.standalone #workspace {
+  grid-template: "content" 1fr / minmax(0, 1fr);
+  min-height: calc(100dvh - 100px);
+}
+.standalone #workspace > :not(.elys-preview),
+.standalone .account-menu-items > :not(#logout) { display: none; }
+.standalone .elys-preview { min-height: 0; }
+.standalone .elys-preview-header .auth-eyebrow { display: none; }
+.standalone .preview-frames iframe { height: max(290px, calc(100dvh - 220px)); }
+#standalone-error { margin-block: 12px 0; }

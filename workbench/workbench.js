@@ -10,6 +10,14 @@ const workspace = byId('workspace');
 const composer = form.closest('section');
 const library = byId('saved-tools');
 const previewSection = preview.closest('section');
+const standaloneBack = byId('standalone-back');
+const standaloneLink = byId('open-standalone');
+function toolIdFromLocation() {
+  return ['/', '/workbench'].includes(location.pathname) && location.hash.startsWith('#tool/')
+    ? location.hash.slice('#tool/'.length) : null;
+}
+const standaloneToolId = toolIdFromLocation();
+const standalone = standaloneToolId !== null;
 const coachmark = byId('entry-coachmark');
 const primaryNavigation = ['new-tool', 'idea-entry', 'drafts-entry', 'library-entry'];
 requirement.closest('.elys-requirement').append(coachmark);
@@ -124,13 +132,13 @@ function render() {
   byId('generation-scope').hidden = !stagedEnabled || editing || tableMode;
   generationCategory.disabled = blocked;
   const assistantOpen = !byId('assistant-panel').hidden;
-  const browsing = !assistantOpen && (workspace.dataset.mode === 'browse' || editing);
+  const browsing = !standalone && !assistantOpen && (workspace.dataset.mode === 'browse' || editing);
   library.hidden = !browsing;
   byId('library-entry').setAttribute('aria-expanded', String(browsing));
   markNavigation(profileRoute() ? null : assistantOpen ? assistantDestination : browsing ? 'library-entry' : 'new-tool');
   for (const id of primaryNavigation) byId(id).disabled = blocked || (starting && id === 'library-entry');
   byId('new-tool-options').hidden = !atStart && !tableMode;
-  previewSection.hidden = !browsing && !editing && !syncing && !stagedPendingId && (!showingResult || assistantOpen);
+  previewSection.hidden = !standalone && !browsing && !editing && !syncing && !stagedPendingId && (!showingResult || assistantOpen);
   byId('open-generated-tool').hidden = !showingResult || blocked || Boolean(failure);
   byId('generation-saved').hidden = !showingResult || blocked || Boolean(failure);
   const returnToLibrary = byId('return-to-library');
@@ -152,12 +160,15 @@ function render() {
   byId('requirement-label').textContent = editing ? '修改「' + currentTitle + '」' : '工具需求';
   requirement.placeholder = supplementIssue ? '补充这次修改的要求' : editing ? '例如：增加一个按负责人筛选。'
     : '描述你想做的工具、怎么用、需要保存哪些数据。';
-  byId('revise-tool').hidden = syncing || !showingTool || showingResult || editing;
+  standaloneLink.hidden = standalone || blocked || !showingTool || showingResult || !browsing || editing;
+  if (standaloneLink.hidden) standaloneLink.removeAttribute('href');
+  else standaloneLink.href = standaloneBack.getAttribute('href') + '#tool/' + active.id;
+  byId('revise-tool').hidden = standalone || syncing || !showingTool || showingResult || editing;
   const showVersions = editing && showingTool && !syncing;
   byId('revision-versions').hidden = !showVersions;
   byId('tool-history').hidden = !showVersions;
   if (!showVersions && !toolHistory.hidden) showToolHistory(false);
-  byId('publish-lock').hidden = syncing || !showingTool;
+  byId('publish-lock').hidden = standalone || syncing || !showingTool;
   byId('revise-tool').disabled = blocked || !configured;
   byId('tool-history').textContent = active ? '当前 v' + active.version + ' · 版本历史' : '版本历史';
   const sync = byId('sync-tool');
@@ -199,11 +210,12 @@ function render() {
   }
   const status = byId('preview-status');
   status.toggleAttribute('data-usable', showingTool && !pausingEdits && !stagedEditsPaused);
-  status.textContent = stagedEditsPaused ? '待核对保存 · 暂停编辑'
+  status.textContent = standalone && !active ? (starting ? '正在打开工具…' : '工具不可用')
+    : stagedEditsPaused ? '待核对保存 · 暂停编辑'
     : pausingEdits ? '待同步 · 暂停编辑' : active
     ? pending || failure || syncing ? '上次工具仍可用' : tableMode ? '上次工具 · 可用' : restored ? '已恢复' : '已就绪'
     : syncing ? '新工具待同步' : pending ? '等待预览' : '待生成';
-  byId('empty').hidden = showingTool || syncing;
+  byId('empty').hidden = standalone || showingTool || syncing;
   byId('empty-title').textContent = pending ? '等待预览' : '还没有生成工具';
   byId('empty-copy').textContent = pending ? '工具准备好后，会在这里显示。' : '输入需求后，工具会在这里出现。';
   byId('table-panel').hidden = !tableMode;
@@ -1090,14 +1102,16 @@ function renderRoute(focus = false) {
   byId('updates').hidden = byId('updates-back').hidden = !updates;
   byId('account').open = false;
   byId('auth').hidden = updates || !identityResolved || Boolean(session);
-  byId('auth-home').hidden = byId('auth').hidden;
+  byId('auth-home').hidden = standalone || byId('auth').hidden;
+  standaloneBack.hidden = !standalone;
+  product.classList.toggle('standalone', standalone);
   byId('account').hidden = workspace.hidden = updates || !session;
   const showingProfile = Boolean(session) && profileRoute();
   workspace.classList.toggle('profile-open', showingProfile);
   byId('profile').hidden = !showingProfile;
   if (!showingProfile && !profileSaving) editNickname(false);
   if (showingProfile) renderProfile();
-  document.title = updates ? '工作台更新记录 · ROOT' : showingProfile ? '个人中心 · ROOT' : 'ROOT 工具工作台';
+  document.title = standalone ? '独立工具 · ROOT' : updates ? '工作台更新记录 · ROOT' : showingProfile ? '个人中心 · ROOT' : 'ROOT 工具工作台';
   if (updates) loadReleases();
   if (session) render();
   if (focus) byId(updates ? 'updates-title' : showingProfile ? 'profile-title' : session ? 'account-name' : 'auth-title').focus();
@@ -1115,7 +1129,20 @@ for (const id of ['updates-link', 'updates-back']) {
     renderRoute(true);
   });
 }
-window.addEventListener('popstate', () => renderRoute(true));
+window.addEventListener('popstate', () => {
+  if (toolIdFromLocation() !== standaloneToolId) {
+    preview.replaceChildren();
+    location.reload();
+    return;
+  }
+  renderRoute(true);
+});
+window.addEventListener('pageshow', event => {
+  if (standalone && event.persisted) {
+    preview.replaceChildren();
+    location.reload();
+  }
+});
 byId('tool-history').addEventListener('click', () => showToolHistory(toolHistory.hidden));
 
 async function confirmsNetworkPolicy() {
@@ -2380,7 +2407,7 @@ window.addEventListener('focus', async () => {
       byId('workspace').hidden = true;
       preview.replaceChildren();
       location.reload();
-    } else {
+    } else if (!standalone) {
       refreshTrial();
       refreshStagedTasks();
     }
@@ -2389,17 +2416,38 @@ window.addEventListener('focus', async () => {
   }
 });
 
+async function openStandaloneTool() {
+  const notice = byId('standalone-error');
+  try {
+    if (!validToolId(standaloneToolId)) throw new Error('此工具不可用。');
+    if (!await confirmsNetworkPolicy()) throw new Error('当前浏览器未启用预览网络隔离。请使用支持 Connection-Allowlist 的 Chrome。');
+    await loadLibrary();
+    await openTool(await workspaceApi('/api/tools/' + standaloneToolId), true);
+    compose(false);
+    render();
+    document.title = byId('preview-title').textContent + ' · ROOT';
+  } catch (error) {
+    notice.textContent = error.message;
+    notice.hidden = false;
+  }
+}
+
 async function start(registration = null) {
   phase = 'startup';
   try {
     compose(true, 'start');
-    loadReleases();
+    if (!standalone) loadReleases();
     renderRoute();
     const identity = registration || await api('/api/session');
     identityResolved = true;
     session = identity.user ? identity : null;
     renderRoute();
     if (!session) return;
+    if (standalone) {
+      renderProfile();
+      await openStandaloneTool();
+      return;
+    }
     await readProfile();
     const config = await api('/api/config');
     configured = config.configured;

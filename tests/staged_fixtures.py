@@ -34,6 +34,7 @@ failed = set()
 theme_check = "--ledger-theme" in sys.argv[5:]
 history_check = "--staged-history" in sys.argv[5:]
 tool_actions_check = "--tool-actions" in sys.argv[5:]
+standalone_check = "--standalone" in sys.argv[5:]
 
 
 def history_program(stage, requirement, admit, record):
@@ -65,6 +66,27 @@ document.querySelector("#add").onclick = () => {
 render();
 """}
         record({"stage":stage,"status":"ok","dispatched":True})
+        return json.dumps(content, ensure_ascii=False).encode()
+    if standalone_check and requirement.startswith("独立验收："):
+        if "官网" in requirement:
+            from demo_site_fixture import demo_site_provider
+            return demo_site_provider(stage, requirement, prior, key, admit, record, category=category)
+        admit()
+        if "计算器" in requirement:
+            content = {
+                "spec": {"kind":"program", "title":"独立验收计算器", "goal":"验证两数之和", "storage":"none"},
+                "implementation": {
+                    "markup": '<label>甲<input id="left" type="number" value="2"></label>'
+                              '<label>乙<input id="right" type="number" value="3"></label>'
+                              '<button id="add" type="button">求和</button><output id="total"></output>',
+                    "script": 'document.querySelector("#add").onclick = () => {'
+                              'document.querySelector("#total").textContent = '
+                              'Number(document.querySelector("#left").value) + Number(document.querySelector("#right").value);};',
+                },
+            }[stage]
+        else:
+            content = {**modules["spec"], "kind":"ledger", "title":"独立验收看板", "modules":[]} if stage == "spec" else modules[stage]
+        record({"stage":stage, "status":"ok", "dispatched":True})
         return json.dumps(content, ensure_ascii=False).encode()
     if live:
         return staged_blueprint.provide(stage, requirement, prior, key, admit, record, category=category)
@@ -154,7 +176,7 @@ def revise(stage, requirement, prior, key, admit, record, *, base):
 
 
 limits = (2, 2) if "--quota-feedback" in sys.argv[5:] else (5, 30)
-if tool_actions_check:
+if tool_actions_check or standalone_check:
     limits = (30, 100)
 provider = staged
 if "--demo-site" in sys.argv[5:] and not live:

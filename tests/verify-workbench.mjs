@@ -11,6 +11,7 @@ import { join, resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 
 const live = process.argv.includes('--live');
+const standaloneCatalog = process.env.ROOT_STANDALONE_CATALOG;
 const stagedFlow = process.argv.includes('--staged-flow');
 const ledgerTheme = stagedFlow && process.argv.includes('--ledger-theme');
 const demoSite = stagedFlow && process.argv.includes('--demo-site');
@@ -73,7 +74,7 @@ const requirements = [
 
 try {
   let base = app;
-  if (!live) {
+  if (!live && !standaloneCatalog) {
     probe = createServer((request, response) => {
       probeRequests.push(request.url);
       response.writeHead(200, { 'Content-Type': 'text/html', 'Access-Control-Allow-Origin': '*' });
@@ -95,7 +96,7 @@ try {
   const config = await (await fetch(base + '/api/config', { signal: AbortSignal.timeout(5000) })).json();
   evidence.build = config.build;
   assert.equal(config.configured, true, '需要配置本地工作台的 DeepSeek Key');
-  assert.deepEqual(Object.keys(config).sort(), stagedFlow ? ['build', 'configured', 'staged'] : ['build', 'configured']);
+  assert.deepEqual(Object.keys(config).sort(), stagedFlow || standaloneCatalog ? ['build', 'configured', 'staged'] : ['build', 'configured']);
   if (!live) {
     const invalidOrigin = await fetch(base + '/api/generate', {
       method: 'POST', headers: { Origin: 'null', 'Content-Type': 'application/json' },
@@ -409,7 +410,7 @@ try {
   await cdp('Page.enable');
   await cdp('Runtime.enable');
   evidence.browser = (await cdp('Browser.getVersion')).product;
-  if (!live) {
+  if (!live && !standaloneCatalog) {
     await cdp('Page.addScriptToEvaluateOnNewDocument', { source: `
       if (window === top) {
         window.addEventListener('message', event => {
@@ -431,7 +432,42 @@ try {
     await until(() => evaluate('document.title === "Reachable HTTP probe"'));
     assert.deepEqual(probeRequests, probeControls);
   }
-  if (process.argv.includes('--tool-actions-flow')) {
+  if (process.argv.includes('--standalone-flow') || standaloneCatalog) {
+    stage = 'saved tool standalone';
+    const { verifyStandalone, verifyCatalog } = await import('./verify-standalone.mjs');
+    const anotherTab = async (open, action) => {
+      const original = socket;
+      const origin = new URL(original.url).origin.replace('ws:', 'http:');
+      const tabs = async () => (await (await fetch(origin + '/json/list')).json()).filter(tab => tab.type === 'page');
+      const existing = new Set((await tabs()).map(tab => tab.id));
+      await open();
+      const tab = await until(async () => (await tabs()).find(item => !existing.has(item.id)));
+      const connected = new WebSocket(tab.webSocketDebuggerUrl);
+      await once(connected, 'open');
+      sockets.push(connected);
+      connected.addEventListener('message', onMessage);
+      socket = connected;
+      try {
+        await cdp('Target.setAutoAttach', {autoAttach:true, waitForDebuggerOnStart:false, flatten:true});
+        await cdp('Page.enable');
+        await cdp('Runtime.enable');
+        await action();
+      } finally {
+        socket = original;
+        await fetch(origin + '/json/close/' + tab.id);
+        await cdp('Page.bringToFront');
+      }
+    };
+    if (standaloneCatalog) await verifyCatalog({
+      base, cdp, evaluate, until, click, pointerClick, type, visible, activeTool,
+      anotherTab, screenshot, evidence, appRequest,
+      seed: JSON.parse(await readFile(standaloneCatalog, 'utf8')),
+      username: 'qa-standalone-owner', password: process.env.ROOT_STANDALONE_FIXTURE_PASSWORD,
+    });
+    else await verifyStandalone({base, cdp, evaluate, until, login, logout, generate, activeTool,
+      click, pointerClick, type, visible, appRequest, accountA, accountB, anotherTab, screenshot, evidence, probeUrl, probeRequests, probeControls, live,
+      readingRequirement:requirements[0], recordRun});
+  } else if (process.argv.includes('--tool-actions-flow')) {
     stage = 'AC-006/007/008 tool actions and history';
     await cdp('Page.navigate', {url:base});
     await login(accountA, true);

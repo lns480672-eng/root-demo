@@ -18,6 +18,7 @@
       <span class="elys-brand-accent" aria-hidden="true"></span>
       <span class="elys-brand-caption">工具工作台</span>
       <a id="auth-home" class="masthead-link" href="http://[::1]:8788/" hidden>返回官网</a>
+      <a id="standalone-back" class="masthead-link" href="/" hidden>← 返回工作台</a>
       <a id="updates-back" class="masthead-link" href="/" hidden>← 返回工作台</a>
       <details id="account" class="account" hidden>
         <summary id="account-name" aria-label="账号菜单"></summary>
@@ -235,6 +236,7 @@
             <div class="preview-actions">
               <button id="open-generated-tool" type="button" hidden>打开工具</button>
               <button id="revise-tool" type="button" hidden>修改</button>
+              <a id="open-standalone" class="masthead-link" target="_blank" rel="noopener" hidden>独立打开<span aria-hidden="true"> ↗</span></a>
               <button id="sync-tool" type="button" hidden>同步工具</button>
             </div>
           </div>
@@ -250,6 +252,7 @@
         <p id="generation-saved" class="elys-config" role="status" hidden>生成完成，已保存到「我的工具」。</p>
         <p id="first-tool-saved" class="elys-config" role="status" hidden>工具已保存，可从「我的工具」找回。</p>
         <p id="publication-message" class="elys-config" role="status" hidden></p>
+        <p id="standalone-error" class="elys-error" role="status" hidden></p>
         <div id="empty" class="elys-empty">
           <h3 id="empty-title">还没有生成工具</h3>
           <p id="empty-copy">输入需求后，工具会在这里出现。</p>
