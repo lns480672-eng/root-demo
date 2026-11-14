@@ -470,8 +470,15 @@ async function run() {
   if (website && html.includes('<style data-root-website-style>')) {
     for (const width of [1440, 390]) {
       await evaluate(`document.querySelector('iframe').style.width = "${width}px"`, executionContextId);
-      const styled = await evaluate('(' + verifyWebsiteStyle.toString() + ')()', observer.executionContextId, sessionId);
-      if (!styled || failure) return 'failed:' + (failure || 'website_style');
+      const expression = `innerWidth === ${width} ? (${verifyWebsiteStyle})() : null`;
+      const deadline = Date.now() + 1000;
+      let styled = null;
+      while (styled === null && !failure && Date.now() < deadline) {
+        styled = await evaluate(expression, observer.executionContextId, sessionId);
+        if (styled === null) await delay(25);
+      }
+      if (failure || styled === null) return 'failed:' + (failure || 'runtime_timeout');
+      if (!styled) return 'failed:website_style';
     }
   }
   if (website && !await evaluate(
