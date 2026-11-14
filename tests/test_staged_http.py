@@ -1597,8 +1597,8 @@ if (fields.result.textContent !== '40.0') process.exit(1);
         self.assertEqual(result["task"]["baseToolId"], candidate["id"])
         self.assertEqual(result["task"]["baseVersion"], 1)
         second_data = {**data, "requestId":uuid4().hex}
-        competing = self.request(tool + "/revise", second_data, owner)[1]["task"]["id"]
         self.wait_task(owner, revision, "complete")
+        competing = self.request(tool + "/revise", second_data, owner)[1]["task"]["id"]
         self.wait_task(owner, competing, "complete")
         rev_path = "/api/staged/" + revision
         revised = self.request(rev_path + "/candidate", {}, owner)[1]
