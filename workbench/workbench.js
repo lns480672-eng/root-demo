@@ -93,6 +93,11 @@ let stagedPendingId = null;
 let stagedPendingNonce = null;
 let stagedSubmission = null;
 let pendingRevision = null;
+let revisionInspection = null;
+let revisionView = 'preview';
+let sourceRequest = 0;
+let sourceKey = '';
+let sourceFiles = [];
 let repairTrial = null;
 let repairRequest = null;
 let supplementIssue = null;
@@ -164,13 +169,9 @@ function render() {
   if (standaloneLink.hidden) standaloneLink.removeAttribute('href');
   else standaloneLink.href = standaloneBack.getAttribute('href') + '#tool/' + active.id;
   byId('revise-tool').hidden = standalone || syncing || !showingTool || showingResult || editing;
-  const showVersions = editing && showingTool && !syncing;
-  byId('revision-versions').hidden = !showVersions;
-  byId('tool-history').hidden = !showVersions;
-  if (!showVersions && !toolHistory.hidden) showToolHistory(false);
+  renderRevisionViews();
   byId('publish-lock').hidden = standalone || syncing || !showingTool;
   byId('revise-tool').disabled = blocked || !configured;
-  byId('tool-history').textContent = active ? '当前 v' + active.version + ' · 版本历史' : '版本历史';
   const sync = byId('sync-tool');
   sync.hidden = !syncing;
   sync.disabled = pending;
@@ -306,6 +307,7 @@ function isActiveStagedTask(task) {
 
 function clearStagedSelection() {
   closeRepairTrial();
+  closeRevisionInspection();
   supplementIssue = null;
   selectedStagedId = stagedAutoId = null;
   pendingRevision = null;
@@ -326,39 +328,50 @@ function updateToolRevisionLog(task) {
   else toolRevisionTasks[index] = task;
 }
 
+function revisionMessage(role, text) {
+  const message = document.createElement('div');
+  message.className = 'revision-message';
+  message.dataset.role = role;
+  const author = document.createElement('div');
+  author.className = 'revision-author';
+  if (role === 'assistant') {
+    const avatar = document.createElement('span');
+    avatar.className = 'revision-avatar';
+    avatar.setAttribute('aria-hidden', 'true');
+    avatar.textContent = 'R';
+    author.append(avatar, '小 R');
+  } else {
+    author.textContent = role === 'user' ? profile?.nickname ?? session.user : '系统提示';
+  }
+  const body = document.createElement('p');
+  body.textContent = text;
+  message.append(author, body);
+  return message;
+}
+
 function renderToolRevisionLog(restriction, canAct) {
   const dialog = byId('tool-revision-dialog');
   dialog.hidden = !editing || !stagedEnabled || !active;
   if (dialog.hidden) return;
   byId('tool-revision-status').textContent = toolRevisionStatus;
   const list = byId('tool-revision-log');
-  const signature = JSON.stringify([toolRevisionTasks, selectedStagedId, restriction, canAct]);
+  const signature = JSON.stringify([toolRevisionTasks, selectedStagedId, restriction, canAct, profile?.nickname ?? session.user]);
   if (list.dataset.signature === signature) return;
   list.dataset.signature = signature;
   const focusedTask = document.activeElement?.dataset.revisionTask;
   list.replaceChildren(...toolRevisionTasks.map(task => {
     const row = document.createElement('li');
-    const request = document.createElement('p');
-    request.textContent = task.requirement;
-    const detail = document.createElement('p');
-    detail.className = 'auth-muted';
-    const status = task.state === 'published' ? '已应用' : stagedStatus(task, restriction);
-    detail.textContent = [status, stagedReason(task, restriction)].filter(Boolean).join('。');
-    row.append(request);
+    row.append(revisionMessage('user', task.requirement));
     for (const { question, answer } of task.clarification?.answers || []) {
-      const exchange = document.createElement('p');
-      exchange.textContent = question + ' · ' + (Object.hasOwn(revisionFieldTypes, answer) ? revisionFieldTypes[answer] : answer);
-      row.append(exchange);
+      row.append(revisionMessage('assistant', question));
+      row.append(revisionMessage('user', Object.hasOwn(revisionFieldTypes, answer) ? revisionFieldTypes[answer] : answer));
     }
     for (const repair of task.repairs || []) {
-      const message = document.createElement('p');
-      message.textContent = stagedReason({state:'failed', reason:repair.reason}, restriction);
-      row.append(message);
-      const action = document.createElement('p');
-      action.textContent = repair.supplement ? '补充要求 · ' + repair.supplement : '让 AI 修';
-      row.append(action);
+      row.append(revisionMessage('system', stagedReason({state:'failed', reason:repair.reason}, restriction)));
+      row.append(revisionMessage('user', repair.supplement ? '补充要求 · ' + repair.supplement : '让 AI 修'));
     }
-    row.append(detail);
+    const status = task.state === 'published' ? '已应用' : stagedStatus(task, restriction);
+    row.append(revisionMessage('system', [status, stagedReason(task, restriction)].filter(Boolean).join('。')));
     if (!['published', 'cancelled'].includes(task.state)) {
       const button = document.createElement('button');
       button.type = 'button';
@@ -606,7 +619,8 @@ function renderStagedTasks(blocked, restriction) {
     byId('revision-field-label').hidden = !proposal.fieldType;
     if (proposal.fieldType) setRevisionOptions(byId('revision-field-type'),
       Object.entries(revisionFieldTypes), proposal.fieldType.type);
-    byId('revision-plan-tool').textContent = '「' + proposal.title + '」v' + proposal.baseVersion;
+    byId('revision-plan-tool').replaceChildren(revisionMessage('assistant', '「' + proposal.title + '」v' + proposal.baseVersion));
+    byId('revision-plan-tool').querySelector('p').classList.add('auth-muted');
     byId('revision-plan-changes').replaceChildren(...proposal.changes.map(change => {
       const item = document.createElement('li');
       item.textContent = change;
@@ -930,12 +944,79 @@ function versionRecord({ version, note, current, date, label, build }) {
   return row;
 }
 
-function showToolHistory(open) {
-  if (open && (!editing || !active)) return;
-  toolHistory.hidden = !open;
-  byId('tool-history').setAttribute('aria-expanded', String(open));
-  if (!open) historyRequest += 1;
-  if (open) loadToolHistory();
+function setRevisionView(view) {
+  if (revisionView === view) return;
+  revisionView = view;
+  if (view === 'history' && editing && active) loadToolHistory();
+  else historyRequest += 1;
+  render();
+}
+
+function renderRevisionViews() {
+  const visible = editing && Boolean(active) && !pendingPublication;
+  byId('revision-views').hidden = !visible;
+  for (const [id, view] of [['preview-view', 'preview'], ['source-view', 'source'], ['tool-history', 'history']]) {
+    byId(id).setAttribute('aria-pressed', String(visible && revisionView === view));
+  }
+  byId('tool-history').hidden = !visible;
+  byId('tool-history').setAttribute('aria-label', active ? '版本历史 · 当前 v' + active.version : '版本历史');
+  const inspecting = revisionInspection?.tool ?? repairTrial?.tool;
+  const badge = byId('candidate-badge');
+  badge.hidden = !visible;
+  badge.textContent = inspecting ? '新版预览 · 尚未应用' : '当前 v' + active?.version;
+  badge.dataset.candidate = String(Boolean(inspecting));
+  preview.hidden = visible && revisionView !== 'preview';
+  toolHistory.hidden = !visible || revisionView !== 'history';
+  byId('source-panel').hidden = !visible || revisionView !== 'source';
+  if (byId('source-panel').hidden) {
+    sourceRequest += 1;
+    sourceKey = '';
+  } else {
+    readRevisionSource(inspecting);
+  }
+}
+
+function displaySourceFile() {
+  const file = sourceFiles[Number(byId('source-files').value)];
+  byId('source-code').textContent = file?.text ?? '';
+  byId('source-text').hidden = !file;
+}
+
+async function readRevisionSource(inspecting) {
+  const version = inspecting?.version ?? active.version;
+  const staged = inspecting?.staged;
+  const id = active.id;
+  const key = JSON.stringify([id, version, staged?.taskId, staged?.nonce, staged?.commit]);
+  if (sourceKey === key) return;
+  sourceKey = key;
+  const request = ++sourceRequest;
+  const status = byId('source-status');
+  const select = byId('source-files');
+  const label = byId('source-file-label');
+  sourceFiles = [];
+  select.replaceChildren();
+  label.hidden = true;
+  displaySourceFile();
+  status.textContent = '正在读取代码…';
+  const path = staged ? '/api/staged/' + staged.taskId + '/source' : '/api/tools/' + id + '/source';
+  try {
+    const result = await workspaceApi(path, staged
+      ? {...staged, toolId:id, runId:inspecting.runId, version}
+      : {version}, publicationTimeout);
+    if (request !== sourceRequest) return;
+    if (result.toolId !== id || result.version !== version || result.applied !== !staged) {
+      throw new Error('代码与当前工具版本不匹配，请重新打开工具。');
+    }
+    sourceFiles = result.files;
+    status.textContent = sourceFiles.length ? (staged ? '候选 v' + version + ' · 尚未应用' : '当前 v' + version)
+      : '此版本没有可查看的代码';
+    select.replaceChildren(...sourceFiles.map((file, index) => new Option(file.path, index)));
+    label.hidden = !sourceFiles.length;
+    displaySourceFile();
+  } catch (error) {
+    if (request !== sourceRequest) return;
+    status.textContent = error.message;
+  }
 }
 
 let historyRequest = 0;
@@ -1143,7 +1224,10 @@ window.addEventListener('pageshow', event => {
     location.reload();
   }
 });
-byId('tool-history').addEventListener('click', () => showToolHistory(toolHistory.hidden));
+byId('preview-view').addEventListener('click', () => setRevisionView('preview'));
+byId('source-view').addEventListener('click', () => setRevisionView('source'));
+byId('tool-history').addEventListener('click', () => setRevisionView(revisionView === 'history' ? 'preview' : 'history'));
+byId('source-files').addEventListener('change', displaySourceFile);
 
 async function confirmsNetworkPolicy() {
   try {
@@ -1546,7 +1630,6 @@ async function publishRevision(frame, old, tool) {
   const operation = { id: frame.id, runId: tool.runId, marker: session.marker };
   sessionStorage.setItem(publicationKey, JSON.stringify(operation));
   pendingPublication = operation;
-  showToolHistory(false);
   render();
   let uncertain = false;
   try {
@@ -1757,6 +1840,7 @@ async function openStagedCandidate(task, approvedTool = null, applyRepair = fals
     if (tool) {
       if (tool.staged?.taskId !== task.id) throw new Error('候选与当前任务不匹配，无法打开预览。');
       if (tool.revisionPlan && !approvedTool) {
+        await openTool(tool, false, 'inspection');
         pendingRevision = tool;
         return;
       }
@@ -1767,7 +1851,7 @@ async function openStagedCandidate(task, approvedTool = null, applyRepair = fals
         if (!confirmed) throw new Error('未能确认当前修改方案。');
       }
       if (trial && !applyRepair) {
-        await openTool(tool, false, true);
+        await openTool(tool, false, 'trial');
         return;
       }
       await openTool(tool);
@@ -1806,6 +1890,7 @@ async function submitRevisionAnswer(questionId, answer, selection) {
     }, publicationTimeout);
     pendingAnswerRequest = null;
     pendingRevision = null;
+    closeRevisionInspection();
     rememberStagedTask(result.task);
     selectedStagedId = stagedAutoId = result.task.id;
   } catch (error) {
@@ -1844,8 +1929,8 @@ async function closeRevisionQuestion(rewrite) {
       {nonce:task.clarification.id}, publicationTimeout);
     rememberStagedTask(result.task);
     clearStagedSelection();
-    if (rewrite) requirement.focus();
-    else finishComposition();
+    if (!rewrite) requirement.value = '';
+    requirement.focus();
   } catch (error) {
     stagedMessage = generationError(error);
   } finally {
@@ -1940,6 +2025,7 @@ byId('revision-confirm').addEventListener('click', () => {
   if (!tool || task?.id !== tool.staged.taskId || phase !== 'idle') return;
   if (tool.revisionPlan.fieldType && byId('revision-field-type').value !== tool.revisionPlan.fieldType.type) return;
   pendingRevision = null;
+  closeRevisionInspection();
   openStagedCandidate(task, tool);
 });
 
@@ -1953,20 +2039,29 @@ async function discardRevision(adjust) {
       { nonce: tool.staged.nonce }, publicationTimeout);
     rememberStagedTask(task);
     clearStagedSelection();
-    if (!adjust) finishComposition();
+    if (!adjust) requirement.value = '';
   } catch (error) {
     stagedMessage = generationError(error);
   } finally {
     phase = 'idle';
     render();
-    if (adjust && !pendingRevision) requirement.focus();
+    if (!pendingRevision) requirement.focus();
   }
 }
 
 byId('revision-adjust').addEventListener('click', () => discardRevision(true));
 byId('revision-cancel').addEventListener('click', () => discardRevision(false));
 
-async function openTool(tool, restore = false, trialOnly = false) {
+function closeRevisionInspection() {
+  if (!revisionInspection) return;
+  const {frame} = revisionInspection;
+  frame.recordPort?.close();
+  frame.iframe.remove();
+  revisionInspection = null;
+  if (active) active.iframe.hidden = false;
+}
+
+async function openTool(tool, restore = false, mode = '') {
   if (!validToolId(tool.id) || typeof tool.html !== 'string' || !/^<!doctype html>/i.test(tool.html)) {
     throw new Error('工具文件不完整，无法打开预览。');
   }
@@ -2001,7 +2096,15 @@ async function openTool(tool, restore = false, trialOnly = false) {
   try {
     preview.append(iframe);
     await ready;
-    if (trialOnly) {
+    if (mode === 'inspection') {
+      closeRevisionInspection();
+      revisionInspection = {frame, tool};
+      iframe.title = '新版预览 · 尚未应用';
+      iframe.dataset.revisionInspection = '';
+      if (old) old.iframe.hidden = true;
+      return;
+    }
+    if (mode === 'trial') {
       await workspaceApi('/api/staged/' + tool.staged.taskId + '/verify-preview', {
         ...tool.staged, toolId:tool.id, runId:tool.runId, revision:tool.revision,
         entries:tool.entries, confirmation:tool.revisionPlan.confirmation,
@@ -2055,11 +2158,11 @@ async function openTool(tool, restore = false, trialOnly = false) {
     showRecordSave(frame, '');
     restored = restore;
     if (frame.snapshot !== savedSnapshot) enqueueSave(frame, frame.snapshot);
-    if (old?.id !== frame.id) showToolHistory(false);
+    if (old?.id !== frame.id) revisionView = 'preview';
     else if (!toolHistory.hidden) loadToolHistory();
   } finally {
     clearTimeout(deadline);
-    if (active !== frame && repairTrial?.frame !== frame) {
+    if (active !== frame && repairTrial?.frame !== frame && revisionInspection?.frame !== frame) {
       frame.recordPort?.close();
       iframe.remove();
       if (tool.runId && !pendingPublication && !stagedPendingId && old?.iframe.inert && old.iframe.isConnected) {
@@ -2280,7 +2383,7 @@ function beginComposition(revise, value = '', category = 'auto', focus = true) {
   toolRevisionTasks = [];
   toolRevisionStatus = '';
   if (revise && stagedEnabled && active) loadToolRevisionLog(active.id);
-  showToolHistory(false);
+  revisionView = 'preview';
   entryMode = 'direct';
   compose(true, revise ? 'compose' : 'start');
   requirement.value = value;

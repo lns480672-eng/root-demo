@@ -514,11 +514,12 @@ try {
     await click('#revise-tool');
     await click('#tool-history');
     await until(() => evaluate('document.querySelector("#tool-version-list [aria-current=true]")?.textContent.includes("v1")'));
-    assert.equal(await evaluate('document.querySelector(".elys-composer").contains(document.querySelector("#tool-version-panel"))'), true);
+    assert.equal(await evaluate('document.querySelector(".elys-preview").contains(document.querySelector("#tool-version-panel"))'), true);
     await generate('回归：不兼容数据');
     await until(() => visible('#error'));
     assert.equal((await appRequest('/api/tools/' + original.id + '/versions')).body.current, 1);
-    assert.equal((await activeTool()).id, original.id);
+    await click('#preview-view');
+    assert.equal((await evaluate('document.querySelector("#preview iframe[data-tool]").dataset.tool')), original.id);
     stage = 'apply revision and open the ordered version list';
     await generate('增加已读筛选');
     await until(async () => (await appRequest('/api/tools/' + original.id + '/versions')).body.current === 2);
@@ -529,7 +530,7 @@ try {
     const titles = await evaluate('Array.from(document.querySelectorAll("#tool-version-list strong"), e => e.textContent)');
     assert.deepEqual(titles, ['v2 · 当前', 'v1']);
     assert.equal(await visible('#requirement'), true);
-    assert.equal(await visible('#preview iframe[data-tool]'), true);
+    assert.equal(await visible('#preview iframe[data-tool]'), false);
     await screenshot('tool-history-390');
     assert.equal(await evaluate(`(() => {
       const list = document.querySelector('#tool-version-list');
@@ -1143,7 +1144,7 @@ try {
     await until(async () => {
       const state = await readPage();
       if (state.error) throw new Error(state.error);
-      return evaluate('document.querySelector("#tool-history").textContent.includes("v2")');
+      return evaluate('document.querySelector("#tool-history").getAttribute("aria-label").includes("v2")');
     }, 135000);
     let updated = await activeTool();
     assert.equal(updated.id, first.id);
@@ -1227,7 +1228,7 @@ try {
 
   if (!live && process.argv.includes('--publish-recovery')) {
     const toolPath = '/api/tools/' + first.id;
-    const historyVersion = () => evaluate('document.querySelector("#tool-history").textContent');
+    const historyVersion = () => evaluate('document.querySelector("#tool-history").getAttribute("aria-label")');
     const waitForVersion = version => until(async () => {
       const state = await readPage();
       if (state.error) throw new Error(state.error);
@@ -1296,6 +1297,7 @@ try {
     if (!await visible('#tool-history')) await click('#revise-tool');
     await click('#tool-history');
     assert.match(await until(() => evaluate('document.querySelector("#tool-version-list li[aria-current=true] strong")?.textContent')), /v3 · 当前/);
+    await click('#preview-view');
     restored = await activeTool();
     await addOldRecord('双确认丢失后仍可保存');
     await evaluate('window.fixtureRestoreFetch()');
@@ -1616,6 +1618,7 @@ try {
       assert.equal(priorHistory.current, 1);
       await generate('回归：不兼容数据');
       assert.match(await until(() => evaluate('document.querySelector("#error").textContent')), /无法.*已有数据/);
+      await click('#preview-view');
       await addOldRecord('修改失败后保存的书');
       assert.deepEqual((await appRequest(versionPath)).body, priorHistory);
       assert.equal((await activeTool()).loader, restored.loader);
@@ -1654,11 +1657,11 @@ try {
       if (!await visible('#tool-history')) await click('#revise-tool');
       if (await evaluate('document.querySelector("#tool-version-panel").hidden')) await click('#tool-history');
       await until(() => evaluate('document.querySelectorAll("#tool-version-list li").length === 2'));
-      assert.equal(await evaluate(`document.querySelector('.elys-composer').contains(document.querySelector('#tool-version-panel'))`), true);
+      assert.equal(await evaluate(`document.querySelector('.elys-preview').contains(document.querySelector('#tool-version-panel'))`), true);
       await screenshot('tool-version-history');
       await cdp('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
-      assert.equal(await evaluate(`document.querySelector('#tool-version-panel').getBoundingClientRect().bottom <=
-        document.querySelector('#preview').getBoundingClientRect().top &&
+      assert.equal(await evaluate(`document.querySelector('#tool-version-panel').checkVisibility() &&
+        document.querySelector('#requirement').checkVisibility() &&
         document.documentElement.scrollWidth === document.documentElement.clientWidth`), true);
       await cdp('Emulation.setDeviceMetricsOverride', { width: 1360, height: 980, deviceScaleFactor: 1, mobile: false });
       await generate('回归：修改输出失败');
@@ -1946,12 +1949,12 @@ try {
   evidence.failedStage = stage;
   if (runtimeErrors.length) evidence.runtimeErrors = runtimeErrors;
   if (readPage) evidence.page = await readPage().catch(() => null);
+  process.exitCode = 1;
+} finally {
   if (stagedFlow) {
     const usage = await readFile(join(root, 'runs', 'staged-usage.jsonl'), 'utf8').catch(() => '');
     if (usage.trim()) evidence.runs = usage.trim().split('\n').map(JSON.parse);
   }
-  process.exitCode = 1;
-} finally {
   if (writeCoverage) await writeCoverage().catch(error => { console.error(error.message); process.exitCode = 1; });
   if (artifacts) {
     evidence.artifacts = artifacts;

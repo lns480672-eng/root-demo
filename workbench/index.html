@@ -118,13 +118,6 @@
           <section id="table-panel" hidden></section>
           <p id="generation-balance" class="elys-config" role="status" hidden></p>
           <p id="generation-block" class="elys-error" role="status" hidden></p>
-          <div id="revision-versions" hidden>
-            <button id="tool-history" type="button" aria-expanded="false" aria-controls="tool-version-panel">版本历史</button>
-            <section id="tool-version-panel" class="tool-version-panel" aria-labelledby="tool-history" hidden>
-              <p id="tool-version-status" role="status"></p>
-              <ol id="tool-version-list" class="version-list"></ol>
-            </section>
-          </div>
           <section id="tool-revision-dialog" aria-label="工具修改对话" hidden>
             <p id="tool-revision-status" class="auth-muted" role="status"></p>
             <ol id="tool-revision-log" aria-label="修改消息"></ol>
@@ -185,7 +178,7 @@
             </section>
             <section id="revision-confirmation" aria-labelledby="revision-plan-heading" hidden>
               <h3 id="revision-plan-heading">确认修改方案</h3>
-              <p id="revision-plan-tool"></p>
+              <div id="revision-plan-tool"></div>
               <ul id="revision-plan-changes"></ul>
               <label id="revision-field-label" hidden>字段类型 <select id="revision-field-type"></select></label>
               <div class="entry-actions">
@@ -244,6 +237,12 @@
             <button id="publish-tool" type="button" aria-describedby="publish-explanation" disabled>发布应用</button>
             <p id="publish-explanation">应用发布暂未开放。你仍可在工作台使用和保存这个工具。</p>
           </div>
+          <span id="candidate-badge" class="revision-candidate-badge" hidden>新版预览 · 尚未应用</span>
+          <div id="revision-views" class="revision-views" role="group" aria-label="工具视图" hidden>
+            <button id="preview-view" type="button" aria-pressed="true" aria-controls="preview"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s3.6-6 10-6 10 6 10 6-3.6 6-10 6-10-6-10-6Z"/><circle cx="12" cy="12" r="2.5"/></svg>预览</button>
+            <button id="source-view" type="button" aria-pressed="false" aria-controls="source-panel"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 7-5 5 5 5m8-10 5 5-5 5m-3-12-2 14"/></svg>代码</button>
+            <button id="tool-history" type="button" aria-pressed="false" aria-controls="tool-version-panel">版本历史</button>
+          </div>
         </header>
         <div id="record-save-status" class="record-save-status" role="status" aria-atomic="true" hidden>
           <strong id="record-save-title"></strong>
@@ -258,6 +257,15 @@
           <p id="empty-copy">输入需求后，工具会在这里出现。</p>
         </div>
         <div id="preview" class="preview-frames"></div>
+        <section id="source-panel" aria-labelledby="source-view" hidden>
+          <p id="source-status" role="status"></p>
+          <label id="source-file-label" hidden>生成文件 <select id="source-files"></select></label>
+          <pre id="source-text" tabindex="0" hidden><code id="source-code"></code></pre>
+        </section>
+        <section id="tool-version-panel" class="tool-version-panel" aria-labelledby="tool-history" hidden>
+          <p id="tool-version-status" role="status"></p>
+          <ol id="tool-version-list" class="version-list"></ol>
+        </section>
         <footer class="elys-preview-footer">
           隔离预览 <span id="storage-warning" class="elys-error" role="status" hidden></span>
         </footer>

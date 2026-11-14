@@ -806,6 +806,55 @@ class StagedJobs:
             raise ApiError(503, "staged_artifact_invalid", "生成候选无法校验。")
         return identity, content
 
+    def source_files(self, row, expected_digest):
+        """Return generated artifacts from the exact tree used for the preview."""
+        try:
+            commit = row["head"]
+            manifest = json.loads(self.read(row, commit, "manifest.json"))
+            files = self.files(row)
+            html = files.pop("app.html")
+            if (manifest.get("task") != row["id"] or manifest.get("owner") != row["owner"]
+                    or manifest.get("stage") != "assemble" or manifest.get("sha256") != expected_digest
+                    or digest(html) != expected_digest
+                    or manifest.get("depends") != {path:digest(data) for path, data in files.items()}):
+                raise ValueError("source artifact mismatch")
+            files.pop("revision-plan.json", None)
+            return [{"path":path, "text":data.decode()} for path, data in sorted({**files, "app.html":html}.items())]
+        except (KeyError, ValueError, OSError, subprocess.SubprocessError):
+            raise ApiError(503, "tool_source_unavailable", "暂时无法读取此版本的代码，请重试。") from None
+
+    def current_source(self, token, marker, tool_id, version):
+        with self.store.connection() as db:
+            user = self.store.session(db, token, marker)
+            tool = self.store.owned_tool(db, user, tool_id)
+            self.store.require_version(version, tool["version"])
+            job = self.published_source(db, tool["run_id"])
+            if job is not None and job["owner"] != user["id"]:
+                raise ApiError(404, "tool_unavailable", "此工具不可用。")
+        files = []
+        if job is not None:
+            try:
+                saved_digest = digest((self.runs / tool["run_id"] / "app.html").read_bytes())
+            except OSError:
+                raise ApiError(404, "tool_unavailable", "此工具不可用。") from None
+            if saved_digest != job["digest"]:
+                raise ApiError(503, "tool_source_unavailable", "暂时无法读取此版本的代码，请重试。")
+            files = self.source_files(job, saved_digest)
+        return {"toolId":tool_id, "version":version, "applied":True, "files":files}
+
+    def candidate_source(self, token, marker, identifier, data):
+        identity = {"commit":data.get("commit"), "sha256":data.get("sha256")}
+        with self.store.connection() as db:
+            row, candidate, revision, tool_id = self.publication_binding(db, token, marker, identifier, identity, data)
+            if revision is None or self.view(row)["state"] != "complete":
+                raise ApiError(409, "staged_not_ready", "此修改候选已变化，请重新打开预览。")
+            tool = self.store.owned_tool(db, {"id":row["owner"]}, tool_id)
+            self.store.require_version(revision["base_version"], tool["version"])
+            version = tool["version"] + 1
+            self.store.require_version(data.get("version"), version)
+        files = self.source_files(row, candidate["digest"])
+        return {"toolId":tool_id, "version":version, "applied":False, "files":files}
+
     @staticmethod
     def candidate_record(db, identifier):
         return db.execute("SELECT * FROM staged_candidates WHERE task=?", (identifier,)).fetchone()
