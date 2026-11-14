@@ -143,9 +143,14 @@ export async function verifyStagedFlow(ctx) {
   await click('#add-record', board.context);
   assert.match(await inBoard('document.querySelector("[data-board-column=面试中] article").textContent'), /现场复核/);
 
-  await inBoard('document.querySelector("#export-backup").scrollIntoView({block:"center"})');
+  await until(async () => {
+    const saved = await stored(board.id);
+    return JSON.stringify(saved.entries).includes('现场复核') &&
+      await evaluate('document.querySelector("#record-save-status").dataset.state === "saved"');
+  });
   await pointerClick('#export-backup', board.context);
   evidence.tests.push('保存后留在生成页，预览可录入；点打开工具进入同一项');
+  assert.match(await inBoard('document.querySelector("#backup-status").textContent'), /已请求下载全部 2 条记录的备份/);
   const backupFile = join(downloadPath, 'root-tool-backup.json');
   const backup = await until(async () => readFile(backupFile, 'utf8').catch(() => ''));
   const decoded = JSON.parse(backup);
