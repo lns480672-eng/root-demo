@@ -44,7 +44,15 @@ python3 -B workbench.py --prepare-coding-agent-production-from /var/lib/root-dem
   --runs-dir /var/lib/root-demo-agent/v08
 ```
 
-候选服务的 systemd 配置须允许写入该状态目录，注入 `ROOT_PI_MODULES`，并保留现网 `ROOT_ACCOUNT_GENERATIONS=5`、`ROOT_TOTAL_GENERATIONS=500`。本次固定 `ROOT_AGENT_MAX_MODEL_CALLS=16` 与 `ROOT_AGENT_TIMEOUT_SECONDS=120`。
+候选服务的 systemd 配置须允许写入该状态目录，并注入 `ROOT_PI_MODULES`。按 [Agent 额度技术规格](../../specs/coding-agent-trial/spec.md#生成调用与额度) 核对拟部署环境的有效配置。更新已有实例时，在维护窗口备份实际环境文件和相关 systemd 覆盖后，明确设置以下值。已有环境变量会覆盖代码默认值。
+
+```ini
+ROOT_AGENT_MAX_MODEL_CALLS=100
+ROOT_ACCOUNT_GENERATIONS=1000
+ROOT_TOTAL_GENERATIONS=10000
+```
+
+核对管理员／账号额度读回与已有用量。Agent 单次运行超时沿用环境配置，未设置时为 120 秒。回退时同步恢复备份的环境配置。
 
 ```ini
 StateDirectory=

@@ -29,6 +29,8 @@ from accounts import ApiError, DEFAULT_INVITE_HOURS, InviteError, SESSION_SECOND
 from trial_budget import TrialBudget
 
 ROOT = Path(__file__).resolve().parent
+DEFAULT_GENERATION_LIMITS = (1000, 10000)
+DEFAULT_AGENT_MODEL_CALLS = 100
 ADMIN = "/admin"
 WORKBENCH = "/workbench"
 LOCAL_SITE = "http://[::1]:8788/"
@@ -164,7 +166,7 @@ def serve(key, port, runs=generate.RUNS, *, generation_limits=(5, 30), analysis_
           admin_usernames=(), analysis_provider=assistant_model.analyze, table_limits=None,
           staged_enabled=False, public_site_url=LOCAL_SITE, staged_provider=staged_blueprint.provide,
           staged_revision_provider=staged_revision.provide, staged_runtime_verifier=runtime_verify.verify,
-          coding_agent_enabled=False, coding_agent_timeout=120, coding_agent_max_attempts=12):
+          coding_agent_enabled=False, coding_agent_timeout=120, coding_agent_max_attempts=DEFAULT_AGENT_MODEL_CALLS):
     model_lock = threading.Lock()
     store = Store(runs / "workspace.sqlite3")
     budget = TrialBudget(store, runs, generation_limits=generation_limits, analysis_limits=analysis_limits,
@@ -804,17 +806,14 @@ def main():
         print("尚未配置 DeepSeek Key。可查看工作台及恢复既有工具。", flush=True)
     coding_agent_enabled = args.coding_agent or args.coding_agent_production
     try:
-        account_default, total_default = ("10", "120") if args.coding_agent else ("5", "30")
-        if args.coding_agent_production:
-            total_default = "500"
+        account_default, total_default = DEFAULT_GENERATION_LIMITS
         generation_limits = (int(os.environ.get("ROOT_ACCOUNT_GENERATIONS", account_default)),
                              int(os.environ.get("ROOT_TOTAL_GENERATIONS", total_default)))
         agent_settings = {}
         if coding_agent_enabled:
-            attempts_default = "16" if args.coding_agent_production else "12"
             agent_settings = {
                 "coding_agent_timeout": int(os.environ.get("ROOT_AGENT_TIMEOUT_SECONDS", "120")),
-                "coding_agent_max_attempts": int(os.environ.get("ROOT_AGENT_MAX_MODEL_CALLS", attempts_default)),
+                "coding_agent_max_attempts": int(os.environ.get("ROOT_AGENT_MAX_MODEL_CALLS", DEFAULT_AGENT_MODEL_CALLS)),
             }
             if min(agent_settings.values()) <= 0:
                 raise ValueError("ROOT_AGENT_TIMEOUT_SECONDS 和 ROOT_AGENT_MAX_MODEL_CALLS 必须是正整数")

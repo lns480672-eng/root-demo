@@ -18,7 +18,7 @@ class AgentConfigurationTests(unittest.TestCase):
             "ROOT_ACCOUNT_GENERATIONS": "11",
             "ROOT_TOTAL_GENERATIONS": "180",
         }
-        for environment, expected in (({}, (120, 12, (10, 120))), (overrides, (150, 16, (11, 180)))):
+        for environment, expected in (({}, (120, 100, (1000, 10000))), (overrides, (150, 16, (11, 180)))):
             with self.subTest(environment=environment), tempfile.TemporaryDirectory() as directory:
                 args = ["workbench.py", "--coding-agent", "--runs-dir", str(Path(directory))]
                 with patch("sys.argv", args), patch.dict("os.environ", environment, clear=True), patch.object(workbench, "serve") as serve:
