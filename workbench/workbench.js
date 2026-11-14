@@ -128,13 +128,14 @@ function render() {
   const returning = !editing && stagedTask?.requirement === requirement.value.trim() &&
     isActiveStagedTask(stagedTask) && (stagedTask.category || 'auto') === generationCategory.value;
   const tableMode = entryMode === 'table';
+  const revisionBusy = editing && stagedTasks.some(isRunningStagedTask);
   const showingTool = Boolean(active);
   product.dataset.state = pending ? 'loading' : failure ? 'failure' : active ? 'success' : 'initial';
   const atStart = workspace.dataset.mode === 'start';
   const showingResult = workspace.dataset.mode === 'result' && Boolean(active) && !editing;
-  generate.textContent = pending ? '生成中…' : supplementIssue ? '提交补充' : failure ? '重试' : editing && stagedEnabled ? '查看修改方案' : editing ? '生成新版' : atStart ? '开始' : '直接生成';
+  generate.textContent = pending ? '生成中…' : revisionBusy ? '已有任务正在处理…' : supplementIssue ? '提交补充' : failure ? '重试' : editing && stagedEnabled ? '查看修改方案' : editing ? '生成新版' : atStart ? '开始' : '直接生成';
   generate.disabled = showingResult || !session || !configured || !networkIsolated || starting || blocked ||
-    tableMode || returning || Boolean(pendingRevision) || !requirement.value.trim();
+    tableMode || returning || revisionBusy || Boolean(pendingRevision) || !requirement.value.trim();
   requirement.readOnly = blocked;
   byId('generation-scope').hidden = !stagedEnabled || editing || tableMode;
   generationCategory.disabled = blocked;
@@ -247,7 +248,9 @@ async function api(path, options) {
       throw new Error('Invalid workbench error response');
     }
   } catch {
-    const error = new Error('无法连接本机服务，请检查工作台是否正在运行。');
+    const loopback = ['localhost', '127.0.0.1', '[::1]'].includes(location.hostname);
+    const error = new Error(loopback ? '无法连接本机服务，请检查工作台是否正在运行。'
+      : '暂时无法连接工作台，请稍后重试。');
     error.code = 'transport';
     throw error;
   }
@@ -308,6 +311,10 @@ function restoredStagedPublication() {
 
 function selectedStagedTask() {
   return stagedTasks.find(task => task.id === selectedStagedId);
+}
+
+function isRunningStagedTask(task) {
+  return task.state === 'queued' || task.state === 'running';
 }
 
 function isActiveStagedTask(task) {
@@ -665,7 +672,7 @@ async function refreshStagedTasks() {
   if (!stagedEnabled || !session) return;
   clearTimeout(stagedTimer);
   const request = ++stagedRead;
-  const wasRunning = stagedTasks.some(task => ['queued', 'running'].includes(task.state));
+  const wasRunning = stagedTasks.some(isRunningStagedTask);
   try {
     const result = await workspaceApi('/api/staged', undefined, publicationTimeout);
     if (request !== stagedRead) return;
@@ -697,7 +704,7 @@ async function refreshStagedTasks() {
     stagedLoadError = '暂时无法读取生成任务，请重试。';
   }
   const task = selectedStagedTask();
-  const running = stagedTasks.some(item => ['queued', 'running'].includes(item.state));
+  const running = stagedTasks.some(isRunningStagedTask);
   render();
   if (wasRunning && !running) refreshTrial();
   if (['complete', 'published'].includes(task?.state) && task.id === stagedAutoId && !stagedPendingId && !pendingPublication

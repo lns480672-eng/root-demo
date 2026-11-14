@@ -251,6 +251,12 @@ class StagedJobs:
                         or (revision and (revision["tool_id"], revision["base_version"]) != (tool_id, version))):
                     raise ApiError(409, "staged_request_changed", "同一请求编号的需求或版本不能变更。")
                 return self.view(existing, db)
+            if tool_id and db.execute("""
+                SELECT 1 FROM staged_jobs
+                WHERE owner=? AND expires>? AND (state='queued' OR (state='running' AND lease_until>?))
+                LIMIT 1
+            """, (owner, self.clock(), self.clock())).fetchone():
+                raise ApiError(409, "staged_busy", "已有生成或修改正在处理，请结束后再提交。")
             self.budget.require_dispatch_enabled(db)
             identifier = uuid.uuid4().hex
             repo_id, head = None, ZERO

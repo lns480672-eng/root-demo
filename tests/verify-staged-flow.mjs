@@ -342,7 +342,7 @@ export async function verifyStagedReconnect(ctx) {
       if (path !== '/api/generate') return original(path, options);
       window.fixtureSubmissions.push(JSON.parse(options.body));
       if (window.fixtureSubmissions.length === 2) {
-        return new Response('{"error":"unavailable"}', {status:503, headers:{'Content-Type':'application/json'}});
+        return new Response('<h1>Service unavailable</h1>', {status:503, headers:{'Content-Type':'text/html'}});
       }
       const response = await original(path, options);
       if (window.fixtureSubmissions.length !== 1) return response;
@@ -658,6 +658,30 @@ export async function verifyStagedRevision(ctx) {
   assert.match(await evaluate('document.querySelector("#source-code").textContent'), /添加/);
   assert.equal(await evaluate('document.querySelector("#source-code").children.length'), 0);
   await click('#preview-view');
+  await type('#requirement', change);
+  await evaluate(`(() => {
+    const original = window.fetch;
+    window.revisionAdmissionPosts = 0;
+    window.fixtureActiveRevision = true;
+    window.fetch = async (path, options) => {
+      if (path.endsWith('/revise') && options?.method === 'POST') window.revisionAdmissionPosts++;
+      const response = await original(path, options);
+      if (path !== '/api/staged' || !window.fixtureActiveRevision) return response;
+      const result = await response.json();
+      result.tasks.unshift({id:'a'.repeat(32), requirement:'另一个标签页的任务', state:'running', completed:[]});
+      return Response.json(result);
+    };
+    void refreshStagedTasks();
+  })()`);
+  await until(() => evaluate('document.querySelector("#generate").disabled'));
+  assert.match(await evaluate('document.querySelector("#generate").textContent'), /正在处理/);
+  await evaluate('document.querySelector("#requirement").form.requestSubmit()');
+  assert.equal(await evaluate('window.revisionAdmissionPosts'), 0);
+  assert.equal(await evaluate('document.querySelector("#requirement").value'), change);
+  await evaluate('window.fixtureActiveRevision = false; void refreshStagedTasks();');
+  await until(() => evaluate('!document.querySelector("#generate").disabled'));
+  await evaluate('document.querySelector("#requirement").value = ""');
+
   await generate(change);
   await until(() => visible('#revision-confirm'));
   assert.equal(await visible('.elys-preview'), true);
