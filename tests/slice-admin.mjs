@@ -175,7 +175,7 @@ export async function verifyAdmin({evaluate, click, pointerClick, type, until, c
   stage('AC-019 administrator issues and copies an invitation');
   await click('#invite-nav');
   await until(() => visible('#invite-module'));
-  assert.match(await text('#invite-policy'), /24 小时.*一次/);
+  assert.match(await text('#invite-policy'), /72 小时.*一次/);
   await screenshot('invite-module-empty');
   const issuedCount = () => evaluate(`fetch('/api/trial/admin', {headers: {'X-Root-Session': identity.marker}})
     .then(response => response.json()).then(state => state.audit.filter(row => row.action === 'issue_invite').length)`);
@@ -211,7 +211,10 @@ export async function verifyAdmin({evaluate, click, pointerClick, type, until, c
   await click('#invite-generate');
   await until(() => visible('#invite-result'));
   const expiry = await evaluate('Date.parse(document.querySelector("#invite-expires").dateTime)');
-  assert.ok(expiry - now >= 86399000 && expiry - now < 86410000);
+  assert.ok(expiry - now >= 259199000 && expiry - now < 259210000);
+  await evaluate('document.querySelector("#issued-code").style.visibility = "hidden"');
+  await screenshot('invite-expiration');
+  await evaluate('document.querySelector("#issued-code").style.removeProperty("visibility")');
   stage('AC-019 write actual Chrome clipboard');
   await cdp('Page.bringToFront');
   await pointerClick('#invite-copy');

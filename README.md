@@ -20,7 +20,7 @@
 python3 -B workbench.py --port 8773 --runs-dir runs/accounts-local
 ```
 
-打开终端显示的 [本机工作台](http://127.0.0.1:8773)。启动行显示构建标识。首次体验时，由本机操作员从同一目录生成邀请码并交给评审，默认 24 小时内可注册一次。
+打开终端显示的 [本机工作台](http://127.0.0.1:8773)。启动行显示构建标识。首次体验时，由本机操作员从同一目录生成邀请码并交给评审，默认 72 小时内可注册一次。
 
 ```sh
 python3 -B workbench.py --runs-dir runs/accounts-local --create-invite

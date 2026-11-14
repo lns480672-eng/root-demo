@@ -573,7 +573,7 @@ class AccountHTTP(unittest.TestCase):
         replay = next(body for status, body, _ in responses if status == 409)
         self.assertEqual(replay["code"], "invite_already_issued")
         self.assertTrue(issued["code"] not in json.dumps(replay))
-        self.assertTrue(now + 86400 <= issued["expiresAt"] <= int(time.time()) + 86400)
+        self.assertTrue(now + 259200 <= issued["expiresAt"] <= int(time.time()) + 259200)
         self.assertEqual(issued["uses"], 1)
         code = issued["code"]
         with self.store.connection() as db:
@@ -582,7 +582,7 @@ class AccountHTTP(unittest.TestCase):
             """, (data["requestId"],)))
             invite_row = db.execute("SELECT remaining, expires FROM invites WHERE digest=?", (digest(code),)).fetchone()
         self.assertEqual(len(records), 1)
-        self.assertEqual(tuple(records[0]), ("trial-admin", issued["expiresAt"] - 86400, digest(code)))
+        self.assertEqual(tuple(records[0]), ("trial-admin", issued["expiresAt"] - 259200, digest(code)))
         self.assertEqual(tuple(invite_row), (1, issued["expiresAt"]))
         self.assertFalse(any(code.encode() in path.read_bytes() for path in Path(self.runs).glob("workspace.sqlite3*")))
         status, state, _ = self.request("/api/trial/admin", cookie=admin, marker=marker)

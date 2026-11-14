@@ -6,12 +6,12 @@ import secrets
 import time
 from uuid import UUID
 
-from accounts import ApiError, USERNAME, digest
+from accounts import ApiError, DEFAULT_INVITE_HOURS, USERNAME, digest
 
 
 BEIJING = timezone(timedelta(hours=8))
 MAX_COUNTER = 2**53 - 1
-INVITE_SECONDS = 24 * 60 * 60
+INVITE_SECONDS = DEFAULT_INVITE_HOURS * 60 * 60
 DRAFT_OFFER_SECONDS = 15 * 60
 
 
