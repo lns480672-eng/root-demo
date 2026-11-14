@@ -84,6 +84,8 @@ let toolRevisionRead = 0;
 let toolRevisionStatus = '';
 let selectedStagedId = null;
 let stagedAutoId = null;
+let foregroundGeneration = null;
+let animateSavedResult = false;
 let stagedRead = 0;
 let stagedTimer = null;
 let stagedMessage = '';
@@ -126,7 +128,7 @@ function render() {
   const atStart = workspace.dataset.mode === 'start';
   const showingResult = workspace.dataset.mode === 'result' && Boolean(active) && !editing;
   generate.textContent = pending ? '生成中…' : supplementIssue ? '提交补充' : failure ? '重试' : editing && stagedEnabled ? '查看修改方案' : editing ? '生成新版' : atStart ? '开始' : '直接生成';
-  generate.disabled = !session || !configured || !networkIsolated || starting || blocked ||
+  generate.disabled = showingResult || !session || !configured || !networkIsolated || starting || blocked ||
     tableMode || returning || Boolean(pendingRevision) || !requirement.value.trim();
   requirement.readOnly = blocked;
   byId('generation-scope').hidden = !stagedEnabled || editing || tableMode;
@@ -139,10 +141,18 @@ function render() {
   for (const id of primaryNavigation) byId(id).disabled = blocked || (starting && id === 'library-entry');
   byId('new-tool-options').hidden = !atStart && !tableMode;
   previewSection.hidden = !standalone && !browsing && !editing && !syncing && !stagedPendingId && (!showingResult || assistantOpen);
-  byId('open-generated-tool').hidden = !showingResult || blocked || Boolean(failure);
-  byId('generation-saved').hidden = !showingResult || blocked || Boolean(failure);
+  const result = byId('generation-result');
+  result.hidden = !showingResult || blocked || Boolean(failure);
+  if (animateSavedResult && !result.hidden) {
+    animateSavedResult = false;
+    if (document.visibilityState === 'visible' && !matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      const timing = {duration: 420, easing: 'ease-out'};
+      preview.animate([{opacity: .35, transform: 'translateY(6px)'}, {opacity: 1, transform: 'translateY(0)'}], timing);
+      byId('generation-saved').animate([{opacity: 0}, {opacity: 1}], timing);
+    }
+  }
   const returnToLibrary = byId('return-to-library');
-  returnToLibrary.hidden = !active;
+  returnToLibrary.hidden = !active || showingResult;
   returnToLibrary.disabled = blocked;
   let currentTitle = '工具预览';
   for (const button of byId('tool-list').querySelectorAll('button')) {
@@ -168,7 +178,7 @@ function render() {
   byId('revision-versions').hidden = !showVersions;
   byId('tool-history').hidden = !showVersions;
   if (!showVersions && !toolHistory.hidden) showToolHistory(false);
-  byId('publish-lock').hidden = standalone || syncing || !showingTool;
+  byId('publish-lock').hidden = standalone || syncing || !showingTool || showingResult;
   byId('revise-tool').disabled = blocked || !configured;
   byId('tool-history').textContent = active ? '当前 v' + active.version + ' · 版本历史' : '版本历史';
   const sync = byId('sync-tool');
@@ -186,13 +196,13 @@ function render() {
   byId('admin-entry').hidden = !session || !trial?.admin;
   const balance = byId('generation-balance');
   const restriction = currentGenerationRestriction();
-  balance.hidden = tableMode || !trial;
+  balance.hidden = showingResult || tableMode || !trial;
   if (trial) {
     const usage = trial.generation;
     balance.textContent = '个人生成额度剩余 ' + usage.remaining + ' / ' + usage.limit + ' 次';
   }
   const generationBlock = byId('generation-block');
-  generationBlock.hidden = tableMode || !restriction;
+  generationBlock.hidden = showingResult || tableMode || !restriction;
   generationBlock.textContent = restriction?.label || '';
   byId('generation-retry-note').hidden = tableMode || !failure;
   byId('loading').hidden = syncing || !pending || Boolean(stagedActivity);
@@ -220,7 +230,7 @@ function render() {
   byId('empty-copy').textContent = pending ? '工具准备好后，会在这里显示。' : '输入需求后，工具会在这里出现。';
   byId('table-panel').hidden = !tableMode;
   byId('table-panel').inert = syncing;
-  form.hidden = tableMode;
+  form.hidden = tableMode || showingResult;
   byId('table-entry').setAttribute('aria-pressed', String(tableMode));
   byId('table-entry').disabled = byId('assistant-entry').disabled = blocked;
   renderStagedTasks(blocked, restriction);
@@ -306,7 +316,7 @@ function isActiveStagedTask(task) {
 function clearStagedSelection() {
   closeRepairTrial();
   supplementIssue = null;
-  selectedStagedId = stagedAutoId = null;
+  selectedStagedId = stagedAutoId = foregroundGeneration = null;
   pendingRevision = null;
   stagedMessage = '';
 }
@@ -511,7 +521,7 @@ function renderRevisionQuestion(task, canAct) {
 function renderStagedTasks(blocked, restriction) {
   const panel = byId('staged-panel');
   const task = selectedStagedTask();
-  panel.hidden = !session || !stagedEnabled;
+  panel.hidden = !session || !stagedEnabled || workspace.dataset.mode === 'result';
   if (panel.hidden) {
     byId('tool-revision-dialog').hidden = true;
     return;
@@ -1668,7 +1678,7 @@ async function commitStaged(frame, tool) {
   return saved;
 }
 
-async function finishStagedComposition(id) {
+async function finishStagedComposition(id, animate = false) {
   if (editing && stagedEnabled && active) {
     stagedTasks = stagedTasks.filter(task => task.id !== id);
     clearStagedSelection();
@@ -1680,7 +1690,7 @@ async function finishStagedComposition(id) {
   }
   stagedTasks = stagedTasks.filter(task => task.id !== id);
   clearStagedSelection();
-  finishComposition(true, !editing && workspace.dataset.mode !== 'browse' && Boolean(requirement.value.trim()));
+  finishComposition(true, !editing && workspace.dataset.mode !== 'browse' && Boolean(requirement.value.trim()), animate);
   await loadLibrary(publicationTimeout).catch(error => warnStorage(error.message));
 }
 
@@ -1725,6 +1735,7 @@ function closeRepairTrial() {
 
 async function openStagedCandidate(task, approvedTool = null, applyRepair = false) {
   if (phase !== 'idle' || pendingPublication || stagedPendingId || !networkIsolated) return;
+  const animate = foregroundGeneration === task.id && task.state !== "published" && !task.baseToolId;
   stagedAutoId = null;
   selectedStagedId = task.id;
   stagedMessage = '';
@@ -1763,7 +1774,7 @@ async function openStagedCandidate(task, approvedTool = null, applyRepair = fals
       }
       await openTool(tool);
     }
-    await finishStagedComposition(task.id);
+    await finishStagedComposition(task.id, animate);
   } catch (error) {
     stagedMessage = generationError(error);
     if (['staged_runtime_failed', 'revision_conflict', 'version_conflict'].includes(error.code)) {
@@ -2114,11 +2125,15 @@ byId('requirement-examples').addEventListener('click', event => {
   requirement.dispatchEvent(new Event('input'));
 });
 
-function finishComposition(saved = false, stay = false) {
+function finishComposition(saved = false, stay = false, animate = false) {
+  animateSavedResult = stay && animate;
   byId('first-tool-saved').hidden = !(saved && !stay && !latestToolId);
   editing = false;
   entryMode = 'direct';
   if (stay) {
+    const original = byId('generation-original');
+    original.open = false;
+    original.lastElementChild.textContent = requirement.value;
     compose(true, 'result');
     return;
   }
@@ -2196,6 +2211,7 @@ form.addEventListener('submit', async event => {
     if (stagedEnabled && tool.task) {
       rememberStagedTask(tool.task);
       selectedStagedId = stagedAutoId = tool.task.id;
+      foregroundGeneration = editing ? null : tool.task.id;
       stagedMessage = '';
       if (tool.task.state === 'published') {
         rememberStagedPublication(tool.task.id);
@@ -2207,7 +2223,7 @@ form.addEventListener('submit', async event => {
     render();
     if (editing) await openRevision(tool);
     else await openTool(tool);
-    finishComposition(true, !editing);
+    finishComposition(true, !editing, !editing);
     await loadLibrary().catch(error => warnStorage(error.message));
   } catch (error) {
     if (pendingPublication) {
@@ -2264,6 +2280,7 @@ async function selectTool(id, source) {
 
 function beginComposition(revise, value = '', category = 'auto', focus = true, title = '') {
   draftTaskTitle = title;
+  animateSavedResult = false;
   requirementAssistant.close();
   byId('first-tool-saved').hidden = true;
   clearStagedSelection();

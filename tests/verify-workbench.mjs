@@ -13,6 +13,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 const live = process.argv.includes('--live');
 const standaloneCatalog = process.env.ROOT_STANDALONE_CATALOG;
 const stagedFlow = process.argv.includes('--staged-flow');
+const completionFlow = process.argv.includes('--completion-flow');
 const ledgerTheme = stagedFlow && process.argv.includes('--ledger-theme');
 const demoSite = stagedFlow && process.argv.includes('--demo-site');
 const draftNaming = process.argv.includes('--draft-naming');
@@ -715,6 +716,96 @@ try {
     assert.equal(readback.title, task.title);
     assert.equal(readback.requirement, body);
     evidence.tests.push({id:'AC-011/012/013', title:readback.title, fullText:readback.requirement, task:task.id});
+  } else if (completionFlow) {
+    stage = 'TEST-001-06 saved generation transition';
+    await cdp('Page.navigate', {url:base});
+    await login(accountA, true);
+    if (await visible('#workspace-guide')) await click('#guide-skip');
+    const input = stagedFlow ? '做一份简单读书清单，新增书名并保存。' : requirements[0];
+    const observe = () => evaluate(`(() => {
+      window.completionMotions = [];
+      const animate = Element.prototype.animate;
+      Element.prototype.animate = function(frames, options) {
+        if (['preview', 'generation-saved'].includes(this.id)) {
+          window.completionMotions.push({id:this.id, frames, options});
+        }
+        return animate.call(this, frames, options);
+      };
+    })()`);
+    await observe();
+    for (const width of [1440, 390]) {
+      await cdp('Emulation.setDeviceMetricsOverride', {width,height:844,deviceScaleFactor:1,mobile:width===390});
+      await click('#new-tool');
+      await evaluate('window.completionMotions.length = 0');
+      const recording = process.argv.includes('--record-completion') && artifacts;
+      const directory = recording && join(artifacts, 'frames-' + width);
+      if (directory) await mkdir(directory, {recursive: true});
+      const timestamps = [];
+      let recordingDone = false;
+      const capture = directory && (async () => {
+        while (!recordingDone) {
+          const {data} = await cdp('Page.captureScreenshot', {format:'jpeg',quality:83});
+          timestamps.push(performance.now());
+          await writeFile(join(directory, String(timestamps.length).padStart(4,'0') + '.jpg'), Buffer.from(data,'base64'));
+          await delay(25);
+        }
+      })();
+      try {
+        await generate(input);
+        await until(() => visible('#open-generated-tool'));
+        if (directory) await delay(800);
+      } finally {
+        recordingDone = true;
+        if (capture) await capture;
+      }
+      if (directory) await writeFile(join(directory, 'timestamps.json'), JSON.stringify(timestamps));
+      assert.equal(await visible('#generate'), false);
+      assert.equal(await visible('#requirement'), false);
+      assert.equal(await visible('#preview iframe[data-tool]'), true);
+      assert.equal(await evaluate('document.querySelector("#preview iframe[data-tool]").inert'), false);
+      assert.equal(await evaluate('document.querySelector("#open-generated-tool").disabled'), false);
+      assert.equal(await evaluate('document.activeElement.id === "open-generated-tool"'), false);
+      const motions = await evaluate('window.completionMotions');
+      assert.deepEqual(motions.map(item => [item.id,item.options.duration,item.options.easing]),
+        [['preview',420,'ease-out'],['generation-saved',420,'ease-out']]);
+      assert.equal(motions[0].frames[0].transform, 'translateY(6px)');
+      await click('#generation-original summary');
+      assert.equal(await evaluate('document.querySelector("#generation-original p").textContent'), input);
+      await screenshot('result-' + width);
+      const toolId = await evaluate('document.querySelector("#preview iframe[data-tool]").dataset.tool');
+      await click('#open-generated-tool');
+      assert.equal(await visible('#revise-tool'), true);
+      assert.equal(await evaluate('document.querySelector("#preview iframe[data-tool]").dataset.tool'), toolId);
+    }
+    if (!stagedFlow) {
+      await click('#new-tool');
+      await evaluate('window.completionMotions.length = 0');
+      await generate('回归：强制新建失败');
+      await until(() => visible('#error'));
+      assert.equal(await visible('#generate'), true);
+      assert.equal(await visible('#generation-saved'), false);
+      assert.deepEqual(await evaluate('window.completionMotions'), []);
+    }
+    if (!stagedFlow) {
+      await click('#new-tool');
+      await evaluate(`window.completionMotions.length = 0;
+        Object.defineProperty(document, 'visibilityState', {configurable:true, value:'hidden'});`);
+      await generate(input);
+      await until(() => visible('#open-generated-tool'));
+      assert.deepEqual(await evaluate('window.completionMotions'), []);
+      await evaluate('delete document.visibilityState');
+    }
+    await cdp('Emulation.setEmulatedMedia', {features:[{name:'prefers-reduced-motion',value:'reduce'}]});
+    await click('#new-tool');
+    await evaluate('window.completionMotions.length = 0');
+    await generate(input);
+    await until(() => visible('#open-generated-tool'));
+    assert.deepEqual(await evaluate('window.completionMotions'), []);
+    await screenshot('result-reduced-motion');
+    await cdp('Page.reload');
+    await until(() => evaluate('document.documentElement.dataset.ready === "true"'));
+    assert.equal(await visible('#generation-saved'), false);
+    evidence.tests.push({id:'TEST-001-06', desktop:true, narrow:true, reducedMotion:true, refresh:true});
   } else if (stagedFlow) {
     evidence.mode = process.env.ROOT_STAGED_LIVE === '1' ? 'deepseek-staged' : 'fixture-staged';
     const tableJourney = process.argv.includes('--table-journey');
@@ -1068,12 +1159,16 @@ try {
     assert.equal(await evaluate('window.testGenerationPosts.length'), 1);
     assert.deepEqual((await library()).items.map(item => item.id), [first.id]);
     stage = 'first tool stays on the generation page after saving';
-    assert.equal(await visible('#requirement'), true);
-    assert.equal(await evaluate('document.querySelector("#requirement").value'), requirements[0]);
+    assert.equal(await visible('#requirement'), false);
+    assert.equal(await evaluate('document.querySelector("#generation-original p").textContent'), requirements[0]);
     assert.equal(await visible('#open-generated-tool'), true);
     assert.equal(await evaluate('document.querySelector("#new-tool").getAttribute("aria-current")'), 'page');
     assert.equal(await visible('#entry-coachmark'), false);
     assert.equal(await visible('#generation-saved'), true);
+    assert.equal(await visible('#publish-tool'), false);
+  }
+  if (entryFlow) {
+    await click('#open-generated-tool');
     assert.equal(await visible('#publish-tool'), true);
     assert.equal(await evaluate('document.querySelector("#publish-tool").disabled'), true);
     assert.match(await evaluate('document.querySelector("#publish-explanation").textContent'), /应用发布暂未开放/);
@@ -1089,14 +1184,16 @@ try {
   const sample = '星际旅行手记';
   stage = 'add reading record';
   await type('#book', sample, first.context);
-  if (entryFlow) await pointerClick('form button', first.context);
+  if (entryFlow) {
+    await until(() => evaluate('document.querySelector("#preview").getAnimations().length === 0'));
+    await pointerClick('form button', first.context);
+  }
   else await click('form button', first.context);
   await until(() => evaluate(`document.querySelector("#list").innerText.includes("${sample}")`, first.context));
   await until(async () => JSON.stringify((await stored(first.id)).entries).includes(sample));
   let operatedTool = first;
   if (entryFlow) {
     stage = 'first saved tool is available from the library';
-    await click('#open-generated-tool');
     assert.equal(await visible('#requirement'), false);
     operatedTool = await activeTool();
     assert.equal(operatedTool.id, first.id);

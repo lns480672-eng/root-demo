@@ -106,7 +106,8 @@ export async function verifyStagedFlow(ctx) {
   });
   assert.equal(await visible('#generation-saved'), true);
   assert.equal(await visible('#open-generated-tool'), true);
-  assert.equal(await evaluate('document.querySelector("#requirement").value'), requirement);
+  assert.equal(await visible('#requirement'), false);
+  assert.equal(await evaluate('document.querySelector("#generation-original p").textContent'), requirement);
   assert.equal(await sandbox(), 'allow-scripts allow-forms allow-downloads');
   assert.equal((await library()).items.length, 2);
   assert.equal(await used(), before + 1);
