@@ -120,6 +120,11 @@
             <p id="tool-revision-status" class="auth-muted" role="status"></p>
             <ol id="tool-revision-log" aria-label="修改消息"></ol>
           </section>
+          <section id="generation-result" class="generation-result" aria-labelledby="generation-saved" hidden>
+            <p id="generation-saved" role="status">已保存</p>
+            <details id="generation-original"><summary>查看原需求</summary><p></p></details>
+            <button id="open-generated-tool" type="button" class="elys-primary">打开工具</button>
+          </section>
           <form id="composer">
             <div id="generation-scope" hidden>
               <label for="generation-category">生成类别</label>
@@ -226,7 +231,6 @@
           <div class="tool-heading">
             <h2 id="preview-title">工具预览</h2>
             <div class="preview-actions">
-              <button id="open-generated-tool" type="button" hidden>打开工具</button>
               <button id="revise-tool" type="button" hidden>修改</button>
               <a id="open-standalone" class="masthead-link" target="_blank" rel="noopener" hidden>独立打开<span aria-hidden="true"> ↗</span></a>
               <button id="sync-tool" type="button" hidden>同步工具</button>
@@ -247,7 +251,6 @@
           <strong id="record-save-title"></strong>
           <span id="record-save-detail"></span>
         </div>
-        <p id="generation-saved" class="elys-config" role="status" hidden>生成完成，已保存到「我的工具」。</p>
         <p id="first-tool-saved" class="elys-config" role="status" hidden>工具已保存，可从「我的工具」找回。</p>
         <p id="publication-message" class="elys-config" role="status" hidden></p>
         <p id="standalone-error" class="elys-error" role="status" hidden></p>

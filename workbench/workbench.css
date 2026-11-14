@@ -698,3 +698,18 @@ body:has(#auth:not([hidden])) { padding: 0; }
 .standalone .elys-preview-header .auth-eyebrow { display: none; }
 .standalone .preview-frames iframe { height: max(290px, calc(100dvh - 220px)); }
 #standalone-error { margin-block: 12px 0; }
+
+.generation-result {
+  display: grid;
+  justify-items: start;
+  gap: 14px;
+  margin-block-start: 14px;
+  padding: clamp(12px, 2vw, 20px);
+  border: 1px solid var(--elys-line);
+  border-radius: 16px;
+  background: var(--elys-white);
+}
+.generation-result #generation-saved { margin: 0; font-weight: 700; }
+#generation-original { min-width: 0; max-width: 100%; }
+#generation-original p { margin-block-start: 8px; white-space: pre-wrap; overflow-wrap: anywhere; }
+#open-generated-tool { min-height: 44px; }
