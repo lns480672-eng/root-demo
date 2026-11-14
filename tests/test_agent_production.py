@@ -44,8 +44,8 @@ class AgentProductionTests(unittest.TestCase):
         self.assertEqual(serve.call_args.args[2], self.clone)
         settings = serve.call_args.kwargs
         self.assertTrue(settings["coding_agent_enabled"])
-        self.assertEqual(settings["generation_limits"], (5, 500))
-        self.assertEqual(settings["coding_agent_max_attempts"], 16)
+        self.assertEqual(settings["generation_limits"], (1000, 10000))
+        self.assertEqual(settings["coding_agent_max_attempts"], 100)
         self.assertEqual(settings["coding_agent_timeout"], 120)
 
     def assert_rejected(self, message, runs, *args):

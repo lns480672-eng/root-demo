@@ -180,6 +180,25 @@ jobs.run(job, fence, provider)
         self.assertIsNone(self.jobs.claim(*self.owner, job))
         self.assertEqual(self.budget.balance(*self.owner)["generation"]["totalUsed"], 1)
 
+    def test_task_allows_100_dispatches_and_rejects_the_next(self):
+        from workbench import DEFAULT_AGENT_MODEL_CALLS, DEFAULT_GENERATION_LIMITS
+
+        budget = TrialBudget(self.store, self.root, generation_limits=DEFAULT_GENERATION_LIMITS)
+        jobs = StagedJobs(self.store, budget, self.root, Blueprint(), max_attempts=DEFAULT_AGENT_MODEL_CALLS)
+        job = jobs.create(*self.owner, "复杂官网", uuid.uuid4().hex)["id"]
+        fence = jobs.claim(*self.owner, job)
+        for _ in range(100):
+            jobs.dispatch(job, fence, 0, uuid.uuid4().hex)
+        with self.assertRaises(ApiError) as exhausted:
+            jobs.dispatch(job, fence, 0, uuid.uuid4().hex)
+        self.assertEqual(exhausted.exception.code, "staged_exhausted")
+        generation = budget.balance(*self.owner)["generation"]
+        self.assertEqual((generation["used"], generation["limit"], generation["totalUsed"],
+                          generation["totalLimit"]), (0, 1000, 100, 10000))
+        self.assertEqual(budget.balance(*self.other)["generation"]["totalRemaining"], 9900)
+        restarted = TrialBudget(self.store, self.root, generation_limits=DEFAULT_GENERATION_LIMITS)
+        self.assertEqual(restarted.balance(*self.owner)["generation"], generation)
+
     def test_request_id_replay_has_a_fixed_requirement(self):
         request = uuid.uuid4().hex
         task = self.jobs.create(*self.owner, "首次需求", request)
