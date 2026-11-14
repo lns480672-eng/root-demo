@@ -4519,7 +4519,8 @@
       "StagedTask": {
         "type": "object",
         "properties": {
-          "title": {"type": "string", "maxLength": 40, "description": "草稿短名，普通直接生成时缺省。requirement 始终返回完整需求。"},
+          "title": {"type": "string", "maxLength": 40, "description": "草稿短名优先，其次是生成规格的短标题。无标题时省略，requirement 始终返回完整需求。"},
+          "titleSource": {"type": "string", "enum": ["draft", "spec"], "description": "标题来自用户确认的草稿，或由生成规格返回。"},
           "canRepair": {"type": "boolean"},
           "canSupplement": {"type": "boolean"},
           "repairs": {

@@ -106,6 +106,8 @@ class StagedJobs:
                 db.execute("ALTER TABLE staged_jobs ADD COLUMN category TEXT NOT NULL DEFAULT 'auto'")
             if "title" not in columns:
                 db.execute("ALTER TABLE staged_jobs ADD COLUMN title TEXT")
+            if "generated_title" not in columns:
+                db.execute("ALTER TABLE staged_jobs ADD COLUMN generated_title TEXT")
             candidate_columns = {row["name"] for row in db.execute("PRAGMA table_info(staged_candidates)")}
             if "runtime_proof" not in candidate_columns:
                 db.execute("ALTER TABLE staged_candidates ADD COLUMN runtime_proof TEXT")
@@ -157,7 +159,9 @@ class StagedJobs:
                   "resumable":state in ("queued", "failed", "interrupted")
                   and row["failure"] != "staged_runtime_failed"}
         if row["title"]:
-            result["title"] = row["title"]
+            result.update(title=row["title"], titleSource="draft")
+        elif row["generated_title"]:
+            result.update(title=row["generated_title"], titleSource="spec")
         guidance = REVISION_GUIDANCE.get(row["failure"])
         if state == "unsupported" and guidance:
             result["guidance"] = guidance
@@ -584,6 +588,7 @@ class StagedJobs:
         steps = self.steps(row)
         state = "complete" if stage == "assemble" else "running"
         failure = None
+        generated_title = row["generated_title"]
         if stage == "revision-plan":
             decision = json.loads(content)["status"]
             if decision == "proposed":
@@ -593,10 +598,18 @@ class StagedJobs:
                 failure = "revision_clarification_required" if decision == "clarify" else "staged_unsupported"
         elif stage == "spec":
             stages = self.blueprint.stage_plan(content)
-            steps = ("revision-plan", *stages) if steps[0] == "revision-plan" else stages
-        db.execute("UPDATE staged_jobs SET next_stage=?,head=?,state=?,lease_until=?,updated_at=?,plan=?,failure=? WHERE id=?",
-                   (next_stage, oid, state, self.clock() + self.lease_seconds if state == "running" else 0,
-                    self.clock(), json.dumps(steps), failure, row["id"]))
+            is_revision = steps[0] == "revision-plan"
+            steps = ("revision-plan", *stages) if is_revision else stages
+            if not is_revision and not row["title"]:
+                spec = self.blueprint.read_artifact(content)
+                title = spec.get("title")
+                if isinstance(title, str):
+                    generated_title = title.strip()[:40].rstrip() or None
+        db.execute("""
+            UPDATE staged_jobs SET next_stage=?,head=?,state=?,lease_until=?,updated_at=?,plan=?,failure=?,
+                                   generated_title=? WHERE id=?
+        """, (next_stage, oid, state, self.clock() + self.lease_seconds if state == "running" else 0,
+              self.clock(), json.dumps(steps), failure, generated_title, row["id"]))
 
     def check_revision(self, db, row, stage, content, prior):
         revision = self.revision_record(db, row["id"])

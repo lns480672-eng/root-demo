@@ -14,6 +14,10 @@ from staged_jobs import StagedJobs
 class Blueprint:
     STAGES = ("spec", "entry", "filters", "assemble")
 
+    @staticmethod
+    def read_artifact(_content):
+        return {}
+
     def stage_plan(self, spec):
         return self.STAGES
 

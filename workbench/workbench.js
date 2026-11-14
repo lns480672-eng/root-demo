@@ -185,7 +185,7 @@ function render() {
   byId('preview-title').textContent = awaitingNewPreview ? '工具预览' : currentTitle;
   byId('composer-title').textContent = editing ? '修改对话' :
     atStart || entryMode !== 'direct' ? '你想做什么工具？'
-      : runningNewTool ? (stagedTask?.title || '新工具') : '生成工具';
+      : runningNewTool || stagedTask ? stagedTaskTitle(stagedTask) : '生成工具';
   byId('requirement-label').textContent = editing ? '修改「' + currentTitle + '」' : '工具需求';
   requirement.placeholder = supplementIssue ? '补充这次修改的要求' : editing ? '例如：增加一个按负责人筛选。'
     : '描述你想做的工具、怎么用、需要保存哪些数据。';
@@ -526,6 +526,10 @@ function stagedReason(task, restriction) {
   }[task.reason] || (task.state === 'failed' ? '本阶段未完成，可编辑原需求后重新提交。' : '');
 }
 
+function stagedTaskTitle(task) {
+  return task?.title || (task?.baseToolId ? task.requirement.slice(0, 70) : '新工具');
+}
+
 function renderStagedHistory(blocked) {
   const list = byId('staged-history-list');
   byId('staged-history-status').textContent = stagedHistoryStatus;
@@ -536,11 +540,15 @@ function renderStagedHistory(blocked) {
     list.replaceChildren(...stagedHistory.map(task => {
       const row = document.createElement('li');
       const title = document.createElement('strong');
-      const original = document.createElement('p');
+      const original = document.createElement('details');
+      const summary = document.createElement('summary');
+      const body = document.createElement('p');
       const reason = document.createElement('p');
       const button = document.createElement('button');
-      title.textContent = task.title ? stagedStatus(task) + " · " + task.title : stagedStatus(task);
-      original.textContent = task.requirement;
+      title.textContent = stagedStatus(task) + ' · ' + stagedTaskTitle(task);
+      summary.textContent = '查看完整需求';
+      body.textContent = task.requirement;
+      original.append(summary, body);
       reason.className = 'auth-muted';
       reason.textContent = stagedReason(task) + (task.issue && !generationRestrictions.has(task.reason)
         ? ' 问题编号 ' + task.issue + '。' : '');
@@ -604,7 +612,7 @@ function renderStagedTasks(blocked, restriction) {
   list.hidden = editing;
   byId('staged-list-status').hidden = editing && !stagedLoadError;
   const activeTasks = stagedTasks.filter(isActiveStagedTask);
-  const signature = JSON.stringify(activeTasks.map(item => [item.id, item.title || item.requirement, stagedStatus(item, restriction)]));
+  const signature = JSON.stringify(activeTasks.map(item => [item.id, stagedTaskTitle(item), stagedStatus(item, restriction)]));
   if (list.dataset.signature !== signature) {
     list.dataset.signature = signature;
     const focusedId = document.activeElement?.dataset.taskId;
@@ -613,7 +621,7 @@ function renderStagedTasks(blocked, restriction) {
       const button = document.createElement('button');
       button.type = 'button';
       button.dataset.taskId = item.id;
-      const caption = item.title || item.requirement.slice(0, 70);
+      const caption = stagedTaskTitle(item);
       button.textContent = isRunningStagedTask(item) ? caption
         : (stagedStatus(item, restriction) || '待确认') + ' · ' + caption;
       row.append(button);
@@ -779,7 +787,7 @@ async function restoreStagedRequirement(task, source) {
       return false;
     }
   }
-  beginComposition(Boolean(task.baseToolId), task.requirement, task.category, true, task.title);
+  beginComposition(Boolean(task.baseToolId), task.requirement, task.category, true, task.titleSource === 'draft' ? task.title : undefined);
   return true;
 }
 
@@ -2674,7 +2682,7 @@ async function start(registration = null) {
       const runningId = sessionStorage.getItem('root:staged-running:' + session.marker);
       const task = stagedTasks.find(item => item.id === runningId && !item.baseToolId && isRunningStagedTask(item));
       if (task) {
-        beginComposition(false, task.requirement, task.category, false, task.title);
+        beginComposition(false, task.requirement, task.category, false, task.titleSource === 'draft' ? task.title : undefined);
         compose(true);
         selectedStagedId = stagedAutoId = task.id;
         rememberRunningGeneration(task.id);

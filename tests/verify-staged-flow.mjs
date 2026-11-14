@@ -324,14 +324,14 @@ export async function verifyStagedRegistration(ctx) {
 
 export async function verifyRunningLayout(ctx) {
   const { cdp, evaluate, until, base, click, visible, appRequest, login, generate, accountA, evidence, screenshot } = ctx;
-  const input = '做一份简单读书清单，新增书名并保存。用于核对生成中的任务进度。';
+  const input = '做一份简单读书清单，新增书名并保存。' + '每次刷新都要能找回已录入的书。'.repeat(8);
   await cdp('Emulation.setDeviceMetricsOverride', {width:1440,height:900,deviceScaleFactor:1,mobile:false});
   await cdp('Page.navigate', {url:base});
   await login(accountA, true);
   await generate(input);
   const task = await until(() => findStagedTask(appRequest, input));
   const taskButton = '#staged-task-list button[data-task-id="' + task.id + '"]';
-  const assertRunningLayout = async path => {
+  const assertRunningLayout = async (path, title) => {
     for (const width of [1440, 390]) {
       await cdp('Emulation.setDeviceMetricsOverride', {width,height:844,deviceScaleFactor:1,mobile:width===390});
       const layout = await evaluate(`(() => {
@@ -346,23 +346,27 @@ export async function verifyRunningLayout(ctx) {
           task: document.querySelector('#staged-task-list [aria-current=true]')?.dataset.taskId,
           step: progress?.checkVisibility(),
           fullForm: document.querySelector('#composer').checkVisibility(),
+          heading: document.querySelector('#composer-title').textContent,
+          caption: document.querySelector('#staged-task-list [aria-current=true]')?.textContent,
         };
       })()`);
       assert.deepEqual(layout, {mode:'compose',sidebarFits:true,previewVisible:true,original:input,
-        task:task.id,step:true,fullForm:false}, path + ' ' + width + 'px');
+        task:task.id,step:true,fullForm:false,heading:title,caption:title}, path + ' ' + width + 'px');
       await screenshot('running-' + path + '-' + width);
     }
   };
   await until(() => visible('#staged-steps li[aria-current=step]'));
-  await assertRunningLayout('submit');
+  await assertRunningLayout('submit', '新工具');
+  await until(() => evaluate('document.querySelector("#composer-title").textContent === "旧清单"'));
+  await assertRunningLayout('named', '旧清单');
   await click('#new-tool');
   assert.equal(await visible('#requirement'), true);
   await click(taskButton);
-  await assertRunningLayout('reopen');
+  await assertRunningLayout('reopen', '旧清单');
   const navigation = await evaluate('performance.timeOrigin');
   await cdp('Page.reload');
   await until(() => evaluate(`performance.timeOrigin !== ${navigation} && document.documentElement.dataset.ready === 'true'`));
-  await assertRunningLayout('reload');
+  await assertRunningLayout('reload', '旧清单');
   assert.equal((await appRequest('/api/staged')).body.tasks.filter(item => item.requirement === input).length, 1);
   evidence.tests.push({id:'BLUE-02',task:task.id,paths:['submit','reopen','reload'],viewports:[1440,390]});
 }

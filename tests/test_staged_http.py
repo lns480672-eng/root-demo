@@ -6,6 +6,7 @@ from http.client import HTTPConnection
 import json
 from pathlib import Path
 import re
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -1097,6 +1098,34 @@ class StagedHTTP(StagedHTTPFixture):
         self.assertEqual(self.request(tool, auth=owner)[1]["version"], 6)
         self.assertEqual(self.request("/api/trial", auth=owner)[1]["generation"]["used"], before + 5)
 
+    def test_direct_generation_keeps_spec_title_and_original_request_on_replay(self):
+        owner = self.account("direct-task-title")
+        requirement = "计算两个数字并展示合计。" + "完整原文用于核对。" * 12
+        request = {"requestId": uuid4().hex, "requirement": requirement}
+        before = self.request("/api/trial", auth=owner)[1]["generation"]
+        status, initial, _ = self.request("/api/generate", request, owner)
+        self.assertEqual(status, 202)
+        task = self.wait_task(owner, initial["task"]["id"], "complete")
+        self.assertEqual((task["title"], task["titleSource"]), ("加法计算器", "spec"))
+        self.assertEqual(task["requirement"], requirement)
+        replay_status, replay, _ = self.request("/api/generate", request, owner)
+        self.assertEqual((replay_status, replay["task"]), (202, task))
+        after = self.request("/api/trial", auth=owner)[1]["generation"]
+        self.assertEqual(after["totalUsed"] - before["totalUsed"], 2)
+        self.assertEqual(after["used"], before["used"])
+        with sqlite3.connect(self.runs / "workspace.sqlite3") as db:
+            self.assertEqual(db.execute("SELECT title, generated_title FROM staged_jobs WHERE request_id=?",
+                                        (request["requestId"],)).fetchall(), [(None, "加法计算器")])
+        failed = self.gen(owner, "官网选择器未命中")[1]["task"]["id"]
+        self.wait_task(owner, failed, "complete")
+        candidate = self.request(f"/api/staged/{failed}/candidate", {}, owner)[1]
+        payload = {**candidate["staged"], "toolId":candidate["id"], "entries":[]}
+        self.assertEqual(self.request(f"/api/staged/{failed}/verify-preview", payload, owner)[0], 422)
+        history = self.request("/api/staged/history", auth=owner)[1]["tasks"]
+        failed_task = next(item for item in history if item["id"] == failed)
+        self.assertEqual(failed_task["titleSource"], "spec")
+        self.assertEqual(failed_task["requirement"], "官网选择器未命中")
+
     def test_named_requirement_task_preserves_full_request_and_replay_identity(self):
         owner = self.account("draft-task-title")
         request = {"requestId": uuid4().hex, "requirement": "计算两个数字并展示合计", "title": "快速合计"}
@@ -1104,7 +1133,8 @@ class StagedHTTP(StagedHTTPFixture):
         self.assertEqual(status, 202)
         task = response["task"]
         self.assertEqual((task["title"], task["requirement"]), (request["title"], request["requirement"]))
-        self.assertEqual(self.request("/api/staged/" + task["id"], auth=owner)[1]["task"]["title"], request["title"])
+        completed = self.wait_task(owner, task["id"], "complete")
+        self.assertEqual((completed["title"], completed["titleSource"]), (request["title"], "draft"))
         self.assertEqual(self.request("/api/generate", request, owner)[1]["task"]["id"], task["id"])
         self.assertEqual(self.request("/api/generate", {**request, "title": "新名称"}, owner)[0], 409)
 
