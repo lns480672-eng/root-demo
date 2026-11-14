@@ -7,6 +7,7 @@
 !/实施计划.md
 !/工作台需求与设计评审草案.md
 !/质量门禁设计.md
+!/测试证据索引.md
 !/workbench-harness.yaml
 !/generate.py
 !/staged_website.py
@@ -25,6 +26,14 @@
 !/deploy-local/Caddyfile
 !/deploy-local/README.md
 !/README.md
+!/docs/
+/docs/*
+!/docs/开发与验收流程.md
+!/docs/继续修改关联核对示例.json
+!/docs/dev-board.py
+!/docs/dev-board.html
+!/docs/dev-board.css
+!/docs/dev-board-items.json
 !/design/
 /design/*
 !/design/root-workbench.html
@@ -33,6 +42,14 @@
 !/design/root-version-history.html
 !/design/root-workbench-entry.html
 !/design/root-admin-login.html
+!/design/root-new-tool-review.html
+!/design/root-tool-experience-review.html
+!/design/root-revision-clarification.html
+!/design/root-workbench-nav.css
+!/design/root-owner-feedback-review.html
+!/design/root-visual-v4.css
+!/design/root-brand-blue.css
+!/design/root-revision-labels.css
 !/workbench/
 /workbench/*
 !/workbench/index.html
@@ -53,6 +70,8 @@
 !/tests/
 /tests/*
 !/tests/fixtures.py
+!/tests/check-related-change.py
+!/tests/local-ci.py
 !/tests/verify-workbench.mjs
 !/tests/test_runtime_verify.py
 !/tests/verify-demo-site.mjs

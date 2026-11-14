@@ -1,0 +1,142 @@
+body.brand-blue,
+body.brand-auth {
+  --root-ink: #18253f;
+  --root-muted: #505f79;
+  --root-blue: #233a76;
+  --root-active: #e2eaf8;
+  --root-canvas: #f4f6fa;
+  --root-line: #d6dfeb;
+  --root-paper: #fff;
+  --root-field: #afbed4;
+  color: var(--root-ink);
+  background: var(--root-canvas);
+}
+
+.brand-blue :is(.root-sidebar, #conversation, .progress) {
+  background: #edf1f8;
+  border-color: var(--root-line);
+}
+
+.brand-blue :is(.top, .masthead, .brandbar),
+.brand-blue > header {
+  background: var(--root-paper);
+  border-color: var(--root-line);
+}
+
+.brand-blue :is(.root-nav, .admin-nav) [aria-current="page"],
+.brand-blue .revision-views button[aria-pressed="true"],
+.brand-blue :is(.account-avatar, .revision-avatar, .message.user) {
+  color: var(--root-blue);
+  background: var(--root-active);
+}
+
+.brand-blue :is(.card, .panel, .preview-card, .review-card, .tool, .records) {
+  background-color: var(--root-paper);
+  border-color: var(--root-line);
+  border-radius: 12px;
+}
+
+.brand-blue :is(.modes a, .prompt, .message, .stage-detail, .account-menu) {
+  border-color: var(--root-line);
+}
+
+.brand-blue :is(button.primary, a.primary),
+.brand-blue.root-owner-feedback-review #tool-actions .primary {
+  color: #fff;
+  background: var(--root-blue);
+  border-color: var(--root-blue);
+}
+
+.brand-blue.root-owner-feedback-review #tool-actions .primary:hover,
+.brand-blue :is(button.primary, a.primary):hover:not(:disabled) {
+  color: #fff;
+  background: #304c8e;
+}
+
+.brand-blue :is(input, textarea, select):not([type="checkbox"], [type="radio"]) {
+  border-color: var(--root-field);
+}
+
+.brand-blue :is(h1, .start h1, .preview h2) {
+  font-family: Inter, system-ui, "PingFang SC", sans-serif;
+  letter-spacing: -.035em;
+}
+
+.brand-blue.root-new-tool-review .prompt {
+  border-radius: 12px;
+  box-shadow: none;
+}
+
+.brand-blue.root-new-tool-review .prompt textarea {
+  background: var(--root-canvas);
+}
+
+.brand-blue.root-owner-feedback-review #tool-workspace[data-mode="revision"] .preview {
+  background: var(--root-paper);
+}
+
+.brand-blue.root-owner-feedback-review #source-panel pre {
+  background: var(--root-canvas);
+  border-color: var(--root-line);
+}
+
+.brand-blue :is(.notice, .status)[data-error="true"] {
+  color: #a6312a;
+}
+
+.brand-auth #app {
+  min-height: 100dvh;
+}
+
+.brand-auth .auth-header {
+  background: transparent;
+}
+
+.brand-auth .auth-switch a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  text-decoration: none;
+}
+
+.brand-auth .auth-switch a:hover {
+  text-decoration: underline;
+}
+
+.brand-auth .credentials label[for="username"],
+.brand-auth .credentials label[for="password"] {
+  margin-top: 14px;
+}
+
+.brand-auth .credentials input {
+  margin-top: 6px;
+}
+
+.brand-auth .auth-fixture {
+  font-size: 13px;
+}
+
+.brand-blue.root-new-tool-review .old-tool-card {
+  width: min(100%, 580px);
+  margin-top: 20px;
+  padding: 16px;
+}
+
+.brand-blue.root-new-tool-review .old-tool-card form {
+  margin: 0;
+}
+
+.brand-blue.root-new-tool-review #book-list {
+  margin: 16px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.brand-blue.root-new-tool-review #book-list li {
+  border-top: 1px solid var(--root-line);
+  padding-block: 9px;
+}
+
+.brand-blue.root-admin-login .credential-panel {
+  border-top: 4px solid var(--root-blue);
+}

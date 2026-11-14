@@ -1,0 +1,391 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ROOT · 修改澄清评审</title>
+<link rel="stylesheet" href="root-workbench-nav.css">
+<link rel="stylesheet" href="root-revision-labels.css">
+<style>
+  :root { background:#f3f4fc; color:#1d1d22; font:14px/1.6 system-ui,"PingFang SC",sans-serif; }
+  * { box-sizing:border-box; }
+  [hidden] { display:none !important; }
+  body { margin:0; }
+  header { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:12px; padding:12px 20px; background:#fafafe; border-bottom:1px solid #dfe1e9; }
+  header strong { font-size:18px; }
+  main { min-width:0; padding:clamp(12px,3vw,42px); display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1.2fr); gap:16px; align-items:start; }
+  section { min-width:0; background:#fafafe; padding:clamp(12px,2vw,25px); border:1px solid #dfe1e9; border-radius:18px; }
+  h1,h2 { font-family:"Songti SC",serif; line-height:1.25; margin:0 0 10px; }
+  h1 { font-size:28px; }
+  h2 { font-size:22px; }
+  p { margin:8px 0 14px; overflow-wrap:anywhere; }
+  .muted { color:#565969; }
+  .controls { display:flex; flex-wrap:wrap; gap:8px; }
+  button,select,input,textarea { color:inherit; font:inherit; border:1px solid #adb1c0; border-radius:8px; background:#fff; min-height:40px; padding:6px 10px; max-width:100%; }
+  button,select { cursor:pointer; }
+  button.primary { color:white; background:#243971; border-color:#243971; }
+  :focus-visible { outline:2px solid #4563aa; outline-offset:2px; }
+  label { display:block; margin:10px 0; }
+  #records { padding-left:20px; overflow-wrap:anywhere; }
+  .recovery textarea { display:block; width:100%; min-height:88px; resize:vertical; }
+  .failure { color:#a3372e; }
+  .chat-log { display:grid; gap:12px; max-height: min(52vh, 480px); min-height:160px; overflow:auto; padding:2px 6px 12px; }
+  .chat-message { max-width:94%; padding:12px 14px; border:1px solid #dfe1e9; border-radius:12px; background:#fff; }
+  .chat-message[data-role="user"] { justify-self:end; background:#e9edfc; border-color:#dce3f7; }
+  .chat-message small { color:#565969; }
+  .chat-message p { margin:4px 0 0; }
+  .chat-message .controls { margin-top:10px; }
+  .chat-message .controls:empty { display:none; }
+  .chat-message:has(.failure) { border-color:#e6c9c3; }
+  #chat-composer { border-top:1px solid #dfe1e9; margin-top:4px; padding-top:5px; }
+  #chat-composer button { margin-top:8px; }
+  #repair-preview { margin-top:18px; border-top:1px solid #dfe1e9; padding-top:16px; }
+  @media(max-width:760px){main { grid-template-columns:minmax(0,1fr); }}
+  .root-shell.is-conversation { grid-template-columns:158px minmax(0,1fr); }
+  .is-conversation main { grid-template-columns:minmax(0,340px) minmax(0,1fr); padding:16px; gap:12px; }
+  .is-conversation section { padding:14px; border-radius:12px; }
+  .is-conversation .root-sidebar { background:transparent; border:0; padding:16px 5px; }
+  .is-conversation h1, .is-conversation h2 { font-size:20px; margin-bottom:8px; }
+  .is-conversation .chat-log { gap:6px; min-height:0; align-content:start; padding:2px 2px 6px; }
+  .is-conversation .chat-message { width:fit-content; max-width:100%; padding:7px 9px; border-radius:8px; }
+  .is-conversation .chat-message p { margin-top:2px; }
+  .is-conversation .controls { gap:6px; margin-top:6px; }
+  .is-conversation .controls button, #chat-composer button { min-height:32px; padding:4px 8px; }
+  #chat-composer { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:end; gap:4px 6px; }
+  #chat-composer label { grid-column:1 / -1; margin:0; }
+  #chat-composer textarea { height:48px; min-height:44px; max-height:96px; }
+  #chat-composer button { margin:0; }
+  @media(min-width:761px) {
+    body:has(.is-conversation) { display:flex; flex-direction:column; height:100dvh; }
+    body:has(.is-conversation) > header { flex-shrink:0; }
+    .root-shell.is-conversation { flex:1; min-height:0; grid-template-rows:minmax(0,1fr); }
+    .is-conversation main { min-height:0; grid-template-rows:minmax(0,1fr); }
+    .is-conversation .conversation-panel {
+      align-self:stretch; display:grid; grid-template-rows:auto minmax(0,1fr) auto; min-height:0;
+    }
+    .is-conversation .chat-log { max-height:none; }
+    .is-conversation .tool-panel { max-height:100%; overflow:auto; }
+    .is-conversation .root-sidebar { overflow:auto; }
+  }
+  @media(max-width:760px) {
+    .root-shell.is-conversation { grid-template-columns:70px minmax(0,1fr); }
+    .is-conversation .root-sidebar { padding:10px 2px; }
+    .is-conversation .root-nav :is(a, button) { justify-content:center; padding-inline:3px; font-size:12px; }
+    .is-conversation .root-nav-children { margin:0; padding:0; border:0; }
+    .is-conversation main { grid-template-columns:minmax(0,1fr); padding:10px; gap:8px; }
+    .is-conversation .chat-log { max-height:min(32dvh, 240px); }
+    .is-conversation .controls button, #chat-composer button { min-height:44px; }
+  }
+</style>
+<link rel="stylesheet" href="root-visual-v4.css">
+<link rel="stylesheet" href="root-brand-blue.css">
+</head>
+<body class="root-visual brand-blue root-revision-clarification">
+<header>
+  <strong>ROOT · 工具工作台</strong>
+  <label>评审场景 <select id="scenario">
+    <option value="ask">信息不足</option><option value="plan">明确受支持</option>
+    <option value="limit">已问两次</option><option value="unsupported">明确不支持</option>
+    <option value="failed">修改失败</option><option value="repair-failed">修复再次失败</option>
+  </select></label>
+</header>
+<div class="root-shell" id="workbench">
+  <aside class="root-sidebar">
+    <nav class="root-nav" aria-label="工作台导航">
+      <a href="root-new-tool-review.html">新建工具</a>
+      <a href="root-workbench-entry.html?section=idea">需求</a>
+      <button id="library-toggle" type="button" aria-current="page" aria-expanded="true" aria-controls="library">我的工具</button>
+      <div class="root-nav-children" id="library">
+        <a href="#recovery" aria-current="page">观察台账</a>
+      </div>
+    </nav>
+  </aside>
+  <main>
+    <section class="conversation-panel" aria-labelledby="change-title">
+      <h1 id="change-title">继续修改</h1>
+      <p class="muted" id="request"></p>
+      <div id="flow" class="recovery"></div>
+      <div id="chat-log" class="chat-log" role="log" aria-label="修改对话" tabindex="0" hidden></div>
+      <form id="chat-composer" class="recovery" hidden>
+        <label for="supplement-text">给 AI 发消息</label>
+        <textarea id="supplement-text" required placeholder="例如：旧记录的观测日期留空"></textarea>
+        <button class="primary" type="submit">发送</button>
+      </form>
+    </section>
+    <section class="tool-panel" aria-labelledby="tool-title">
+      <p class="revision-preview-label"><svg class="revision-view-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s3.6-6 10-6 10 6 10 6-3.6 6-10 6-10-6-10-6Z"/><circle cx="12" cy="12" r="2.5"/></svg>工具预览</p><h2 id="tool-title">观察台账</h2>
+      <p class="muted" id="tool-version">v1 · 剩余 5 次</p>
+      <form id="record-form">
+        <label>观察记录 <input id="record" required></label>
+        <label id="live-date" hidden><span id="live-date-caption">观测日期（可选）</span> <input id="live-date-input" type="date"></label>
+        <button>添加记录</button>
+      </form>
+      <ul id="records"><li>阳台的薄荷长出新叶</li></ul>
+      <div id="repair-preview" hidden aria-labelledby="repair-title">
+        <h2 id="repair-title">候选预览</h2>
+        <p id="preview-change">新增可空「观测日期」。原记录的日期留空。</p>
+        <label><span id="preview-date-caption">试填观测日期</span> <input id="preview-date-input" type="date"></label>
+        <ul id="preview-records"></ul>
+      </div>
+    </section>
+  </main>
+</div>
+<script>
+  const byId = id => document.getElementById(id);
+  const flow = byId('flow');
+  const repairPreview = byId('repair-preview');
+  const chatLog = byId('chat-log');
+  const chatComposer = byId('chat-composer');
+  const messageInput = byId('supplement-text');
+  let activeActions;
+  let conversationState;
+  let repairTimer;
+  let simulateRepairFailure;
+  const types = '<option value="日期">日期（年月日）</option><option value="整数">时长（整数分钟）</option><option value="文本">文本</option>';
+  function actions(primaryId, primaryText) {
+    return '<div class="controls"><button type="button" class="primary" id="' + primaryId + '">' + primaryText + '</button><button type="button" id="cancel">取消</button></div>';
+  }
+  function end(message) {
+    flow.innerHTML = '<p role="status"></p>';
+    flow.firstElementChild.textContent = message;
+  }
+  function plan(type) {
+    conversationState = 'planning';
+    activeActions?.replaceChildren();
+    const message = addMessage('assistant', '请确认修改方案。将新增可空字段「观测时间」，已有记录在该字段留空。');
+    const label = document.createElement('label');
+    label.innerHTML = '字段类型 <select>' + types + '</select>';
+    const fieldType = label.querySelector('select');
+    fieldType.value = type;
+    message.append(label);
+    setMessageActions(message, [
+      ['confirm', '确认并修改', () => {
+        const selected = fieldType.value;
+        fieldType.disabled = true;
+        addMessage('user', '确认新增可空' + selected + '字段「观测时间」。');
+        runRepair(false, { name: '观测时间', type: selected }, true);
+      }],
+      ['adjust-plan', '调整方案', () => messageInput.focus()],
+      ['cancel-plan', '取消', () => {
+        fieldType.disabled = true;
+        activeActions.replaceChildren();
+        conversationState = 'closed';
+        addMessage('assistant', '已取消本次修改。');
+      }]
+    ]);
+  }
+  function render(state) {
+    clearTimeout(repairTimer);
+    simulateRepairFailure = state === 'repair-failed';
+    repairPreview.hidden = true;
+    byId('live-date').hidden = true;
+    byId('tool-version').textContent = 'v1 · 剩余 5 次';
+    const recovery = state === 'failed' || state === 'repair-failed';
+    byId('workbench').classList.add('is-conversation');
+    chatLog.hidden = chatComposer.hidden = false;
+    byId('request').hidden = true;
+    byId('change-title').textContent = '修改对话';
+    flow.remove();
+    flow.hidden = false;
+    activeActions = null;
+    conversationState = 'clarifying';
+    chatLog.replaceChildren();
+    messageInput.value = '';
+    messageInput.disabled = chatComposer.querySelector('button').disabled = false;
+    if (recovery) {
+      addMessage('user', '做一个观察台账，可以添加和查看观察记录。');
+      addMessage('assistant', '观察台账已生成并保存为 v1，可以开始录入。');
+      addMessage('user', '给观察台账加一个可空日期字段，叫观测日期。');
+      showFailure(false);
+      return;
+    }
+    byId('request').textContent = {
+      ask:'给观察台账加一个观测时间', plan:'给观察台账加一个日期字段，叫观测时间',
+      limit:'给观察台账加一个观测时间 · 已答两次', unsupported:'新增一个精确到时分的专用字段'
+    }[state];
+    addMessage('user', byId('request').textContent);
+    if (state === 'plan') return plan('日期');
+    if (state === 'unsupported') {
+      conversationState = 'closed';
+      return addMessage('assistant', '当前支持用可空文本字段记录时分，例如 14:30。');
+    }
+    addMessage('assistant', '').append(flow);
+    const heading = state === 'limit' ? '请选择字段类型，或改写需求' : '观测时间要记录什么？';
+    const help = state === 'limit' ? '已问两次。原需求和已答内容仍可查看。' : '第 1 次澄清 · 补答会接续这次修改';
+    flow.innerHTML = '<h2>' + heading + '</h2><p class="muted">' + help + '</p><label>字段类型 <select id="answer"><option value="">请选择</option>' + types + '</select></label>' + actions('continue', '查看修改方案');
+    if (state === 'limit') {
+      const history = document.createElement('details');
+      history.innerHTML = '<summary>查看已答内容</summary><ol><li>用途：记录每次观察。</li><li>精度：还没有决定。</li></ol>';
+      flow.prepend(history);
+    }
+    const edit = document.createElement('button');
+    edit.type = 'button';
+    edit.textContent = '改写需求';
+    edit.onclick = () => {
+      flow.innerHTML = '<label>修改需求 <input id="rewrite"></label>' + actions('start-new', '开始新请求');
+      byId('rewrite').value = '给观察台账加一个观测时间';
+      byId('rewrite').focus();
+      byId('start-new').onclick = () => {
+        const request = byId('rewrite').value;
+        if (!request.trim()) return;
+        render('ask');
+        byId('request').textContent = request;
+      };
+      byId('cancel').onclick = () => render(state);
+    };
+    flow.querySelector('.controls').append(edit);
+    byId('continue').disabled = true;
+    byId('answer').onchange = () => { byId('continue').disabled = !byId('answer').value; };
+    byId('continue').onclick = () => {
+      const type = byId('answer').value;
+      flow.querySelectorAll('button, select').forEach(control => { control.disabled = true; });
+      addMessage('user', '选择' + type + '。');
+      plan(type);
+    };
+    byId('cancel').onclick = () => end('已取消。观察台账仍可继续使用。');
+  }
+  function displayNickname() {
+    try {
+      return JSON.parse(localStorage.getItem('root-owner-nickname')) || 'demo-user';
+    } catch {
+      return 'demo-user';
+    }
+  }
+  function addMessage(role, text, isFailure = false) {
+    const message = document.createElement('article');
+    message.className = 'chat-message';
+    message.dataset.role = role;
+    const author = document.createElement('small');
+    author.className = 'revision-author';
+    if (role === 'assistant' && !isFailure) {
+      const avatar = document.createElement('span');
+      avatar.className = 'revision-avatar';
+      avatar.setAttribute('aria-hidden', 'true');
+      avatar.textContent = 'R';
+      author.append(avatar, '小 R');
+    } else {
+      author.textContent = role === 'user' ? displayNickname() : '系统提示';
+    }
+    const body = document.createElement('p');
+    body.textContent = text;
+    if (isFailure) body.className = 'failure';
+    message.append(author, body);
+    chatLog.append(message);
+    chatLog.scrollTop = chatLog.scrollHeight;
+    return message;
+  }
+  function setMessageActions(message, options) {
+    const controls = document.createElement('div');
+    controls.className = 'controls';
+    for (const [id, label, handler] of options) {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.id = id;
+      button.textContent = label;
+      if (id === 'repair' || id === 'apply-repair') button.className = 'primary';
+      button.onclick = handler;
+      controls.append(button);
+    }
+    message.append(controls);
+    activeActions = controls;
+    chatLog.scrollTop = chatLog.scrollHeight;
+  }
+  function showFailure(exhausted) {
+    conversationState = exhausted ? 'exhausted' : 'failed';
+    const text = exhausted
+      ? '修复仍未通过预览检查。你可以补充要求，发起一轮新修改。'
+      : '修改未通过预览检查。当前 v1 可以继续录入。';
+    const message = addMessage('assistant', text, true);
+    const options = [
+      ['supplement', '补充要求', () => messageInput.focus()],
+      ['abandon', '放弃', abandon]
+    ];
+    if (!exhausted) options.unshift(['repair', '让 AI 修', () => {
+      addMessage('user', '请修复这次修改。');
+      runRepair(simulateRepairFailure);
+    }]);
+    setMessageActions(message, options);
+  }
+  function abandon() {
+    activeActions.replaceChildren();
+    repairPreview.hidden = true;
+    conversationState = 'closed';
+    addMessage('assistant', '已放弃本次修改。你可以继续发起新的修改。');
+  }
+  function runRepair(failAgain, field = { name: '观测日期', type: '日期' }, confirmedPlan = false) {
+    activeActions?.replaceChildren();
+    conversationState = 'running';
+    messageInput.disabled = chatComposer.querySelector('button').disabled = true;
+    addMessage('assistant', '正在检查修改并准备预览。');
+    repairTimer = setTimeout(() => {
+      messageInput.disabled = chatComposer.querySelector('button').disabled = false;
+      if (failAgain) return showFailure(true);
+      conversationState = 'preview';
+      const inputType = { 日期: 'date', 整数: 'number', 文本: 'text' }[field.type];
+      function applyChange() {
+        activeActions?.replaceChildren();
+        repairPreview.hidden = true;
+        byId('live-date-caption').textContent = field.name + '（可选）';
+        byId('live-date-input').type = inputType;
+        byId('live-date').hidden = false;
+        byId('tool-version').textContent = 'v2 · 剩余 4 次';
+        conversationState = 'closed';
+        addMessage('assistant', '已应用并保存为 v2。');
+      }
+      if (confirmedPlan) return applyChange();
+      repairPreview.hidden = false;
+      byId('preview-records').replaceChildren(...Array.from(byId('records').children, item => item.cloneNode(true)));
+      byId('preview-date-caption').textContent = '试填' + field.name;
+      byId('preview-date-input').type = inputType;
+      byId('preview-date-input').value = '';
+      byId('preview-change').textContent = '新增可空「' + field.name + '」。原记录在该字段留空。';
+      const message = addMessage('assistant', '预览已就绪。' + byId('preview-change').textContent);
+      setMessageActions(message, [
+        ['apply-repair', '确认并应用', applyChange],
+        ['discard-repair', '放弃', abandon]
+      ]);
+    }, 450);
+  }
+  chatComposer.onsubmit = event => {
+    event.preventDefault();
+    const text = messageInput.value.trim();
+    if (!text || conversationState === 'running') return;
+    const continuing = conversationState === 'failed';
+    const startsNew = conversationState === 'exhausted' || conversationState === 'closed';
+    if (conversationState === 'planning') chatLog.lastElementChild.querySelector('select')?.setAttribute('disabled', '');
+    addMessage('user', text);
+    messageInput.value = '';
+    repairPreview.hidden = true;
+    if (conversationState === 'planning' || conversationState === 'clarifying' || startsNew) {
+      if (conversationState === 'clarifying') flow.querySelectorAll('button, select, input').forEach(control => { control.disabled = true; });
+      return plan('日期');
+    }
+    runRepair(continuing && simulateRepairFailure);
+  };
+  byId('scenario').onchange = event => render(event.target.value);
+  byId('library-toggle').onclick = () => {
+    const library = byId('library');
+    library.hidden = !library.hidden;
+    byId('library-toggle').setAttribute('aria-expanded', String(!library.hidden));
+  };
+  window.addEventListener('hashchange', () => {
+    const state = { '#recovery': 'failed', '#confirmation': 'plan' }[location.hash];
+    if (!state) return;
+    byId('scenario').value = state;
+    render(state);
+  });
+  byId('record-form').onsubmit = event => {
+    event.preventDefault();
+    const item = document.createElement('li');
+    const dateInput = byId('live-date-input');
+    item.textContent = [byId('record').value, byId('live-date').hidden ? '' : dateInput.value].filter(Boolean).join(' · ');
+    byId('records').append(item);
+    byId('record').value = '';
+    dateInput.value = '';
+  };
+  if (location.hash === '#recovery') byId('scenario').value = 'failed';
+  if (location.hash === '#confirmation') byId('scenario').value = 'plan';
+  render(byId('scenario').value);
+</script>
+</body>
+</html>

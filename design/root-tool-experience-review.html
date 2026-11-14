@@ -1,0 +1,467 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ROOT 生成与修改体验评审</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #f1f2f8; color: #1d1d22; font: 14px/1.55 system-ui, "PingFang SC", sans-serif; }
+  main { max-width: 1580px; padding: clamp(14px, 3vw, 36px); margin: auto; }
+  h1, h2, p { margin: 0; }
+  h1 { font-size: clamp(22px, 3vw, 32px); letter-spacing: -.025em; }
+  h2 { font-size: 16px; }
+  p { color: #565969; }
+  nav { display: flex; flex-wrap: wrap; gap: 7px; margin: 16px 0; }
+  button, .action { padding: 8px 12px; min-height: 40px; border: 1px solid #dfe1e9; border-radius: 8px; font: inherit; color: inherit; background: #fafafe; cursor: pointer; }
+  .action { display: inline-flex; align-items: center; text-decoration: none; }
+  button[aria-pressed="true"] { border-color: #6883d0; background: #e8edfc; color: #2f4587; }
+  button:focus-visible, a:focus-visible { outline: 2px solid #4563aa; outline-offset: 3px; }
+  .subnav { margin: 10px 0; }
+  .comparison { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+  .pane { border: 1px solid #dfe1e9; border-radius: 12px; overflow: clip; background: #fafafe; min-width: 0; }
+  .pane > header { padding: 10px 12px; border-bottom: 1px solid #dfe1e9; }
+  .pane iframe { display: block; border: 0; width: 100%; height: 490px; margin: auto; }
+  .comparison[data-narrow="true"] iframe { width: min(100%, 390px); height: 620px; }
+  .library { display: grid; grid-template-columns: minmax(180px, 235px) minmax(0, 1fr); gap: 14px; }
+  .library aside { padding: 14px; background: #e8ebf8; border-radius: 12px; }
+  .library aside button { display: block; margin-top: 8px; width: 100%; text-align: start; }
+  .review-columns { display: grid; grid-template-columns: minmax(270px, .65fr) minmax(0, 1fr); gap: 14px; }
+  .review-card { padding: 16px; border-radius: 12px; border: 1px solid #dfe1e9; background: #fafafe; }
+  .review-card textarea { display: block; margin: 6px 0 12px; width: 100%; min-height: 80px; resize: vertical; border: 1px solid #aeb4c9; border-radius: 8px; padding: 10px; font: inherit; }
+  .review-card label { display: block; }
+  .review-card h2 + p { margin-top: 4px; }
+  .review-card button { min-height: 44px; }
+  .review-card .primary { color: #fff; background: #263657; border-color: #263657; }
+  .tool-sample { margin-top: 14px; border-radius: 8px; padding: 14px; background: #e9ecfa; color: #1d1d22; }
+  .tool-sample[data-color="forest"] { background: #e2eee4; }
+  .tool-sample[data-color="ink"] { background: #e8e8ee; }
+  .tool-sample label { display: flex; align-items: center; gap: 8px; min-height: 44px; }
+  .review-status { margin-top: 12px; }
+
+  .tool-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+  .standalone { display: flex; min-height: 100vh; flex-direction: column; }
+  .standalone > header { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 18px; background: #fafafe; border-bottom: 1px solid #dfe1e9; padding: 10px clamp(14px, 4vw, 40px); }
+  .standalone > header a { margin-left: auto; }
+  .standalone iframe { display: block; flex: 1; width: 100%; border: 0; min-height: 70vh; }
+  @media (max-width: 900px) { .comparison, .library, .review-columns { grid-template-columns: minmax(0, 1fr); } }
+</style>
+<link rel="stylesheet" href="root-workbench-nav.css">
+<link rel="stylesheet" href="root-visual-v4.css">
+<link rel="stylesheet" href="root-brand-blue.css">
+</head>
+<body class="root-visual brand-blue root-tool-experience-review">
+<div class="root-shell" id="review">
+  <aside class="root-sidebar" id="tool-review-sidebar">
+    <nav class="root-nav" aria-label="工作台导航">
+      <a href="root-new-tool-review.html" data-nav="new">新建工具</a>
+      <a href="root-workbench-entry.html?section=idea" data-nav="idea">需求</a>
+      <a href="root-new-tool-review.html#my-tools" data-nav="tools">我的工具</a>
+    </nav>
+    <nav class="root-nav root-nav-secondary" aria-label="评审视图">
+    <button type="button" id="show-site" aria-pressed="true">咖啡官网对照</button>
+    <button type="button" id="show-tool" aria-pressed="false">已保存示例</button>
+    <button type="button" id="show-generation" aria-pressed="false">网站生成示例</button>
+    <button type="button" id="show-revision" aria-pressed="false">修改前确认</button>
+    <button type="button" id="show-guide" aria-pressed="false">首次使用与回访</button>
+  </nav>
+  </aside>
+  <main>
+  <h1>ROOT 生成与修改体验评审</h1>
+
+  <section id="site-review">
+    <p>两边使用同一份「山野咖啡」测试内容。可试切页、菜单筛选和问答。</p>
+    <nav class="subnav" aria-label="对照设置">
+      <button type="button" id="wide" aria-pressed="true">桌面</button>
+      <button type="button" id="narrow" aria-pressed="false">390 px</button>
+      <button type="button" data-route="home" aria-pressed="true">首页</button>
+      <button type="button" data-route="catalog" aria-pressed="false">菜单</button>
+      <button type="button" data-route="faq" aria-pressed="false">常见问题</button>
+    </nav>
+    <div class="comparison" data-narrow="false">
+      <section class="pane"><header><h2>当前模板</h2></header><iframe id="coffee-before" title="山野咖啡当前模板"></iframe></section>
+      <section class="pane"><header><h2>排版提案</h2></header><iframe id="coffee-after" title="山野咖啡排版提案"></iframe></section>
+    </div>
+  </section>
+  <section id="tool-review" hidden>
+    <p>从已保存工具预览顶部选择「独立打开」，在新标签页操作。原工作台留在当前标签页。</p>
+    <div class="library" style="margin-top: 12px">
+      <aside aria-label="我的工具">
+        <h2>我的工具</h2>
+        <button type="button" data-tool="coffee" aria-pressed="true">山野咖啡</button>
+        <button type="button" data-tool="board" aria-pressed="false">交付跟进板</button>
+      </aside>
+      <section class="pane">
+        <header class="tool-header"><h2 id="tool-name">山野咖啡</h2><div><a class="action" href="#revision">继续修改</a> <a class="action" id="open-tool" target="_blank" rel="noopener">独立打开</a></div></header>
+        <iframe id="tool-preview" title="已保存工具预览" sandbox="allow-scripts allow-same-origin"></iframe>
+      </section>
+    </div>
+  </section>
+  <section id="generation-review" hidden>
+    <div class="review-columns">
+      <section class="review-card" aria-labelledby="generation-heading">
+        <h2 id="generation-heading">网站生成示例</h2>
+        <p>试试单页和多页结果。<a href="root-new-tool-review.html">体验从新建到生成的完整流程</a></p>
+        <nav aria-label="生成需求示例">
+          <button type="button" data-website="multi">试试咖啡官网</button>
+          <button type="button" data-website="single">试试单页活动</button>
+          <button type="button" data-website="failure">演示生成失败</button>
+        </nav>
+        <form id="website-form">
+          <label for="website-request">工具需求</label>
+          <textarea id="website-request" required>做一个山野咖啡官网，有首页、菜单、常见问题和分店页。菜单可以筛选冷热饮。</textarea>
+          <button type="submit" class="primary" id="generate-website">生成网站</button>
+        </form>
+        <p class="review-status" id="website-status" role="status"></p>
+      </section>
+      <section class="pane" id="website-preview-pane" hidden>
+        <header><h2 id="website-preview-title">工具预览</h2></header>
+        <iframe id="website-preview" title="生成网站预览" sandbox="allow-scripts allow-same-origin"></iframe>
+      </section>
+    </div>
+  </section>
+  <section id="revision-review" hidden>
+    <p><a href="root-revision-clarification.html#confirmation">在修改对话中体验方案确认</a></p>
+    <div class="review-columns">
+      <section class="review-card" aria-labelledby="change-heading">
+        <h2 id="change-heading">继续修改</h2>
+        <label for="revision-tool">当前工具</label>
+        <select id="revision-tool">
+          <option value="board">交付跟进板</option>
+          <option value="coffee">山野咖啡官网</option>
+        </select>
+        <nav aria-label="修改请求示例" id="board-intents">
+          <button type="button" data-intent="我想改一下颜色">模糊改色</button>
+          <button type="button" data-intent="把整体配色改成森林绿">明确改色</button>
+          <button type="button" data-intent="把字段「事项」改为「事情」">字段显示名</button>
+          <button type="button" data-intent="新增可选文本字段「负责人」">新增字段</button>
+          <button type="button" data-intent="把字段「事项」改成数字">修改字段类型</button>
+          <button type="button" data-intent="删除字段「事项」">删除字段</button>
+          <button type="button" data-intent="连接在线表格，自动同步数据">能力限制</button>
+        </nav>
+        <nav aria-label="网站修改请求示例" id="coffee-intents" hidden>
+          <button type="button" data-intent="把首页主标题改成「山野手冲」">修改首页标题</button>
+        </nav>
+        <form id="revision-form">
+          <label for="change-request">想改什么？</label>
+          <textarea id="change-request" required>我想改一下颜色</textarea>
+          <button type="submit" class="primary">查看修改方案</button>
+        </form>
+        <section id="change-options" hidden>
+          <h2 id="options-heading" tabindex="-1">你想改整套配色，还是只改局部？</h2>
+          <nav aria-label="选择配色范围">
+            <button type="button" data-color-choice="forest">整体改成森林绿</button>
+            <button type="button" data-color-choice="ink">整体改成墨灰</button>
+            <button type="button" id="partial-color">「复核体验入口」这一行改为浅绿</button>
+          </nav>
+        </section>
+        <section id="change-confirmation" hidden>
+          <h2 id="plan-heading" tabindex="-1">确认修改方案</h2>
+          <p id="change-plan"></p>
+          <nav aria-label="处理修改方案">
+            <button type="button" class="primary" id="apply-change">确认并修改</button>
+            <button type="button" id="edit-change">调整方案</button>
+            <button type="button" id="cancel-change">取消</button>
+          </nav>
+        </section>
+        <p id="change-status" class="review-status" role="status"></p>
+      </section>
+      <section class="review-card" aria-labelledby="revision-preview-title">
+        <div class="tool-header">
+          <h2 id="revision-preview-title">交付跟进板</h2>
+          <p id="revision-version">v1 · 剩余 5 次</p>
+        </div>
+        <div class="tool-sample" id="board-revision-preview">
+          <h2 id="field-title">事项</h2>
+          <label id="owner-field" hidden>负责人 <input type="text" aria-label="负责人"></label>
+          <label><input type="checkbox">确认演示范围</label>
+          <label><input type="checkbox">准备样例数据</label>
+          <label id="review-row"><input type="checkbox">复核体验入口</label>
+        </div>
+        <iframe id="coffee-revision-preview" title="当前网站预览" style="width:100%;height:420px;border:0" hidden></iframe>
+      </section>
+    </div>
+  </section>
+  <section id="guide-review" class="review-card" hidden>
+    <h2>首次使用与回访</h2>
+    <nav aria-label="新建工具旅程">
+      <a class="action" href="root-new-tool-review.html#registered">注册成功后进入新建</a>
+      <a class="action" href="root-new-tool-review.html">回访用户新建</a>
+    </nav>
+  </section>
+</main>
+</div>
+<section class="standalone" id="standalone" hidden>
+  <header><strong>ROOT</strong><h1 id="standalone-title" style="font-size: 16px"></h1><a class="action" id="return">返回我的工具</a></header>
+  <iframe id="standalone-preview" title="独立工具内容" sandbox="allow-scripts allow-same-origin"></iframe>
+</section>
+<style>[hidden] { display: none !important; }</style>
+<script>
+const coffee = "\u003c!doctype html>\u003chtml lang=\"zh-CN\">\u003chead>\u003cmeta charset=\"utf-8\">\n\u003cmeta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\u003ctitle>山野咖啡\u003c/title>\n\u003cstyle>\n:root{color-scheme:light;font:16px/1.6 system-ui,sans-serif;color:#302721;background:#f8f3eb}\n*{box-sizing:border-box}body{margin:0}h1,h2,h3,p{overflow-wrap:anywhere}h1,h2,h3{line-height:1.18}\n[hidden]{display:none!important}.site-wrap{width:min(100% - 2rem,64rem);margin-inline:auto}\n.site-header{background:#fff9f0;border-bottom:1px solid #ded0be;padding:.85rem 0}\n.site-header .site-wrap,nav,#site-filters{display:flex;align-items:center;gap:.6rem;flex-wrap:wrap}\n.site-header .site-wrap{justify-content:space-between}.site-brand{font-weight:750}\nbutton{border:1px solid #cdb8a0;border-radius:.5rem;background:white;color:inherit;font:inherit;padding:.4rem .8rem;cursor:pointer}\nbutton[aria-current=page],button[aria-pressed=true]{background:#553725;border-color:#553725;color:white}\nbutton:focus-visible,summary:focus-visible{outline:3px solid #84511a;outline-offset:3px}\nmain{padding-block:clamp(1rem,4vw,3rem)}section{padding-block:1rem;scroll-margin-top:1rem}\n.site-hero{background:#eadac5;padding:clamp(1rem,6vw,4rem);border-radius:1rem}\nh1{font-size:clamp(1.75rem,5vw,3.5rem);margin:.1em 0 .4em}.site-hero p{max-width:40rem}\n#site-filters{margin-bottom:1rem}.site-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,13rem),1fr));gap:.8rem}\narticle,details{border:1px solid #ded0be;border-radius:.75rem;background:white;padding:1rem}\narticle h3{margin:0}article p,details p{margin:.5em 0 0}details+details{margin-top:.65rem}summary{cursor:pointer}\nfooter{border-top:1px solid #ded0be;padding:1rem 0}\n\u003c/style>\u003c/head>\u003cbody>\n\u003cdiv id=\"root-website\" data-layout=\"brand\">\n\u003cheader class=\"site-header\">\u003cdiv class=\"site-wrap\">\u003cspan class=\"site-brand\">山野咖啡\u003c/span>\n\u003cnav aria-label=\"网站导航\">\u003cbutton type=\"button\" data-route=\"home\">首页\u003c/button>\u003cbutton type=\"button\" data-route=\"catalog\">咖啡菜单\u003c/button>\u003cbutton type=\"button\" data-route=\"faq\">常见问题\u003c/button>\u003c/nav>\u003c/div>\u003c/header>\n\u003cmain class=\"site-wrap\">\n\u003csection data-page=\"home\">\u003cdiv class=\"site-hero\">\u003ch1 tabindex=\"-1\">山野咖啡\u003c/h1>\n\u003cp>从山野选豆，在城市分享新鲜烘焙的咖啡。\u003c/p>\u003c/div>\u003c/section>\n\u003csection id=\"site-catalog\" data-page=\"catalog\" hidden>\u003ch2 tabindex=\"-1\">咖啡菜单\u003c/h2>\n\u003cdiv id=\"site-filters\" role=\"group\" aria-label=\"目录筛选\">\u003cbutton type=\"button\" data-filter=\"all\" aria-pressed=\"true\">全部\u003c/button>\u003cbutton type=\"button\" data-filter=\"cold\" aria-pressed=\"false\">冷饮\u003c/button>\u003cbutton type=\"button\" data-filter=\"hot\" aria-pressed=\"false\">热饮\u003c/button>\u003c/div>\u003cdiv class=\"site-cards\">\u003carticle data-item-filter=\"cold\">\u003ch3>山野冷萃\u003c/h3>\u003cp>低温浸萃，清爽回甘。\u003c/p>\u003c/article>\u003carticle data-item-filter=\"cold\">\u003ch3>燕麦冰拿铁\u003c/h3>\u003cp>轻柔燕麦与浓缩咖啡。\u003c/p>\u003c/article>\u003carticle data-item-filter=\"hot\">\u003ch3>手冲咖啡\u003c/h3>\u003cp>小批次烘焙，现磨现冲。\u003c/p>\u003c/article>\u003c/div>\u003c/section>\n\u003csection id=\"site-faq\" data-page=\"faq\" hidden>\u003ch2 tabindex=\"-1\">常见问题\u003c/h2>\u003cdetails>\u003csummary>可以选咖啡豆吗？\u003c/summary>\u003cp>手冲咖啡可选当日豆单。\u003c/p>\u003c/details>\u003c/section>\n\u003c/main>\u003cfooter>\u003cdiv class=\"site-wrap\">山野咖啡\u003c/div>\u003c/footer>\u003c/div>\n\u003cscript>\n(() => {\n  'use strict';\n  const root = document.getElementById('root-website');\n  const pages = Array.from(root.querySelectorAll('[data-page]'));\n  const navigation = Array.from(root.querySelectorAll('[data-route]'));\n  const isBrand = root.dataset.layout === 'brand';\n  function selectPage(route) {\n    const selected = pages.find(page => page.dataset.page === route) || pages[0];\n    for (const page of pages) page.hidden = isBrand && page !== selected;\n    for (const button of navigation) {\n      if (isBrand && button.dataset.route === selected.dataset.page) button.setAttribute('aria-current', 'page');\n      else button.removeAttribute('aria-current');\n    }\n    return selected;\n  }\n  if (isBrand) {\n    selectPage(location.hash.slice(1));\n    addEventListener('hashchange', () => selectPage(location.hash.slice(1)));\n  }\n  for (const button of navigation) button.addEventListener('click', () => {\n    const page = selectPage(button.dataset.route);\n    if (isBrand && location.hash.slice(1) !== button.dataset.route) location.hash = button.dataset.route;\n    page.querySelector('h1, h2').focus({preventScroll:true});\n    page.scrollIntoView({block:'start'});\n  });\n\n  const filters = Array.from(root.querySelectorAll('#site-filters [data-filter]'));\n  const items = Array.from(root.querySelectorAll('#site-catalog [data-item-filter]'));\n  for (const button of filters) button.addEventListener('click', () => {\n    const filter = button.dataset.filter;\n    for (const item of items) item.hidden = filter !== 'all' && item.dataset.itemFilter !== filter;\n    for (const option of filters) option.setAttribute('aria-pressed', String(option === button));\n  });\n})();\n\u003c/script>\u003c/body>\u003c/html>";
+const proposal = `
+:root { color: #302721; background: #fbf7ef; }
+.site-wrap { width: min(calc(100% - 48px), 68rem); }
+.site-header { background: transparent; border-color: #e4dacb; padding: .75rem 0; }
+.site-brand { font: 650 1.2rem/1.2 "Songti SC", "Noto Serif SC", serif; }
+button { min-height: 44px; }
+nav button { border-color: transparent; border-radius: 0; background: transparent; padding-inline: .45rem; }
+nav button[aria-current=page] { background: transparent; color: #553725; border-color: transparent; border-bottom-color: #553725; font-weight: 650; }
+main { min-height: 20rem; padding-block: clamp(1.2rem, 4vw, 3.5rem); }
+.site-hero { background: transparent; padding: clamp(1rem, 4vw, 3rem) 0; border-radius: 0; border-bottom: 1px solid #d6c8b5; }
+h1, h2 { font-family: "Songti SC", "Noto Serif SC", "SimSun", serif; width: fit-content; max-width: 100%; }
+h1 { font-size: clamp(2.2rem, 6vw, 4rem); }
+h2 { font-size: clamp(1.65rem, 3vw, 2.35rem); margin-top: 0; }
+h1:focus-visible, h2:focus-visible { outline: 2px solid #84511a; outline-offset: 5px; border-radius: 2px; }
+p { max-width: 38em; }
+#site-filters { margin-bottom: .4rem; }
+#site-filters button { border-radius: 999px; background: transparent; border-color: transparent; }
+#site-filters button[aria-pressed=true] { color: #553725; background: #eee2d1; border-color: #d6c8b5; }
+.site-cards { display: block; }
+article, details { padding: 1rem 0; border: 0; border-radius: 0; border-top: 1px solid #d6c8b5; background: transparent; }
+details+details { margin-top: 0; }
+footer { border-color: #e4dacb; color: #69594b; }
+@media (max-width: 500px) { .site-wrap { width: calc(100% - 32px); } nav { gap: .3rem; } }
+`;
+const coffeeProposal = coffee.replace('</head>', '<style>' + proposal + '</style></head>');
+const board = `<!doctype html><html lang="zh-CN"><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+body { margin: 0; background: #fafafe; color: #1d1d22; font: 16px/1.55 system-ui, sans-serif; }
+main { max-width: 65ch; margin: auto; padding: 24px 16px; }
+h1 { margin: 0 0 10px; } p { color: #565969; }
+label { display: flex; min-height: 44px; align-items: center; gap: 10px; padding: 4px 0; border-top: 1px solid #dfe1e9; }
+input { accent-color: #4563aa; }
+</style>
+<main><h1>交付跟进板</h1><p>示例记录</p>
+<label><input type="checkbox">确认演示范围</label>
+<label><input type="checkbox">准备样例数据</label>
+<label><input type="checkbox">复核体验入口</label>
+</main>`;
+const tools = {
+  coffee: { name: '山野咖啡', html: coffeeProposal },
+  board: { name: '交付跟进板', html: board }
+};
+const byId = id => document.getElementById(id);
+function toolUrl(key, isStandalone = false) {
+  const url = new URL(location.href);
+  url.search = '';
+  url.hash = '';
+  url.searchParams.set('tool', key);
+  if (isStandalone) url.searchParams.set('view', 'tool');
+  return url.href;
+}
+const params = new URLSearchParams(location.search);
+const initialKey = Object.hasOwn(tools, params.get('tool')) ? params.get('tool') : 'coffee';
+if (params.get('view') === 'tool') {
+  byId('review').hidden = true;
+  byId('standalone').hidden = false;
+  byId('standalone-title').textContent = tools[initialKey].name;
+  byId('standalone-preview').srcdoc = tools[initialKey].html;
+  byId('return').href = toolUrl(initialKey);
+  document.title = tools[initialKey].name + ' · ROOT 评审稿';
+} else {
+  byId('coffee-before').srcdoc = coffee;
+  byId('coffee-after').srcdoc = coffeeProposal;
+  const show = key => {
+    const active = ['tool', 'revision'].includes(key) ? 'tools' : 'new';
+    byId('tool-review-sidebar').querySelectorAll('[data-nav]').forEach(link => {
+      link.setAttribute('aria-current', link.dataset.nav === active ? 'page' : 'false');
+    });
+    byId('site-review').hidden = key !== 'site';
+    byId('tool-review').hidden = key !== 'tool';
+    byId('guide-review').hidden = key !== 'guide';
+    byId('generation-review').hidden = key !== 'generation';
+    byId('revision-review').hidden = key !== 'revision';
+    byId('show-site').setAttribute('aria-pressed', String(key === 'site'));
+    byId('show-tool').setAttribute('aria-pressed', String(key === 'tool'));
+    byId('show-guide').setAttribute('aria-pressed', String(key === 'guide'));
+    byId('show-generation').setAttribute('aria-pressed', String(key === 'generation'));
+    byId('show-revision').setAttribute('aria-pressed', String(key === 'revision'));
+  };
+  byId('show-site').onclick = () => show('site');
+  byId('show-tool').onclick = () => show('tool');
+  byId('show-guide').onclick = () => show('guide');
+  byId('show-generation').onclick = () => show('generation');
+  byId('show-revision').onclick = () => show('revision');
+  for (const mode of ['wide', 'narrow']) {
+    byId(mode).onclick = () => {
+      document.querySelector('.comparison').dataset.narrow = String(mode === 'narrow');
+      for (const peer of ['wide', 'narrow']) byId(peer).setAttribute('aria-pressed', String(mode === peer));
+    };
+  }
+  const routes = document.querySelectorAll('.subnav [data-route]');
+  for (const button of routes) button.onclick = () => {
+    for (const id of ['coffee-before', 'coffee-after']) {
+      byId(id).contentDocument.querySelector('[data-route="' + button.dataset.route + '"]').click();
+    }
+    for (const peer of routes) peer.setAttribute('aria-pressed', String(peer === button));
+    button.focus({ preventScroll: true });
+  };
+  const toolButtons = document.querySelectorAll('button[data-tool]');
+  function selectTool(key) {
+    byId('tool-name').textContent = tools[key].name;
+    byId('tool-preview').srcdoc = tools[key].html;
+    byId('open-tool').href = toolUrl(key, true);
+    for (const button of toolButtons) button.setAttribute('aria-pressed', String(button.dataset.tool === key));
+  }
+  for (const button of toolButtons) button.onclick = () => selectTool(button.dataset.tool);
+  selectTool(initialKey);
+  function syncView() {
+    const view = location.hash.slice(1);
+    if (['tool', 'revision', 'generation', 'guide'].includes(view)) show(view);
+    else show(params.has('tool') ? 'tool' : 'site');
+  }
+  window.addEventListener('hashchange', syncView);
+  syncView();
+
+  const websiteExamples = {
+    multi: '做一个山野咖啡官网，有首页、菜单、常见问题和分店页。菜单可以筛选冷热饮。',
+    single: '做一个周末手冲体验活动的单页网站，说明活动内容和场次。',
+    failure: '做一个烘焙店官网，包含门店、产品和问答。'
+  };
+  const websiteRequest = byId('website-request');
+  const websiteStatus = byId('website-status');
+  const websitePreview = byId('website-preview');
+  const websitePreviewPane = byId('website-preview-pane');
+  for (const button of document.querySelectorAll('[data-website]')) {
+    button.onclick = () => { websiteRequest.value = websiteExamples[button.dataset.website]; websiteRequest.focus(); };
+  }
+  byId('website-form').onsubmit = event => {
+    event.preventDefault();
+    const input = websiteRequest.value;
+    const submit = byId('generate-website');
+    submit.disabled = true;
+    websitePreviewPane.hidden = true;
+    websiteStatus.textContent = '正在整理页面结构并准备预览…';
+    setTimeout(() => {
+      submit.disabled = false;
+      if (input === websiteExamples.multi) {
+        websitePreview.srcdoc = coffeeProposal
+          .replace('</nav>', '<button type="button" data-route="stores">分店</button></nav>')
+          .replace('</main>', '<section data-page="stores" hidden><h2 tabindex="-1">分店</h2><p>山野咖啡城市店 · 示例门店</p></section></main>');
+        byId('website-preview-title').textContent = '工具预览 · 山野咖啡';
+        websitePreviewPane.hidden = false;
+        websiteStatus.textContent = '示例预览已就绪 · 首页、菜单、常见问题、分店。';
+      } else if (input === websiteExamples.single) {
+        websitePreview.srcdoc = '<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><style>body{margin:0;padding:clamp(16px,6vw,64px);background:#fbf7ef;color:#302721;font:16px/1.6 system-ui}h1{font:650 clamp(28px,6vw,56px)/1.2 Songti SC,serif}</style><h1>周末手冲体验</h1><p>用同一款豆子，试试水温和冲煮节奏如何改变风味。</p><h2>活动场次</h2><p>周六上午 · 周日下午</p></html>';
+        byId('website-preview-title').textContent = '工具预览 · 周末手冲体验';
+        websitePreviewPane.hidden = false;
+        websiteStatus.textContent = '示例预览已就绪 · 单页活动网站。';
+      } else if (input === websiteExamples.failure) {
+        websiteStatus.textContent = '网站预览校验未通过。可以修改需求后重试，或从「我的工具」重开已保存的工具。';
+      } else {
+        websiteStatus.textContent = '评审稿模拟上方三种需求。请选择一项查看生成流程。';
+      }
+    }, 380);
+  };
+
+  const request = byId('change-request');
+  const options = byId('change-options');
+  const confirmation = byId('change-confirmation');
+  const status = byId('change-status');
+  const palette = { forest: '森林绿', ink: '墨灰' };
+  let pendingChange = null;
+  const revisionTool = byId('revision-tool');
+  const versions = { board: 1, coffee: 1 };
+  let coffeeTitle = '山野咖啡';
+  let remaining = 5;
+
+  function resetProposal(message = '') {
+    options.hidden = true;
+    confirmation.hidden = true;
+    pendingChange = null;
+    status.textContent = message;
+  }
+  function propose(change, description) {
+    options.hidden = true;
+    confirmation.hidden = false;
+    pendingChange = change;
+    byId('change-plan').textContent = description;
+    byId('plan-heading').focus();
+  }
+  function proposeColor(color) {
+    propose({ color }, '把交付跟进板的整体配色改为' + palette[color] + '。字段、操作和已有记录保持原样。');
+  }
+  function showRevisionVersion() {
+    byId('revision-version').textContent = 'v' + versions[revisionTool.value] + ' · 剩余 ' + remaining + ' 次';
+  }
+  function showRevisionCoffee() {
+    byId('coffee-revision-preview').srcdoc = coffeeProposal.replace(
+      '>山野咖啡</h1>', '>' + coffeeTitle + '</h1>'
+    );
+  }
+  revisionTool.onchange = () => {
+    resetProposal();
+    const isCoffee = revisionTool.value === 'coffee';
+    byId('board-intents').hidden = isCoffee;
+    byId('coffee-intents').hidden = !isCoffee;
+    byId('board-revision-preview').hidden = isCoffee;
+    byId('coffee-revision-preview').hidden = !isCoffee;
+    byId('revision-preview-title').textContent = isCoffee ? '山野咖啡官网' : '交付跟进板';
+    request.value = isCoffee ? '把首页主标题改成「山野手冲」' : '我想改一下颜色';
+    showRevisionVersion();
+    if (isCoffee) showRevisionCoffee();
+  };
+  for (const button of document.querySelectorAll('[data-intent]')) {
+    button.onclick = () => { resetProposal(); request.value = button.dataset.intent; request.focus(); };
+  }
+  request.oninput = () => resetProposal();
+  byId('revision-form').onsubmit = event => {
+    event.preventDefault();
+    resetProposal();
+    const text = request.value.trim();
+    if (revisionTool.value === 'coffee') {
+      if (text === '把首页主标题改成「山野手冲」' && coffeeTitle !== '山野手冲') {
+        propose({ coffeeTitle: '山野手冲' }, '首页主标题「山野咖啡」改为「山野手冲」。菜单筛选、问答和导航照常使用。');
+      } else {
+        resetProposal('可用上方示例查看首页标题的修改方案。');
+      }
+      return;
+    }
+    if (text === '我想改一下颜色') {
+      options.hidden = false;
+      byId('options-heading').focus();
+    } else if (text === '把整体配色改成森林绿') {
+      proposeColor('forest');
+    } else if (text === '把字段「事项」改为「事情」') {
+      propose({ field: '事情' }, '把台账字段的显示名和导出表头从「事项」改为「事情」。已有记录和字段的数据键保持原样。');
+    } else if (text === '新增可选文本字段「负责人」') {
+      propose({ fieldAdded: true }, '新增可选文本字段「负责人」。3 条已有记录的负责人留空，其他字段和已有值保持原样。');
+    } else if (text === '把字段「事项」改成数字') {
+      resetProposal('「事项」已有 3 条文本记录。改成数字需要转换这些值，当前工具仍可使用。你可以改为新增一个可选数字字段。');
+    } else if (text === '删除字段「事项」') {
+      resetProposal('「事项」里有 3 条已保存的值。本次修改无法安全删除这些数据，请调整需求。');
+    } else if (text === '连接在线表格，自动同步数据') {
+      resetProposal('当前版本暂不支持连接在线表格或自动同步。你可以导入 CSV 或 XLSX 生成工具。');
+    } else {
+      resetProposal('评审稿演示上方的示例请求。请选择一个示例查看交互。');
+    }
+  };
+  for (const button of options.querySelectorAll('[data-color-choice]')) {
+    button.onclick = () => proposeColor(button.dataset.colorChoice);
+  }
+  byId('partial-color').onclick = () => {
+    propose({ rowColor: true }, '将「复核体验入口」这一行的背景改为浅绿。3 条记录的值保持原样。');
+  };
+  byId('edit-change').onclick = () => { resetProposal(); request.focus(); };
+  byId('cancel-change').onclick = () => { resetProposal('已取消。'); request.focus(); };
+  byId('apply-change').onclick = () => {
+    if (!pendingChange || remaining === 0) return;
+    if (pendingChange.color) document.querySelector('.tool-sample').dataset.color = pendingChange.color;
+    if (pendingChange.field) byId('field-title').textContent = pendingChange.field;
+    if (pendingChange.fieldAdded) byId('owner-field').hidden = false;
+    if (pendingChange.rowColor) byId('review-row').style.backgroundColor = '#d5ead9';
+    if (pendingChange.coffeeTitle) {
+      coffeeTitle = pendingChange.coffeeTitle;
+      showRevisionCoffee();
+    }
+    versions[revisionTool.value] += 1;
+    remaining -= 1;
+    showRevisionVersion();
+    resetProposal('修改已保存为 v' + versions[revisionTool.value] + '。');
+    request.focus();
+  };
+}
+</script>
+</body>
+</html>

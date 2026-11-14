@@ -1,0 +1,18 @@
+[
+  {"id":"01–04","type":"需求","title":"工作台与管理后台视觉优化","index":"runs/owner-feedback-2026-11-14/workbench-ui-polish/status.json"},
+  {"id":"05／13／16","type":"需求","title":"需求入口与草稿短名","index":"runs/owner-feedback-2026-11-14/requirements/status.json"},
+  {"id":"06","type":"需求","title":"新建工具的保存结果页","index":"runs/owner-feedback-2026-11-14/completion/status.json"},
+  {"id":"07","type":"需求","title":"工具使用页操作与版本历史","index":"runs/owner-feedback-2026-11-14/tool-actions/status.json"},
+  {"id":"08","type":"需求","title":"独立打开已保存工具","index":"runs/owner-feedback-2026-11-14/standalone/status.json"},
+  {"id":"09–10","type":"需求","title":"修改页预览、只读代码和版本历史","index":"runs/owner-feedback-2026-11-14/revision-workspace-views/status.json"},
+  {"id":"11／18","type":"Bug","title":"修改重复提交与连接恢复","index":"runs/feedback-2026-11-14/revision-admission/integration-with-style/status.json","history":"runs/feedback-2026-11-14/revision-admission/status.json"},
+  {"id":"12","type":"Bug","title":"新建和修改的失败历史归属混杂","index":"runs/feedback-2026-11-14/history-ownership/status.json"},
+  {"id":"13–14","type":"需求","title":"导航排序与首次引导","index":"runs/owner-feedback-2026-11-14/navigation-onboarding/status.json"},
+  {"id":"15","type":"需求","title":"个人中心","index":"runs/owner-feedback-2026-11-14/profile/status.json"},
+  {"id":"17","type":"Bug","title":"生成品牌官网后样式未生效","index":"runs/feedback-2026-11-14/style-17/status.json"},
+  {"id":"19","type":"需求","title":"个人默认生成额度统一为 20 次","state":"现网配置已核实","owner":"运维","note_status":"待下一版发布后复核","note":"现网已核实新旧账号默认 20 次，下一版复核已有用量和历史补额。"},
+  {"id":"20","type":"Bug","title":"咖啡官网续改用完模型调用额度","index":"runs/feedback-2026-11-14/quota-100/status.json"},
+  {"id":"21","type":"需求","title":"评审结束后关闭公网入口","state":"待评审结束","owner":"运维","note_status":"以评审结束为触发条件","note":"业务负责人反馈第 21 项，由运维认领并在评审结束后复核关站。"},
+  {"id":"邀请码","type":"需求","title":"邀请码默认 72 小时","index":"runs/owner-feedback-2026-11-14/invite-72h/status.json"},
+  {"id":"官网配色","type":"需求","title":"官网 B 版配色","index":"runs/owner-feedback-2026-11-14/site-palette/status.json"}
+]

@@ -1,0 +1,38 @@
+.revision-author {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 3px;
+  color: #505970;
+  font-size: 12px;
+  font-weight: 650;
+}
+.revision-avatar {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 6px;
+  background: #e5ebfa;
+  color: #314b92;
+  font-weight: 750;
+}
+.revision-view-icon {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  stroke: currentColor;
+  stroke-width: 1.65;
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.revision-preview-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 8px;
+  color: #314b92;
+  font-size: 13px;
+  font-weight: 650;
+}

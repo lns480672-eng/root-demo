@@ -1,0 +1,404 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ROOT · 新建工具交互稿</title>
+<style>
+  :root { color-scheme: light; color: #1d1d22; background: #f3f4fc; font: 15px/1.55 system-ui, "PingFang SC", sans-serif; }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  body { margin: 0; min-height: 100vh; background: linear-gradient(125deg,#fafafe,#e9ecfa); }
+  button, select, textarea, input { font: inherit; color: inherit; }
+  button, select { cursor: pointer; min-height: 44px; background: #fafafe; border: 1px solid #c8cddd; border-radius: 10px; padding: 7px 13px; }
+  button:disabled { cursor: default; opacity: .5; }
+  :focus-visible { outline: 2px solid #4563aa; outline-offset: 3px; }
+  h1, h2, p { margin: 0; }
+  .top { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; padding: 12px 20px; border-bottom: 1px solid #dfe1e9; background: #fafafe; }
+  .brand { display: flex; align-items: center; gap: 9px; }
+  .brand strong { font: 900 23px/1 "Avenir Next", "Arial Black", sans-serif; letter-spacing: -.06em; }
+  .brand i { width: 8px; height: 8px; border-radius: 2px; background: #879cea; }
+  .review { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; color: #565969; font-size: 13px; }
+  .review select, .review button { min-height: 36px; }
+  .content { min-width: 0; }
+  .start { width: min(100% - 32px, 660px); margin: clamp(64px, 15vh, 160px) auto 40px; }
+  .start h1 { font: 700 clamp(30px, 4vw, 48px)/1.2 "Songti SC", "Noto Serif SC", serif; text-align: center; margin-bottom: 22px; }
+  .prompt { position: relative; padding: 12px; border-radius: 18px; background: #fafafe; border: 1px solid #c8cddd; box-shadow: 0 12px 28px #313e6210; }
+  textarea { display: block; width: 100%; min-height: 115px; padding: 8px; resize: vertical; border: 0; border-radius: 8px; background: transparent; }
+  .actions { display: flex; align-items: end; justify-content: space-between; gap: 12px; margin-top: 8px; }
+  .examples { display: flex; flex-wrap: wrap; gap: 6px; }
+  .examples button { min-height: 36px; padding: 5px 10px; border-radius: 999px; font-size: 13px; }
+  .examples button:hover { border-color: #6883d0; background: #f0f2fc; }
+  #send { flex: none; }
+  .primary { color: #fff; background: #202127; border-color: #202127; }
+  .modes { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; margin-top: 16px; }
+  .modes a { display: block; min-width: 0; min-height: 74px; padding: 10px; text-align: start; text-decoration: none; color: #243971; background: #fafafe; border: 1px solid #c8cddd; border-radius: 12px; }
+  .modes a:hover { border-color: #6883d0; background: #f0f2fc; }
+  .modes span { display: block; margin-top: 3px; color: #565969; font-size: 13px; line-height: 1.35; }
+  .coachmark { position: absolute; z-index: 1; inset: auto auto 12px 12px; max-width: calc(100% - 90px); pointer-events: none; padding: 8px 12px; border-radius: 10px; background: #314b92; color: white; font-size: 14px; }
+  .coachmark::before { content: ""; position: absolute; bottom: 100%; left: 17px; border: 7px solid transparent; border-bottom-color: #314b92; }
+  .prompt[data-guided] { outline: 2px solid #6883d0; outline-offset: 4px; }
+  .coachmark:not([hidden]) { animation: coach-in .35s ease-out both, coach-point .85s .45s ease-in-out 2; }
+  @keyframes coach-in { from { opacity: 0; transform: translateY(6px); } }
+  @keyframes coach-point { 50% { transform: translateY(-4px); } }
+  @media (prefers-reduced-motion: reduce) { .coachmark:not([hidden]) { animation: none; } }
+  .split { display: grid; grid-template-columns: clamp(260px, 25vw, 360px) minmax(0, 1fr); min-height: 100%; }
+  .split[data-browsing="true"] { grid-template-columns: minmax(0, 1fr); }
+  .progress { min-width: 0; padding: 24px 18px; border-right: 1px solid #dfe1e9; }
+  .progress h2 { font-size: 20px; }
+  .progress p { margin: 8px 0; overflow-wrap: anywhere; }
+  .stage-detail { margin: 13px 0; }
+  .stage-detail summary { cursor: pointer; color: #314b92; padding-block: 8px; }
+  .stage-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-block: 14px; }
+  .category { display: grid; gap: 4px; margin-bottom: 10px; font-size: 14px; }
+  .category p, #stage-step { color: #565969; }
+  .stage-note { color: #246743; font-weight: 650; }
+  .status { color: #565969; }
+  .status[data-error="true"] { color: #a3372e; }
+  .preview { min-width: 0; min-height: 60vh; padding: clamp(16px, 3vw, 34px); background: #fafafe; }
+  .preview-label { margin-bottom: 10px; color: #314b92; font-size: 13px; font-weight: 650; }
+  .preview-card { margin-top: 18px; padding: clamp(12px, 2vw, 24px); border: 1px solid #dfe1e9; border-radius: 14px; background: #fff; }
+  .preview-card form { margin-top: 0; }
+  .split[data-arriving="true"] .preview-card { animation: preview-arrive 420ms ease-out both; }
+  .split[data-arriving="true"] .stage-note { animation: saved-arrive 420ms ease-out both; }
+  @keyframes preview-arrive { from { opacity: .35; transform: translateY(6px); } }
+  @keyframes saved-arrive { from { opacity: .45; } }
+  @media (prefers-reduced-motion: reduce) {
+    .split[data-arriving="true"] :is(.preview-card, .stage-note) { animation: none; }
+  }
+  .preview h2 { font: 700 29px/1.2 "Songti SC", "Noto Serif SC", serif; }
+  .preview form { display: flex; flex-wrap: wrap; align-items: end; gap: 8px; margin-top: 20px; }
+  .preview label { display: grid; gap: 4px; }
+  .preview input { width: 150px; max-width: 100%; padding: 8px; border-radius: 8px; border: 1px solid #c8cddd; }
+  .preview output { display: block; margin-top: 14px; }
+  .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+  @media (max-width: 760px) {
+    .split { grid-template-columns: minmax(0, 1fr); align-content:start; }
+    .split:is([data-stage="running"],[data-stage="ready"]) .progress { min-height:220px; }
+    .progress { border-right: 0; padding: 15px 12px; }
+    .stage-actions button { padding-inline: 8px; }
+    .start { margin-top: 50px; }
+    .preview { min-height: auto; }
+  }
+
+  body { background:#f4f6fc; }
+  .prompt { background:#fff;border-color:#d8deed;box-shadow:0 6px 20px #263e7910; }
+  .primary { background:#314b92;border-color:#314b92; }
+  .preview-label { display:flex;align-items:center;gap:6px; }
+  .preview a { color:#314b92; }
+  .examples button { min-height:44px; }
+  .prompt-entry { position:relative; }
+  .coachmark { inset:auto auto 4px 8px; max-width:calc(100% - 16px); margin:0; }
+
+</style>
+<link rel="stylesheet" href="root-workbench-nav.css">
+<link rel="stylesheet" href="root-visual-v4.css">
+<link rel="stylesheet" href="root-brand-blue.css">
+</head>
+<body class="root-visual brand-blue root-new-tool-review">
+<header class="top">
+  <span class="brand"><strong>ROOT</strong><i aria-hidden="true"></i>工具工作台</span>
+  <div class="review" aria-label="评审控件">
+    <button id="replay-guide" type="button">重播首次指引</button>
+    <label for="review-state">查看状态 <select id="review-state"><option value="start">初始</option><option value="running">生成中</option><option value="ready">已保存</option><option value="failed">失败</option></select></label>
+    <label for="outcome">演示结果 <select id="outcome"><option value="success">成功</option><option value="failure">失败</option></select></label>
+  </div>
+</header>
+<div class="root-shell">
+  <aside class="root-sidebar">
+    <nav class="root-nav" aria-label="工作台导航">
+      <button id="new-tool" type="button" aria-current="page">新建工具</button>
+      <a href="root-workbench-entry.html?section=idea">需求</a>
+      <button id="my-tools-nav" type="button" aria-controls="library" aria-expanded="false">我的工具</button>
+      <div class="root-nav-children" id="library" hidden>
+        <button id="open-old" type="button">读书清单</button>
+        <button id="open-created" type="button" hidden>AA 分账</button>
+        <a href="root-owner-feedback-review.html?v=brand-a#tool">AA 分账示例</a>
+        <a href="root-tool-experience-review.html#tool">更多已保存工具</a>
+      </div>
+    </nav>
+  </aside>
+  <main class="content">
+    <section class="start" id="start">
+      <h1>你想做什么工具？</h1>
+      <form class="prompt" id="composer">
+        <label class="category">生成类别<select id="category"><option>按需求自动选择</option><option>计算工具</option><option>多页品牌官网</option></select><p>不确定时，保持自动选择。</p></label>
+        <label class="sr-only" for="requirement">工具需求</label>
+        <div class="prompt-entry"><textarea id="requirement" placeholder="描述你想做的工具、怎么用、需要保存哪些数据。"></textarea><p class="coachmark" id="coachmark" hidden>点这里，写下你想做的工具</p></div>
+        <div class="actions">
+          <div class="examples" role="group" aria-label="需求示例">
+            <button type="button" data-example="做一个读书清单，可以添加书名、标记已读，刷新后保留记录。">试试读书清单</button>
+            <button type="button" data-example="做一个 AA 分账计算器，输入总金额和人数，算出每人应付多少。">试试 AA 分账</button>
+            <button type="button" data-example="做一个交付跟进板，记录事项、负责人和进度，可以按状态筛选，刷新后保留记录。">试试交付跟进板</button>
+          </div>
+          <button class="primary" id="send" type="submit" disabled>开始</button>
+        </div>
+      </form>
+      <nav class="modes" aria-label="新建方式">
+        <a href="root-workbench-entry.html?section=idea"><strong>需求助手</strong><span>把想法梳理成需求</span></a>
+        <a href="root-workbench-entry.html?section=table"><strong>从表格生成</strong><span>用现有数据开始</span></a>
+      </nav>
+      <details class="stage-detail"><summary>新建历史</summary><p>读书清单 · 未通过检查</p><button id="restore-new" type="button">带回需求</button></details>
+    </section>
+    <div class="split" id="split" hidden>
+      <section class="progress" id="progress">
+        <h2 id="stage-title" tabindex="-1">生成工具</h2>
+        <p class="status" id="status" role="status"></p>
+        <p id="stage-step" hidden>当前阶段 · 生成工具</p>
+        <div class="stage-actions">
+          <button class="primary" id="open-result" type="button" hidden>打开工具</button>
+          <button class="primary" id="retry" type="button" hidden>重试</button>
+          <button id="edit" type="button" hidden>编辑需求</button>
+        </div>
+        <details class="stage-detail"><summary>查看原需求</summary><p id="submitted"></p></details>
+      </section>
+      <section class="preview" id="running-preview" hidden><p class="preview-label">工具预览</p><h2>正在准备预览</h2><p>生成完成后可在这里试用。</p></section>
+      <section class="preview" id="old-preview" hidden aria-labelledby="old-title">
+        <p class="preview-label">工具预览 · 上一版仍可用</p><h2 id="old-title" tabindex="-1">读书清单</h2>
+        <p><a href="root-tool-experience-review.html#revision">继续修改示例</a></p>
+        <div class="preview-card old-tool-card"><form id="books"><label>书名 <input id="book-title" required></label><button type="submit">添加</button></form>
+        <ul id="book-list"><li>海边的卡夫卡</li><li>设计中的设计</li></ul></div>
+      </section>
+      <section class="preview" id="new-preview" hidden aria-labelledby="new-title">
+        <p class="preview-label" id="preview-label">工具预览</p>
+        <h2 id="new-title" tabindex="-1">AA 分账</h2>
+        <div class="stage-actions" id="created-actions" hidden>
+          <a href="root-owner-feedback-review.html#revision">修改</a>
+          <a href="root-owner-feedback-review.html#standalone" target="_blank" rel="noopener">独立打开 ↗</a>
+        </div>
+        <div class="preview-card">
+        <form id="calculator">
+          <label>总金额 <input id="amount" type="number" min="0" step="0.01" required></label>
+          <label>人数 <input id="people" type="number" min="1" step="1" required></label>
+          <button type="submit">计算人均费用</button>
+        </form>
+        <output id="share"></output>
+        </div>
+      </section>
+    </div>
+
+  </main>
+</div>
+<script>
+  const byId = id => document.getElementById(id);
+  const start = byId('start');
+  const split = byId('split');
+  const prompt = byId('requirement');
+  const status = byId('status');
+  const openResult = byId('open-result');
+  const retry = byId('retry');
+  const edit = byId('edit');
+  const progress = byId('progress');
+  const oldPreview = byId('old-preview');
+  const newPreview = byId('new-preview');
+  const library = byId('library');
+  const composer = byId('composer');
+  const coachmark = byId('coachmark');
+  let timer;
+  let draftName = '';
+  let taskTitle = '';
+  const titleDemoKey = 'root-new-tool-title-demo';
+
+  function sampleTitle(requirement) {
+    if (requirement.includes('读书')) return '读书清单';
+    if (requirement.includes('交付')) return '交付跟进板';
+    if (requirement.includes('分账')) return 'AA 分账';
+    return '';
+  }
+
+  function recordTitleDemo(mode) {
+    try {
+      sessionStorage.setItem(titleDemoKey, JSON.stringify({
+        mode, requirement: prompt.value, title: taskTitle, draftName, outcome: byId('outcome').value,
+      }));
+    } catch {}
+  }
+
+  function show(mode, { focusHeading = true } = {}) {
+    clearTimeout(timer);
+    openResult.hidden = mode !== 'ready';
+    start.hidden = mode !== 'start';
+    split.dataset.arriving = 'false';
+    if (['start', 'old', 'created'].includes(mode)) split.dataset.stage = mode;
+    dismissGuide();
+    split.hidden = mode === 'start';
+    oldPreview.hidden = mode !== 'old' && mode !== 'failed';
+    byId('running-preview').hidden = mode !== 'running';
+    byId('created-actions').hidden = mode !== 'created';
+    byId('preview-label').hidden = mode !== 'ready';
+    byId('review-state').value = ['running','ready','failed'].includes(mode) ? mode : 'start';
+    byId('stage-step').hidden = mode !== 'running';
+    retry.hidden = mode !== 'failed';
+    edit.hidden = mode !== 'failed';
+    newPreview.hidden = mode !== 'created' && mode !== 'ready';
+    progress.hidden = mode === 'old' || mode === 'created';
+    const browsing = mode === 'old' || mode === 'created';
+    split.dataset.browsing = String(browsing);
+    library.hidden = !browsing;
+    byId('my-tools-nav').setAttribute('aria-expanded', String(browsing));
+    byId('my-tools-nav').setAttribute('aria-current', browsing ? 'page' : 'false');
+    byId('new-tool').setAttribute('aria-current', browsing ? 'false' : 'page');
+    if (focusHeading && mode === 'old') byId('old-title').focus({ preventScroll:true });
+    if (focusHeading && mode === 'created') byId('new-title').focus({ preventScroll:true });
+  }
+  function showInput() {
+    show('start');
+    prompt.focus();
+  }
+  function stage(mode) {
+    const completing = split.dataset.stage === 'running' && mode === 'ready';
+    show(mode);
+    split.dataset.stage = mode;
+    split.dataset.arriving = String(completing);
+    byId('stage-title').textContent = taskTitle || '新工具';
+    byId('submitted').textContent = prompt.value.trim();
+    status.dataset.error = String(mode === 'failed');
+    status.textContent = {
+      running: '正在生成',
+      ready: '生成完成，已保存到「我的工具」。',
+      failed: '这次生成未通过预览检查。右侧读书清单仍可使用。'
+    }[mode];
+    status.classList.toggle('stage-note', mode === 'ready');
+    if (mode === 'ready') {
+      const toolName = taskTitle || 'AA 分账';
+      byId('new-title').textContent = toolName;
+      byId('open-created').textContent = toolName;
+      byId('open-created').hidden = false;
+    }
+  }
+  function generate(resume = false) {
+    if (!prompt.value.trim()) return;
+    const outcome = byId('outcome').value;
+    if (resume !== true) taskTitle = draftName;
+    stage('running');
+    byId('stage-title').focus();
+    recordTitleDemo('running');
+    timer = setTimeout(() => {
+      taskTitle ||= sampleTitle(prompt.value);
+      byId('stage-title').textContent = taskTitle;
+      recordTitleDemo('running');
+      timer = setTimeout(() => {
+        const mode = outcome === 'failure' ? 'failed' : 'ready';
+        stage(mode);
+        recordTitleDemo(mode);
+      }, 1400);
+    }, 700);
+  }
+  function review(mode) {
+    if(mode === 'start') return showInput();
+    if(!prompt.value.trim()) prompt.value = composer.querySelectorAll('[data-example]')[1].dataset.example;
+    syncPrompt();
+    taskTitle = draftName || (mode === 'running' ? '' : sampleTitle(prompt.value));
+    stage(mode);
+  }
+  byId('review-state').onchange = event => review(event.target.value);
+  function syncPrompt() {
+    byId('send').disabled = !prompt.value.trim();
+  }
+  function dismissGuide() {
+    coachmark.hidden = true;
+    composer.removeAttribute('data-guided');
+    prompt.removeAttribute('aria-describedby');
+  }
+  function showGuide() {
+    if (document.activeElement === prompt) prompt.blur();
+    coachmark.hidden = false;
+    composer.setAttribute('data-guided', '');
+    prompt.setAttribute('aria-describedby', 'coachmark');
+  }
+  function share(amount, people) {
+    return '人均 ¥' + (amount.valueAsNumber / people.valueAsNumber).toFixed(2);
+  }
+  byId('new-tool').onclick = () => {
+    if (location.hash) history.pushState(null, '', location.pathname + location.search);
+    prompt.value = '';
+    draftName = '';
+    syncPrompt();
+    showInput();
+  };
+  byId('my-tools-nav').onclick = () => {
+    if (location.hash !== '#my-tools') history.pushState(null, '', '#my-tools');
+    show('old');
+  };
+  byId('open-old').onclick = () => show('old');
+  byId('open-created').onclick = () => show('created');
+  openResult.onclick = () => {
+    if (location.hash !== '#my-tools') history.pushState(null, '', '#my-tools');
+    show('created');
+  };
+  byId('restore-new').onclick = () => { draftName=''; prompt.value=composer.querySelector('[data-example]').dataset.example; syncPrompt(); showInput(); };
+  prompt.oninput = syncPrompt;
+  prompt.addEventListener('focus', dismissGuide);
+  prompt.addEventListener('pointerdown', dismissGuide);
+  for (const example of composer.querySelectorAll('[data-example]')) {
+    example.onclick = () => {
+      prompt.value = example.dataset.example;
+      syncPrompt();
+      prompt.focus();
+    };
+  }
+  byId('replay-guide').onclick = () => {
+    show('start');
+    showGuide();
+  };
+  document.addEventListener('keydown', event => {
+    if (event.key === 'Escape') dismissGuide();
+  });
+  composer.onsubmit = event => { event.preventDefault(); generate(); };
+  retry.onclick = generate;
+  edit.onclick = showInput;
+  byId('books').onsubmit = event => {
+    event.preventDefault();
+    const input = byId('book-title');
+    const title = input.value.trim();
+    if (!title) return;
+    const item = document.createElement('li');
+    item.textContent = title;
+    byId('book-list').append(item);
+    input.value = '';
+    input.focus();
+  };
+  byId('calculator').onsubmit = event => {
+    event.preventDefault();
+    byId('share').textContent = share(byId('amount'), byId('people'));
+  };
+  function syncLocation() {
+    const reviewState = location.hash.slice(1);
+    if (['running','ready','failed'].includes(reviewState)) return review(reviewState);
+    if (location.hash === '#my-tools') {
+      show('old', { focusHeading:false });
+      return;
+    }
+    show('start');
+    if (location.hash.startsWith('#draft=')) {
+      try {
+        const params = new URLSearchParams(location.hash.slice(1));
+        prompt.value = params.get('draft') || '';
+        draftName = params.get('name') || '';
+        syncPrompt();
+      } catch {}
+    }
+    if (location.hash === '#registered') {
+      showGuide();
+      history.replaceState(null, '', location.pathname + location.search);
+    }
+  }
+  window.addEventListener('hashchange', syncLocation);
+  syncLocation();
+  if (!location.hash && performance.getEntriesByType('navigation')[0]?.type === 'reload') {
+    try {
+      const saved = JSON.parse(sessionStorage.getItem(titleDemoKey));
+      if (saved && ['running', 'ready', 'failed'].includes(saved.mode)) {
+        prompt.value = saved.requirement;
+        draftName = saved.draftName;
+        taskTitle = saved.title;
+        byId('outcome').value = saved.outcome;
+        syncPrompt();
+        if (saved.mode === 'running') generate(true);
+        else stage(saved.mode);
+      }
+    } catch {}
+  }
+</script>
+</body>
+</html>

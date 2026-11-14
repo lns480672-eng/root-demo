@@ -1,0 +1,100 @@
+:root {
+  --root-ink: #18253f;
+  --root-muted: #4f607b;
+  --root-blue: #294685;
+  --root-active: #e6edfb;
+  --root-canvas: #f3f5fa;
+  --root-line: #d9e2f0;
+  --root-paper: #fefeff;
+}
+
+body.root-visual {
+  color: var(--root-ink);
+  background: var(--root-canvas);
+}
+
+.root-visual :is(.top, .masthead, .brandbar), .root-visual > header {
+  background: #fcfdff;
+  border-color: var(--root-line);
+}
+
+.root-visual .root-sidebar {
+  background: #edf1f8;
+  border-color: var(--root-line);
+}
+
+.root-visual .root-nav :is(a, button)[aria-current="page"],
+.root-visual .root-nav button[aria-pressed="true"] {
+  color: #233c76;
+  background: #dfe8f9;
+}
+
+.root-visual :is(button, a, input, textarea, select, summary):focus-visible {
+  outline: 2px solid #345baf;
+  outline-offset: 2px;
+}
+
+.root-visual :is(button.primary, form button[type="submit"].primary) {
+  color: white;
+  background: var(--root-blue);
+  border-color: var(--root-blue);
+}
+
+.root-visual :where(button, .action, .workbench-link, select, input, textarea) {
+  border-color: #c5d0e2;
+}
+
+.root-visual :is(.card, .panel, .prompt, .preview-card, .review-card, .tool, .records) {
+  background-color: var(--root-paper);
+  border-color: var(--root-line);
+}
+
+.root-visual :is(.muted, .help, .subtle) { color: var(--root-muted); }
+
+.root-visual .prompt {
+  box-shadow: 0 10px 34px #263c6b12;
+}
+
+.root-visual .start h1 {
+  color: var(--root-ink);
+  letter-spacing: -.04em;
+}
+
+.root-visual #conversation {
+  background: #edf2fb;
+  border-color: var(--root-line);
+}
+
+.root-visual .revision-views {
+  border-bottom: 1px solid var(--root-line);
+  gap: 4px;
+  padding-bottom: 6px;
+}
+
+.root-visual .revision-views button { border-color:transparent; }
+
+.root-visual .revision-views button[aria-pressed="true"] {
+  color: #233c76;
+  background: #e3ecfc;
+}
+
+.root-visual .revision-author {
+  color: var(--root-muted);
+}
+
+.root-visual .admin-nav a[aria-current="page"] {
+  color: #233c76;
+  background: var(--root-active);
+}
+
+.root-visual .account-avatar,
+.root-visual .revision-avatar {
+  background: #dfe8f9;
+  color: #233c76;
+}
+
+.root-visual .account-menu a:hover,
+.root-visual .modes a:hover {
+  color: #233c76;
+  background: var(--root-active);
+}

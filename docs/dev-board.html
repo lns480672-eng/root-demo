@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ROOT 开发看板</title>
+  <meta name="description" content="查看 ROOT 的需求、Bug、交接回执和候选版本。">
+  <link rel="stylesheet" href="dev-board.css">
+</head>
+<body>
+  <header class="bar">
+    <div class="frame bar-inner">
+      <strong class="wordmark">ROOT</strong>
+      <nav aria-label="项目入口">{wiki}<a href="{refresh}">刷新状态</a></nav>
+    </div>
+  </header>
+  <main class="frame">
+    <div class="page-title">
+      <h1>开发看板</h1>
+      <p>本次读取 <time>{time}</time></p>
+    </div>
+    <nav class="tabs" aria-label="按类型筛选">{tabs}</nav>
+    <section class="list" aria-label="开发事项">
+      <div class="columns" aria-hidden="true">
+        <span>事项</span><span>当前阶段</span><span>下一位</span><span>卡点</span><span>候选</span>
+      </div>
+      {rows}
+    </section>
+  </main>
+</body>
+</html>

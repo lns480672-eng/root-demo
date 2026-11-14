@@ -1,0 +1,44 @@
+.root-shell {
+  display: grid;
+  grid-template-columns: 210px minmax(0, 1fr);
+  min-height: calc(100vh - 66px);
+}
+.root-sidebar {
+  box-sizing: border-box;
+  min-width: 0;
+  padding: 16px 12px;
+  border-inline-end: 1px solid #dfe1e9;
+  background: #f5f5fb;
+  color: #1d1d22;
+  font: 14px/1.45 system-ui, "PingFang SC", sans-serif;
+}
+.root-sidebar .root-nav { display: grid; gap: 4px; margin: 0; }
+.root-sidebar .root-nav :is(a, button) {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-height: 44px;
+  padding: 8px 11px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: start;
+  text-decoration: none;
+  cursor: pointer;
+}
+.root-sidebar .root-nav :is(a, button):hover { background: #edeffa; }
+.root-sidebar .root-nav :is(a, button)[aria-current="page"],
+.root-sidebar .root-nav button[aria-pressed="true"] { background: #e3e8fc; color: #314b92; font-weight: 650; }
+.root-sidebar .root-nav :is(a, button):focus-visible { outline: 2px solid #4563aa; outline-offset: 2px; }
+.root-sidebar .root-nav-children { border-inline-start: 1px solid #c8cddd; margin-inline-start: 10px; padding-inline-start: 5px; }
+.root-sidebar .root-nav-secondary { border-top: 1px solid #dfe1e9; padding-top: 8px; margin-top: 14px; }
+.root-shell > :last-child { min-width: 0; }
+@media (max-width: 760px) {
+  .root-shell { grid-template-columns: 94px minmax(0, 1fr); }
+  .root-sidebar { padding: 10px 4px; font-size: 13px; }
+  .root-sidebar .root-nav :is(a, button) { padding-inline: 5px; }
+  .root-sidebar .root-nav-children { margin-inline-start: 4px; padding-inline-start: 2px; }
+}
