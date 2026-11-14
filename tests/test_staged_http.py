@@ -106,6 +106,8 @@ def stages(stage, requirement, prior, key, admit, record, *, category="auto"):
                 content["script"] = "document.addEventListener('click', () => { void 0; }"
             if requirement == "官网失效日程标签":
                 content["markup"] = "<h1>invalid-website-tabs-fixture</h1>"
+            if requirement == "官网选择器未命中":
+                content["style"] = ".missing { color: red; }"
             if requirement == "官网验证竞态":
                 content["markup"] = "<h1>racing-website-tabs-fixture</h1>"
         record({"stage":stage,"status":"ok","dispatched":True})
@@ -295,6 +297,8 @@ def verify_runtime(html, entries, *, backup, storage_limit, website, record_fiel
         (runs / "record-baseline-verified").write_text(json.dumps(entries))
     if b"invalid-record-init-fixture" in html:
         raise RuntimeVerificationError("record_initialization")
+    if website and b".missing { color: red; }" in html:
+        raise RuntimeVerificationError("website_style")
     if website and b"invalid-website-tabs-fixture" in html:
         ready = runs / "website-verifier-recovered"
         if not ready.exists():
@@ -765,6 +769,20 @@ class StagedHTTP(StagedHTTPFixture):
         self.assertEqual(self.request(path + "/publish", payload, owner)[0], 200)
         reopened = self.request(tool, auth=owner)[1]
         self.assertEqual((reopened["version"], reopened["html"]), (2, expected))
+
+    def test_website_with_ineffective_style_is_not_saved_or_counted(self):
+        owner = self.account("website-style-owner")
+        task = self.gen(owner, "官网选择器未命中")[1]["task"]["id"]
+        self.wait_task(owner, task, "complete")
+        path = "/api/staged/" + task
+        candidate = self.request(path + "/candidate", {}, owner)[1]
+        payload = {**candidate["staged"], "toolId": candidate["id"], "entries": []}
+        status, result, _ = self.request(path + "/verify-preview", payload, owner)
+        self.assertEqual((status, result["code"]), (422, "staged_runtime_failed"))
+        self.wait_task(owner, task, "failed")
+        self.assertEqual(self.request(path + "/publish", payload, owner)[0], 409)
+        self.assertEqual(self.request("/api/tools", auth=owner)[1]["items"], [])
+        self.assertEqual(self.request("/api/trial", auth=owner)[1]["generation"]["used"], 0)
 
     def test_invalid_website_tabs_are_removed_from_preview_but_verifier_outage_is_retryable(self):
         owner = self.account("website-recovery-owner")

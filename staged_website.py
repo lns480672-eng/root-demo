@@ -159,7 +159,7 @@ def assemble(spec, value):
     markup, style, script = value["markup"], value["style"], value["script"]
     return f"""<!doctype html>{staged_program.NO_STORAGE_MARKER}<html lang="zh-CN"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{title}</title><style>{HIDDEN_STYLE}</style><style>{style}</style></head><body>
+<title>{title}</title><style>{HIDDEN_STYLE}</style><style data-root-website-style>{style}</style></head><body>
 <div id="root-website" data-layout="{layout}">{markup}</div>
 <script>
 window.addEventListener('click', event => {{

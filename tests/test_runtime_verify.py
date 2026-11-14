@@ -200,6 +200,26 @@ class RuntimeVerifierTests(unittest.TestCase):
                 http.shutdown()
                 server.join(timeout=2)
 
+    def test_website_requires_styles_that_change_the_rendered_page(self):
+        from staged_website import assemble
+
+        spec = {"layout": "brand", "title": "咖啡工坊"}
+        code = {
+            "format": "website-code-v1",
+            "markup": '<main><h1 class="brand">咖啡工坊</h1><button type="button">菜单</button></main>',
+            "script": "void 0;",
+        }
+        for style in ("", ".absent { color: red; }", ".brand { color: not-a-color; }",
+                      ".brand { color: black; }", ":root { --unused: red; }",
+                      "@media (min-width: 900px) { .brand { color: red; } }"):
+            with self.subTest(style=style):
+                with self.assertRaises(RuntimeVerificationError) as rejected:
+                    verify(assemble(spec, {**code, "style": style}), [], website=True)
+                self.assertEqual(rejected.exception.diagnostic, "website_style")
+        verify(assemble(spec, {**code, "style":
+            ":root { --accent: #224488; } .brand { color: var(--accent); } "
+            "@media (max-width: 500px) { main { padding: 12px; } }"}), [], website=True)
+
     def test_website_tabs_must_switch_selection_and_declared_panels(self):
         markup = (
             '<!doctype html><div role="tablist">'

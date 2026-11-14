@@ -21,7 +21,7 @@ MAX_CLARIFICATION_ROUNDS = 2
 RUNTIME_PROOF_VERSION = 8
 REPAIRABLE_REVISION_FAILURES = {"invalid_staged_result", "revision_patch_invalid", "staged_runtime_failed"}
 REPAIRABLE_RUNTIME_ERRORS = frozenset({
-    "script_exception", "document_not_ready", "record_initialization", "record_field_behavior", "record_visibility", "website_tabs",
+    "script_exception", "document_not_ready", "record_initialization", "record_field_behavior", "record_visibility", "website_tabs", "website_style",
 })
 LEASE_SECONDS = 90
 RETAIN_SECONDS = 48 * 60 * 60
@@ -1063,7 +1063,7 @@ class StagedJobs:
             logging.getLogger(__name__).warning("staged runtime rejected task=%s candidate=%s reason=%s",
                                                 identifier, identity["sha256"], error.diagnostic)
             permanent_failure = (
-                (spec.get("kind") == "website" and error.diagnostic == "website_tabs")
+                (spec.get("kind") == "website" and error.diagnostic in ("website_tabs", "website_style"))
                 or (staged_record_code.matches(spec) and error.diagnostic == "record_initialization")
             )
             if ((revision is None and permanent_failure and not data["entries"])

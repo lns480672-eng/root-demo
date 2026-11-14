@@ -194,6 +194,39 @@ async function candidateFrame() {
   return { sessionId, frame:tree.frame };
 }
 
+function verifyWebsiteStyle() {
+  const root = document.getElementById('root-website');
+  const sheet = document.querySelector('style[data-root-website-style]')?.sheet;
+  if (!root || !sheet || !sheet.cssRules.length) return false;
+  const properties = [
+    'color', 'background-color', 'background-image', 'font-family', 'font-size', 'font-weight',
+    'line-height', 'text-align', 'border-top-width', 'border-top-color', 'border-radius',
+    'box-shadow', 'display', 'padding-top', 'padding-left', 'margin-top', 'margin-left',
+    'gap', 'max-width', 'grid-template-columns', 'flex-direction',
+  ];
+  const elements = [document.body, root, ...root.querySelectorAll('*')].slice(0, 512);
+  const stabilizer = document.createElement('style');
+  stabilizer.textContent = '* { transition: none !important; animation: none !important; }';
+  document.head.append(stabilizer);
+  const snapshot = node => {
+    if (!node.checkVisibility({visibilityProperty:true,opacityProperty:true})) return null;
+    const style = getComputedStyle(node);
+    return properties.map(name => style.getPropertyValue(name)).join('|');
+  };
+  try {
+    const styled = elements.map(snapshot);
+    sheet.disabled = true;
+    return elements.some((node, index) => {
+      if (!styled[index]) return false;
+      const baseline = snapshot(node);
+      return baseline !== null && baseline !== styled[index];
+    });
+  } finally {
+    sheet.disabled = false;
+    stabilizer.remove();
+  }
+}
+
 async function verifyWebsiteTabs() {
   const groupSelector = '[role="tablist"]';
   const visible = node => node?.checkVisibility({visibilityProperty:true});
@@ -434,6 +467,13 @@ async function run() {
     submissions.push(JSON.parse(observed));
   }
   if (recordField || Array.isArray(recordVisibility)) return 'record:' + JSON.stringify({visible, submissions});
+  if (website && html.includes('<style data-root-website-style>')) {
+    for (const width of [1440, 390]) {
+      await evaluate(`document.querySelector('iframe').style.width = "${width}px"`, executionContextId);
+      const styled = await evaluate('(' + verifyWebsiteStyle.toString() + ')()', observer.executionContextId, sessionId);
+      if (!styled || failure) return 'failed:' + (failure || 'website_style');
+    }
+  }
   if (website && !await evaluate(
     '(' + verifyWebsiteTabs.toString() + ')()', observer.executionContextId, sessionId,
   )) return 'failed:' + (failure || 'website_tabs');
