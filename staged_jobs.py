@@ -243,7 +243,7 @@ class StagedJobs:
             raise ApiError(400, "staged_category", "请选择有效的新建类别。已有工具的修改沿用原类别。")
         if title is not None:
             if tool_id or not isinstance(title, str) or not 0 < len(title.strip()) <= 40 or any(c in title.strip() for c in "\r\n"):
-                raise ApiError(400, "invalid_draft_title", "需求名称须为 1–40 字的单行名称。")
+                raise ApiError(400, "invalid_draft_title", "工具名称须为 1–40 字的单行名称。")
             title = title.strip()
         requirement = requirement.strip()
         with self.store.connection(write=True) as db:
@@ -1184,7 +1184,7 @@ class StagedJobs:
                         db.execute("UPDATE tools SET title=? WHERE id=?", (title, result_id))
                 else:
                     spec = json.loads(self.read(row, row["head"], "spec.json"))
-                    title = " ".join(spec["title"].split())[:48]
+                    title = row["title"] or " ".join(spec["title"].split())[:48]
                     self.store.insert_draft(db, row["owner"], tool_id, title, pack_entries([]), model=True)
                     tool = self.store.owned_tool(db, owner, tool_id, published=False)
                     self.store.commit_initial(db, tool, data.get("entries"), self.budget.record_generation_success)

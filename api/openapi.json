@@ -4496,7 +4496,7 @@
       "StartGeneration": {
         "type": "object",
         "properties": {
-          "title": {"type": "string", "maxLength": 40, "description": "从需求草稿带入的任务名称；属于 requestId 的绑定内容。"},
+          "title": {"type": "string", "maxLength": 40, "description": "从需求草稿带入的工具名称，用于任务标题和首次保存的工具显示名称；属于 requestId 的绑定内容。"},
           "requirement": {
             "type": "string",
             "minLength": 1,

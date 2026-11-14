@@ -692,7 +692,7 @@ try {
     await login(accountA, true);
     if (await visible('#workspace-guide')) await click('#guide-skip');
     const oldId = 'ed4eed11-3ff4-4268-8df1-76c4a30dab08';
-    const body = '做一个读书清单，可以新增书名并保存。';
+    const body = '做一份简单读书清单，新增书名并保存。';
     const path = '/api/requirement-drafts/' + oldId;
     assert.equal((await appRequest(path, {text:body, revision:0})).status, 200);
     for (const width of [1440, 390]) {
@@ -710,23 +710,31 @@ try {
     }
     await click('[data-draft-id="' + oldId + '"]');
     await until(() => visible('#assistant-draft-name'));
-    await type('#assistant-draft-name', '图书借阅需求');
+    assert.equal(await evaluate('document.querySelector("label[for=assistant-draft-name]").textContent'), '工具名称');
+    await type('#assistant-draft-name', '图书借阅登记');
     await click('#assistant-save');
-    await until(async () => (await appRequest(path)).body.title === '图书借阅需求');
+    await until(async () => (await appRequest(path)).body.title === '图书借阅登记');
     await click('#assistant-build');
     assert.equal((await appRequest('/api/staged')).body.tasks.length, 0);
     await click('#generate');
     const task = await until(async () => {
       const active = (await appRequest('/api/staged')).body.tasks;
       const archived = (await appRequest('/api/staged/history')).body.tasks;
-      return [...active, ...archived].find(item => item.title === '图书借阅需求');
+      return [...active, ...archived].find(item => item.title === '图书借阅登记');
     });
     assert.equal(task.requirement, body);
+    const tool = await activeTool();
+    await until(() => evaluate('document.querySelector("#preview-title").textContent === "图书借阅登记"'));
+    assert.equal((await library()).items.find(item => item.id === tool.id)?.title, '图书借阅登记');
     await cdp('Page.reload');
     await until(() => evaluate('document.documentElement.dataset.ready === "true"'));
     const readback = (await appRequest('/api/staged/' + task.id)).body.task;
     assert.equal(readback.title, task.title);
     assert.equal(readback.requirement, body);
+    await click('#library-entry');
+    await click('#tool-list button[data-id="' + tool.id + '"]');
+    await until(() => evaluate('document.querySelector("#preview-title").textContent === "图书借阅登记"'));
+    assert.equal((await library()).items.find(item => item.id === tool.id)?.title, '图书借阅登记');
     evidence.tests.push({id:'AC-011/012/013', title:readback.title, fullText:readback.requirement, task:task.id});
   } else if (completionFlow) {
     stage = 'TEST-001-06 saved generation transition';
