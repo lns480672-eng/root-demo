@@ -757,8 +757,9 @@ class AccountHTTP(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(releases["items"][0]["build"], config["build"])
         self.assertEqual(releases["items"][0]["version"], releases["current"])
-        self.assertEqual(releases["current"], "0.8")
-        self.assertEqual(releases["items"][1]["build"], "v4-49174f46be99")
+        self.assertEqual(releases["current"], "0.9")
+        self.assertEqual(releases["items"][1]["version"], "0.8")
+        self.assertEqual(releases["items"][1]["build"], "v4-396a683db32f")
         self.assertIn("v4-44e3da0cae1b", [item["build"] for item in releases["items"][1:]])
         with urlopen(self.base + "/updates", timeout=5) as response:
             self.assertIn("webrtc=block", response.headers["Connection-Allowlist"])
