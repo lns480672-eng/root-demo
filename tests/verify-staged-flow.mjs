@@ -871,6 +871,11 @@ export async function verifyStagedHistory(ctx) {
   };
   const fixtureSql = script => execFileSync('python3', ['-B', '-c', script,
     join(root, 'runs', 'workspace.sqlite3'), accountA], {encoding:'utf8'}).trim();
+  const taskCount = () => fixtureSql(`
+import sqlite3, sys
+with sqlite3.connect(sys.argv[1]) as db:
+    print(db.execute("SELECT count(*) FROM staged_jobs JOIN accounts ON accounts.id=staged_jobs.owner WHERE username=?", (sys.argv[2],)).fetchone()[0])
+`);
   await cdp('Page.navigate', {url:base});
   await login(accountA, true);
   if (await visible('#workspace-guide')) await click('#guide-skip');
@@ -919,10 +924,12 @@ with sqlite3.connect(sys.argv[1]) as db:
   assert.deepEqual(listed.map(task => [task.id, task.state]), [[ready.id, 'complete']]);
   assert.equal(await visible('#staged-task-list button[data-task-id="' + ready.id + '"]'), true);
   const beforeBringBack = await balance();
+  const beforeNewTaskCount = taskCount();
   await bringBack(failed.id);
   assert.equal(await evaluate('document.querySelector("#requirement").value'), failedRequirement);
   assert.equal(await visible('#staged-resume'), false);
   assert.deepEqual(await balance(), beforeBringBack);
+  assert.equal(taskCount(), beforeNewTaskCount);
   await screenshot('failure-history-brought-back');
   const edited = '做一个小工具，历史验证重新提交';
   await generate(edited);
@@ -936,13 +943,40 @@ with sqlite3.connect(sys.argv[1]) as db:
     requirement:revisedRequirement, version:1, requestId:'5'.repeat(32),
   })).body.task;
   await waitTask(previous.id, 'unsupported');
-  await click('#new-tool');
+  const history = (await appRequest('/api/staged/history')).body.tasks;
+  assert.equal(history.length, 30);
+  assert.ok(history.every(task => !task.baseToolId));
+
+  async function enterRevision(toolId) {
+    await click('#library-entry');
+    const toolButton = '#tool-list button[data-id="' + toolId + '"]';
+    await until(() => visible(toolButton));
+    await click(toolButton);
+    await until(() => evaluate(`(() => {
+      const revise = document.querySelector('#revise-tool');
+      return revise.checkVisibility() && !revise.disabled &&
+        document.querySelector('#preview iframe[data-tool]')?.dataset.tool === ${JSON.stringify(toolId)};
+    })()`));
+    await click('#revise-tool');
+    assert.equal(await evaluate('document.querySelector("#tool-revision-dialog").hidden'), false);
+  }
+  await enterRevision(tool.id);
+  assert.deepEqual((await appRequest('/api/tools/' + tool.id + '/revision-tasks')).body.tasks, []);
+  assert.equal(await visible('#tool-revision-log [data-bring-back-revision="' + previous.id + '"]'), false);
+
+  await enterRevision(old.id);
+  await until(() => visible('#tool-revision-log [data-revision-task="' + previous.id + '"]'));
   const beforeRevise = await balance();
-  await bringBack(previous.id);
-  await until(async () => (await activeTool()).id === old.id);
+  const beforeTaskCount = taskCount();
+  const restoreRevision = '#tool-revision-log button[data-bring-back-revision="' + previous.id + '"]';
+  await until(() => visible(restoreRevision));
+  await click(restoreRevision);
+  assert.equal((await activeTool()).id, old.id);
   assert.equal(await evaluate('document.querySelector("#requirement").value'), revisedRequirement);
   assert.equal(await evaluate('document.querySelector("#generate").textContent'), '查看修改方案');
+  assert.equal(taskCount(), beforeTaskCount);
   assert.deepEqual(await balance(), beforeRevise);
+  await screenshot('revision-history-brought-back');
   await evaluate(`(() => {
     const original = window.fetch;
     window.fetch = async (path, options) => {
@@ -982,5 +1016,6 @@ with sqlite3.connect(sys.argv[1]) as db:
   assert.deepEqual(receipts.filter(item => item.task === current.id).map(item => item.stage), ['revision-plan']);
   assert.notEqual(tool.id, old.id);
   evidence.tests.push({id:'TEST-018-09', historyLimitSeparate:true, failedPersonalCharge:0,
-    newTool:tool.id, revisedTool:old.id, originalRepository:originalRepo, savedOperation:current.id});
+    newTool:tool.id, revisedTool:old.id, separateToolRevisionHistory:true,
+    revisionRestoreDidNotCreateTask:true, originalRepository:originalRepo, savedOperation:current.id});
 }

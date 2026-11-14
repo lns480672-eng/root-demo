@@ -215,8 +215,9 @@ class StagedJobs:
             rows = db.execute("""
                 SELECT * FROM staged_jobs WHERE owner=? AND state!='published'
                 AND (expires>? AND state IN ('queued','running','complete','clarifying'))=?
+                AND (?=0 OR NOT EXISTS (SELECT 1 FROM staged_revisions WHERE task=staged_jobs.id))
                 ORDER BY updated_at DESC, expires DESC LIMIT 30
-            """, (owner, self.clock(), not history)).fetchall()
+            """, (owner, self.clock(), not history, history)).fetchall()
             return [self.view(row, db) for row in rows]
 
     def list_tool_revisions(self, token, marker, identifier):
