@@ -14,6 +14,8 @@ ADMIN_SETUP_SECONDS = 60 * 60
 LOGIN_ATTEMPT_WINDOW = 60
 LOGIN_ATTEMPT_LIMIT = 12
 LOGIN_ATTEMPT_BUCKETS = 1024
+# Match the browser String.trim() boundary, including the Unicode BOM.
+NICKNAME_TRIM = "\u0009\u000a\u000b\u000c\u000d\u0020\u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000\ufeff"
 USERNAME = re.compile(r"[a-z0-9_-]{3,32}")
 TOOL_STORAGE_BYTES = 256 * 1024
 TABLE_STORAGE_BYTES = 8 * 1024 * 1024
@@ -77,6 +79,9 @@ class Store:
                 CREATE TABLE IF NOT EXISTS accounts (
                     id INTEGER PRIMARY KEY, username TEXT UNIQUE NOT NULL,
                     salt BLOB NOT NULL, password_hash BLOB NOT NULL, latest_tool TEXT
+                );
+                CREATE TABLE IF NOT EXISTS account_profiles (
+                    account INTEGER PRIMARY KEY REFERENCES accounts(id), nickname TEXT NOT NULL
                 );
                 CREATE TABLE IF NOT EXISTS invites (
                     digest TEXT PRIMARY KEY, remaining INTEGER NOT NULL, expires INTEGER NOT NULL
@@ -319,6 +324,25 @@ class Store:
         if marker is not None and row["marker"] != marker:
             raise ApiError(409, "session_changed", "浏览器会话已变更，请重新打开工作台。")
         return row
+
+    def profile(self, token, marker, change=None):
+        with self.connection(write=change is not None) as db:
+            user = self.session(db, token, marker)
+            if change is not None:
+                nickname = change.get("nickname")
+                if set(change) != {"nickname"} or not isinstance(nickname, str):
+                    raise ApiError(400, "invalid_nickname", "请输入有效昵称。")
+                nickname = nickname.strip(NICKNAME_TRIM)
+                if len(nickname.encode("utf-16-le")) > 48:
+                    raise ApiError(400, "invalid_nickname", "昵称最多 24 个字符（部分表情计 2 个）")
+                if nickname:
+                    db.execute("""INSERT INTO account_profiles VALUES (?, ?)
+                                  ON CONFLICT(account) DO UPDATE SET nickname=excluded.nickname""",
+                               (user["id"], nickname))
+                else:
+                    db.execute("DELETE FROM account_profiles WHERE account=?", (user["id"],))
+            row = db.execute("SELECT nickname FROM account_profiles WHERE account=?", (user["id"],)).fetchone()
+            return {"username": user["username"], "nickname": row["nickname"] if row else user["username"]}
 
     def logout(self, token, marker, *, admin=False):
         table = "admin_sessions" if admin else "sessions"

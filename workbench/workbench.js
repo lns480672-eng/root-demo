@@ -25,6 +25,8 @@ const previewPolicy = "default-src 'none'; script-src 'unsafe-inline'; style-src
   + "img-src data:; connect-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'";
 let session = null;
 let identityResolved = false;
+let profile = null;
+let profileSaving = false;
 let registering = false;
 let configured = false;
 let networkIsolated = false;
@@ -125,7 +127,7 @@ function render() {
   const browsing = !assistantOpen && (workspace.dataset.mode === 'browse' || editing);
   library.hidden = !browsing;
   byId('library-entry').setAttribute('aria-expanded', String(browsing));
-  markNavigation(assistantOpen ? assistantDestination : browsing ? 'library-entry' : 'new-tool');
+  markNavigation(profileRoute() ? null : assistantOpen ? assistantDestination : browsing ? 'library-entry' : 'new-tool');
   for (const id of primaryNavigation) byId(id).disabled = blocked || (starting && id === 'library-entry');
   byId('new-tool-options').hidden = !atStart && !tableMode;
   previewSection.hidden = !browsing && !editing && !syncing && !stagedPendingId && (!showingResult || assistantOpen);
@@ -772,6 +774,7 @@ async function refreshTrial() {
     if (request !== trialRequest) return;
     trial = value;
     requirementAssistant.updateTrial(trial);
+    renderProfile();
     render();
   } catch {
     // A balance read failure does not block local tools or saving.
@@ -974,6 +977,105 @@ function loadReleases() {
   });
 }
 
+function profileRoute() {
+  return location.pathname !== '/updates' && location.hash === '#profile';
+}
+
+function renderProfile() {
+  if (!session) return;
+  const nickname = profile?.nickname ?? session.user;
+  byId('account-name').textContent = byId('profile-nickname').textContent = nickname;
+  byId('profile-username').textContent = session.user;
+  byId('edit-nickname').disabled = !profile;
+  for (const [id, balance] of [['profile-generation', trial?.generation], ['profile-analysis', trial?.analysis]]) {
+    byId(id).textContent = balance ? balance.remaining + ' / ' + balance.limit : '—';
+  }
+}
+
+async function readProfile() {
+  try {
+    profile = await workspaceApi('/api/profile');
+    if (byId('profile-status').dataset.readFailed) byId('profile-status').textContent = '';
+    delete byId('profile-status').dataset.readFailed;
+  } catch (error) {
+    if (!profile) {
+      byId('profile-status').dataset.readFailed = 'true';
+      byId('profile-status').textContent = error.message;
+    }
+  }
+  renderProfile();
+}
+
+function editNickname(enabled) {
+  const toggle = byId('edit-nickname');
+  toggle.hidden = enabled;
+  toggle.setAttribute('aria-expanded', String(enabled));
+  byId('profile-form').hidden = !enabled;
+  if (enabled) {
+    byId('nickname').value = profile.nickname;
+    byId('profile-status').textContent = '';
+    byId('nickname').focus();
+  }
+}
+
+byId('profile-link').addEventListener('click', event => {
+  if (event.button || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+  event.preventDefault();
+  byId('account').open = false;
+  if (!profileRoute()) history.pushState(null, '', '#profile');
+  renderRoute(true);
+  if (!profile) void readProfile();
+  void refreshTrial();
+});
+for (const id of ['new-tool', 'idea-entry', 'drafts-entry', 'library-entry']) {
+  byId(id).addEventListener('click', () => {
+    if (!profileRoute()) return;
+    history.replaceState(null, '', location.pathname + location.search);
+    renderRoute();
+  }, {capture: true});
+}
+byId('edit-nickname').addEventListener('click', () => editNickname(true));
+byId('cancel-nickname').addEventListener('click', () => {
+  editNickname(false);
+  byId('profile-status').textContent = '';
+  byId('edit-nickname').focus();
+});
+byId('profile-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  if (profileSaving || !profile) return;
+  const field = byId('nickname');
+  const nickname = field.value.trim();
+  if (nickname === profile.nickname) {
+    editNickname(false);
+    byId('edit-nickname').focus();
+    return;
+  }
+  const status = byId('profile-status');
+  if (nickname.length > 24) {
+    status.textContent = '昵称最多 24 个字符（部分表情计 2 个）';
+    field.focus();
+    return;
+  }
+  profileSaving = true;
+  const buttons = byId('profile-form').querySelectorAll('button');
+  for (const button of buttons) button.disabled = true;
+  field.readOnly = true;
+  status.textContent = '正在保存…';
+  try {
+    profile = await workspaceApi('/api/profile', {nickname}, publicationTimeout);
+    renderProfile();
+    editNickname(false);
+    status.textContent = '昵称已保存';
+    if (profileRoute()) byId('edit-nickname').focus();
+  } catch (error) {
+    status.textContent = error.message;
+  } finally {
+    profileSaving = false;
+    field.readOnly = false;
+    for (const button of buttons) button.disabled = false;
+  }
+});
+
 function renderRoute(focus = false) {
   const updates = location.pathname === '/updates';
   if (updates) {
@@ -985,10 +1087,15 @@ function renderRoute(focus = false) {
   byId('auth').hidden = updates || !identityResolved || Boolean(session);
   byId('auth-home').hidden = byId('auth').hidden;
   byId('account').hidden = workspace.hidden = updates || !session;
-  document.title = updates ? '工作台更新记录 · ROOT' : 'ROOT 工具工作台';
+  const showingProfile = Boolean(session) && profileRoute();
+  workspace.classList.toggle('profile-open', showingProfile);
+  byId('profile').hidden = !showingProfile;
+  if (!showingProfile && !profileSaving) editNickname(false);
+  if (showingProfile) renderProfile();
+  document.title = updates ? '工作台更新记录 · ROOT' : showingProfile ? '个人中心 · ROOT' : 'ROOT 工具工作台';
   if (updates) loadReleases();
   if (session) render();
-  if (focus) byId(updates ? 'updates-title' : session ? 'account-name' : 'auth-title').focus();
+  if (focus) byId(updates ? 'updates-title' : showingProfile ? 'profile-title' : session ? 'account-name' : 'auth-title').focus();
 }
 
 for (const id of ['updates-link', 'updates-back']) {
@@ -2287,7 +2394,7 @@ async function start(registration = null) {
     session = identity.user ? identity : null;
     renderRoute();
     if (!session) return;
-    byId('account-name').textContent = session.user;
+    await readProfile();
     const config = await api('/api/config');
     configured = config.configured;
     stagedEnabled = config.staged === true;
@@ -2326,7 +2433,7 @@ async function start(registration = null) {
       }
     }
     if (stagedEnabled) await refreshStagedTasks();
-    if (registration && location.pathname !== '/updates') {
+    if (registration && location.pathname !== '/updates' && !profileRoute()) {
       showCoachmark();
     }
   } catch (error) {

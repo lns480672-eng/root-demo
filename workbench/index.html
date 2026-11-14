@@ -22,6 +22,7 @@
       <details id="account" class="account" hidden>
         <summary id="account-name" aria-label="账号菜单"></summary>
         <div class="account-menu-items">
+          <a id="profile-link" href="#profile">个人中心</a>
           <a id="updates-link" href="/updates">工作台更新记录</a>
           <button id="guide-start" type="button">新手引导</button>
           <a id="admin-entry" href="/admin" hidden>管理后台</a>
@@ -82,6 +83,35 @@
           <ul id="tool-list" aria-label="已保存的工具"></ul>
         </section>
       </aside>
+      <section id="profile" aria-labelledby="profile-title" hidden>
+        <h1 id="profile-title" tabindex="-1">个人中心</h1>
+        <section class="profile-card" aria-labelledby="profile-account-title">
+          <div class="profile-heading">
+            <h2 id="profile-account-title">账号资料</h2>
+            <button type="button" id="edit-nickname" aria-expanded="false" aria-controls="profile-form">编辑昵称</button>
+          </div>
+          <dl class="profile-details">
+            <div><dt>显示昵称</dt><dd id="profile-nickname"></dd></div>
+            <div><dt>登录用户名</dt><dd id="profile-username"></dd></div>
+          </dl>
+          <form id="profile-form" hidden>
+            <label for="nickname">显示昵称</label>
+            <input id="nickname" placeholder="填写昵称">
+            <div class="profile-actions">
+              <button class="elys-primary" type="submit">保存</button>
+              <button id="cancel-nickname" type="button">取消</button>
+            </div>
+          </form>
+          <p id="profile-status" role="status"></p>
+        </section>
+        <section aria-labelledby="profile-quota-title">
+          <h2 id="profile-quota-title">个人额度</h2>
+          <div class="profile-quotas">
+            <div class="profile-card">个人生成<strong id="profile-generation">—</strong><span>剩余次数 / 上限</span></div>
+            <div class="profile-card">需求梳理<strong id="profile-analysis">—</strong><span>剩余次数 / 上限</span></div>
+          </div>
+        </section>
+      </section>
       <section class="elys-composer" aria-labelledby="composer-title">
           <h2 id="composer-title">你想做什么工具？</h2>
           <section id="table-panel" hidden></section>

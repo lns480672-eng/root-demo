@@ -24,6 +24,7 @@ const mainOnly = process.argv.includes('--main');
 const entryFlow = process.argv.includes('--entry-flow');
 const adminFlow = process.argv.includes('--admin-flow');
 const adminSetup = process.argv.includes('--admin-setup');
+const profileFlow = process.argv.includes('--profile-flow');
 if ((entryFlow || adminFlow || adminSetup) && live) throw new Error('选定的流程使用模型替身，请移除 --live');
 if (adminSetup && (adminFlow || stagedFlow)) throw new Error('--admin-setup requires a fresh instance without a legacy administrator');
 const artifactsArg = process.argv.find(arg => arg.startsWith('--artifacts='));
@@ -310,7 +311,7 @@ try {
   const invite = live ? process.env.ROOT_TEST_INVITE : 'fixture-invite';
   assert.ok(invite, '真实浏览器自测需要本机受控 ROOT_TEST_INVITE');
 
-  async function login(username, register = false) {
+  async function login(username, register = false, nickname = username) {
     await until(() => evaluate('document.documentElement.dataset.ready === "true" && !document.querySelector("#auth").hidden'));
     await evaluate('document.querySelector("#username").value = ""; document.querySelector("#password").value = "";');
     await type('#username', username);
@@ -328,7 +329,7 @@ try {
           '提交注册后应直接进入工作台，无需另行登录');
       }
       return evaluate(`document.documentElement.dataset.ready === "true" &&
-        !document.querySelector("#workspace").hidden && document.querySelector("#account-name").textContent === ${JSON.stringify(username)}`);
+        !document.querySelector("#workspace").hidden && document.querySelector("#account-name").textContent === ${JSON.stringify(nickname)}`);
     });
     if (register) assert.equal(await evaluate('window.fixtureRegistrationDocument'), true, '首次引导应从同一注册页面进入');
   }
@@ -430,7 +431,65 @@ try {
     await until(() => evaluate('document.title === "Reachable HTTP probe"'));
     assert.deepEqual(probeRequests, probeControls);
   }
-  if (stagedFlow) {
+  if (profileFlow) {
+    stage = 'AC-022 personal profile';
+    const username = 'profile-' + 'a'.repeat(24);
+    const displayName = '甲'.repeat(20) + ' 😀甲';
+    const text = selector => evaluate(`document.querySelector(${JSON.stringify(selector)}).textContent`);
+    const openProfile = async () => {
+      await click('#account-name');
+      await click('#profile-link');
+      await until(() => evaluate('document.querySelector("#edit-nickname").checkVisibility() && !document.querySelector("#edit-nickname").disabled'));
+    };
+    const value = nickname => evaluate(`document.querySelector("#nickname").value = ${JSON.stringify(nickname)}`);
+    const save = () => click('#profile-form button[type="submit"]');
+    await cdp('Page.navigate', {url:base});
+    await login(username, true);
+    if (await visible('#workspace-guide')) await click('#guide-skip');
+    await openProfile();
+    assert.equal(await text('#profile-username'), username);
+    assert.equal(await visible('#profile-form'), false);
+    const quota = (await appRequest('/api/trial')).body;
+    assert.equal(await text('#profile-generation'), `${quota.generation.remaining} / ${quota.generation.limit}`);
+    assert.equal(await text('#profile-analysis'), `${quota.analysis.remaining} / ${quota.analysis.limit}`);
+    await click('#edit-nickname');
+    assert.equal(await evaluate('document.querySelector("#nickname").value'), username);
+    await save();
+    await click('#edit-nickname');
+    await value('放弃更改');
+    await click('#cancel-nickname');
+    assert.equal(await text('#profile-nickname'), username);
+    await click('#edit-nickname');
+    await value(displayName + '末');
+    await save();
+    assert.match(await text('#profile-status'), /最多 24/);
+    assert.equal(await text('#account-name'), username);
+    await value(' ' + displayName + ' ');
+    await save();
+    await until(async () => (await text('#account-name')) === displayName);
+    await screenshot('profile-desktop');
+    await cdp('Emulation.setDeviceMetricsOverride', {width:390,height:844,deviceScaleFactor:1,mobile:true});
+    await cdp('Page.reload');
+    await until(() => evaluate('document.documentElement.dataset.ready === "true"'));
+    assert.equal(await text('#profile-nickname'), displayName);
+    assert.equal(await evaluate('document.documentElement.scrollWidth <= innerWidth'), true);
+    await screenshot('profile-390');
+    await logout();
+    await login(username, false, displayName);
+    if (!await visible('#profile')) await openProfile();
+    await click('#edit-nickname');
+    await value('   ');
+    await save();
+    await until(async () => (await text('#account-name')) === username);
+    await click('#new-tool');
+    assert.equal(await visible('#profile'), false);
+    await logout();
+    await login(accountB, true);
+    if (await visible('#workspace-guide')) await click('#guide-skip');
+    await openProfile();
+    assert.equal(await text('#profile-nickname'), accountB);
+    evidence.tests.push('AC-022: 额度、预填、取消、长度、保存、刷新、重登、清空和账号隔离');
+  } else if (stagedFlow) {
     evidence.mode = process.env.ROOT_STAGED_LIVE === '1' ? 'deepseek-staged' : 'fixture-staged';
     const tableJourney = process.argv.includes('--table-journey');
     const calculator = process.env.ROOT_STAGED_CALCULATOR === '1';

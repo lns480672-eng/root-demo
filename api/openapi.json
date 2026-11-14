@@ -1582,6 +1582,40 @@
         ]
       }
     },
+    "/api/profile": {
+      "get": {
+        "operationId": "readOwnProfile",
+        "summary": "读取当前账号的登录名与显示昵称",
+        "parameters": [{"$ref": "#/components/parameters/SessionMarker"}],
+        "responses": {
+          "200": {"$ref": "#/components/responses/OwnProfile"},
+          "401": {"$ref": "#/components/responses/Http401"},
+          "409": {"$ref": "#/components/responses/Http409"}
+        }
+      },
+      "post": {
+        "operationId": "saveOwnNickname",
+        "summary": "保存当前账号的显示昵称",
+        "parameters": [{"$ref": "#/components/parameters/SessionMarker"}, {"$ref": "#/components/parameters/Origin"}],
+        "requestBody": {
+          "required": true,
+          "content": {"application/json": {"schema": {
+            "type": "object",
+            "required": ["nickname"],
+            "additionalProperties": false,
+            "properties": {"nickname": {"type": "string", "description": "去首尾空白后最多 24 个 UTF-16 代码单元。空值恢复显示登录名。"}}
+          }}}
+        },
+        "responses": {
+          "200": {"$ref": "#/components/responses/OwnProfile"},
+          "400": {"$ref": "#/components/responses/Http400"},
+          "401": {"$ref": "#/components/responses/Http401"},
+          "403": {"$ref": "#/components/responses/Http403"},
+          "409": {"$ref": "#/components/responses/Http409"},
+          "415": {"$ref": "#/components/responses/Http415"}
+        }
+      }
+    },
     "/api/trial": {
       "get": {
         "operationId": "readTrialBalance",
@@ -2802,6 +2836,14 @@
       }
     },
     "responses": {
+      "OwnProfile": {
+        "description": "当前账号资料。没有自定义昵称时，昵称为登录名。",
+        "content": {"application/json": {"schema": {
+          "type": "object",
+          "required": ["username", "nickname"],
+          "properties": {"username": {"type": "string"}, "nickname": {"type": "string"}}
+        }}}
+      },
       "Http400": {
         "description": "请求字段、格式或长度无效。",
         "content": {

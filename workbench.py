@@ -58,6 +58,7 @@ UUID = r"[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}"
 DRAFT_PATH = re.compile(DRAFTS + "/(" + UUID + ")")
 ANALYZE = "/api/assistant/analyze"
 CLAIM_ANALYSIS_DRAFT = "/api/assistant/claim-draft"
+PROFILE = "/api/profile"
 TRIAL = "/api/trial"
 TRIAL_ADMIN = "/api/trial/admin"
 STAGED = "/api/staged"
@@ -255,7 +256,7 @@ def serve(key, port, runs=generate.RUNS, *, generation_limits=(5, 30), analysis_
                 self.send_header("Content-Security-Policy", policy)
                 paths = (*STATIC, "/api/config", "/api/releases", "/api/session", "/api/register", "/api/login", "/api/logout",
                          "/api/generate", "/api/tools", "/api/tools/*", DRAFTS, DRAFTS + "/*", ANALYZE, CLAIM_ANALYSIS_DRAFT,
-                         TABLE_INSPECT, TABLE_GENERATE, TABLE_CONFIG, TRIAL, ADMIN_SESSION, *ADMIN_ACTIONS)
+                         TABLE_INSPECT, TABLE_GENERATE, TABLE_CONFIG, PROFILE, TRIAL, ADMIN_SESSION, *ADMIN_ACTIONS)
                 if staged:
                     paths += (STAGED, STAGED + "/*")
                 allowed = " ".join(f'"http://{host}{path}"' for path in paths)
@@ -359,6 +360,8 @@ def serve(key, port, runs=generate.RUNS, *, generation_limits=(5, 30), analysis_
                 self.send_json(200, store.list_requirement_drafts(self.cookie_token(), self.marker()))
             elif match := DRAFT_PATH.fullmatch(self.path):
                 self.send_json(200, store.requirement_draft(self.cookie_token(), self.marker(), match[1]))
+            elif self.path == PROFILE:
+                self.send_json(200, store.profile(self.cookie_token(), self.marker()))
             elif self.path == TRIAL:
                 balance = budget.balance(self.cookie_token(), self.marker())
                 self.send_json(200, {**balance, "analysisMode": (
@@ -472,6 +475,9 @@ def serve(key, port, runs=generate.RUNS, *, generation_limits=(5, 30), analysis_
             if self.path == "/api/login":
                 new_token = store.login(data, token)
                 self.send_json(200, {"ok": True}, session_cookie(new_token))
+                return
+            if self.path == PROFILE:
+                self.send_json(200, store.profile(token, self.marker(), data))
                 return
             if self.path == "/api/logout":
                 store.logout(token, self.marker())

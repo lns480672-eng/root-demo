@@ -78,6 +78,51 @@ class AccountHTTP(unittest.TestCase):
         status, body, _ = self.request("/api/generate", {"requirement": "待授权"})
         self.assertEqual((status, body.get("code")), (401, "login_required"))
 
+    def test_profile_nickname_and_quota_are_account_scoped(self):
+        path = "/api/profile"
+        for username in ("profile-owner", "profile-other"):
+            self.assertEqual(self.register(username, self.store.create_invite())[0], 201)
+        owner, marker = self.login("profile-owner")
+        other, other_marker = self.login("profile-other")
+        self.assertEqual(self.request(path)[0], 401)
+        self.assertEqual(self.request(path, cookie=owner, marker=marker)[:2], (
+            200, {"username": "profile-owner", "nickname": "profile-owner"}))
+        quota = self.request("/api/trial", cookie=owner, marker=marker)[1]
+        self.assertEqual(self.request(path, {"nickname": " 测试用户 "}, owner, marker)[:2], (
+            200, {"username": "profile-owner", "nickname": "测试用户"}))
+        self.assertEqual(self.request(path, {"nickname": "越权"}, other, marker)[0], 409)
+        self.assertEqual(self.request(path, {"nickname": "x" * 25}, owner, marker)[0], 400)
+        self.assertEqual(self.request(path, {"nickname": "😀" * 13}, owner, marker)[0], 400)
+        boundary = "甲" * 20 + " 😀甲"
+        self.assertEqual(self.request(path, {"nickname": "\ufeff" + boundary + " "}, owner, marker)[1]["nickname"],
+                         boundary)
+        with self.store.connection() as db:
+            records = db.execute("""
+                SELECT username, nickname FROM account_profiles JOIN accounts ON accounts.id=account
+                WHERE username IN ('profile-owner', 'profile-other')
+            """).fetchall()
+            self.assertEqual([tuple(row) for row in records], [("profile-owner", boundary)])
+        self.assertEqual(self.request(path, cookie=other, marker=other_marker)[1]["nickname"], "profile-other")
+        self.assertEqual(self.request("/api/trial", cookie=owner, marker=marker)[1], quota)
+        owner, marker = self.login("profile-owner")
+        self.assertEqual(self.request(path, cookie=owner, marker=marker)[1]["nickname"], boundary)
+        self.assertEqual(self.request(path, {"nickname": ""}, owner, marker)[1]["nickname"], "profile-owner")
+
+    def test_existing_database_without_profile_table_keeps_login_and_default_nickname(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "workspace.sqlite3"
+            legacy = Store(path)
+            credentials = {"username": "profile-legacy", "password": "fixture-test-password!"}
+            legacy.register({**credentials, "invite": legacy.create_invite()})
+            with legacy.connection(write=True) as db:
+                db.execute("DROP TABLE account_profiles")
+            upgraded = Store(path)
+            token = upgraded.login(credentials, "")
+            with upgraded.connection() as db:
+                marker = upgraded.session(db, token)["marker"]
+            self.assertEqual(upgraded.profile(token, marker),
+                             {"username": "profile-legacy", "nickname": "profile-legacy"})
+
     def test_trial_quotas_pause_and_admin_authorization(self):
         self.assertEqual(self.register("trial-user", self.store.create_invite())[0], 201)
         admin, admin_marker = self.login("trial-admin", admin=True)
