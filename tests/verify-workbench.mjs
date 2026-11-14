@@ -1859,6 +1859,11 @@ try {
       await generate('回归：不兼容数据');
       assert.match(await until(() => evaluate('document.querySelector("#error").textContent')), /无法.*已有数据/);
       await click('#preview-view');
+      const current = await activeTool();
+      assert.equal(current.id, restored.id);
+      assert.equal(current.loader, restored.loader);
+      assert.equal(await evaluate('document.querySelector("#preview iframe[data-tool]").inert'), false);
+      restored = current;
       await addOldRecord('修改失败后保存的书');
       assert.deepEqual((await appRequest(versionPath)).body, priorHistory);
       assert.equal((await activeTool()).loader, restored.loader);
