@@ -601,3 +601,46 @@ body:has(#auth:not([hidden])) { padding: 0; }
   #workspace.profile-open { grid-template-columns: 70px minmax(0, 1fr); }
   .profile-quotas { grid-template-columns: 1fr; }
 }
+
+.tool-heading {
+  flex: 1 0 100%;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+#preview-title { margin: 0; overflow-wrap: anywhere; }
+.elys-product #revise-tool {
+  min-height: 44px;
+  padding: 8px 12px;
+  background: #f0f3fb;
+  color: #263e79;
+  border: 1px solid #c6d0e8;
+  border-radius: 6px;
+  font-weight: 650;
+}
+.elys-product #revise-tool:hover:not(:disabled) { background: #e3e9fa; }
+#revision-versions { margin-block: 10px; }
+.elys-product #tool-history {
+  min-height: 44px;
+  padding-inline: 0;
+  background: transparent;
+  border-color: transparent;
+  color: #314b92;
+  text-align: start;
+}
+#tool-version-panel {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+#tool-version-list {
+  max-height: min(210px, 28dvh);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+@media (max-width: 480px) {
+  .tool-heading { flex-direction: column; align-items: flex-start; }
+}

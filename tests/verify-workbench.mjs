@@ -431,7 +431,63 @@ try {
     await until(() => evaluate('document.title === "Reachable HTTP probe"'));
     assert.deepEqual(probeRequests, probeControls);
   }
-  if (profileFlow) {
+  if (process.argv.includes('--tool-actions-flow')) {
+    stage = 'AC-006/007/008 tool actions and history';
+    await cdp('Page.navigate', {url:base});
+    await login(accountA, true);
+    if (await visible('#guide-skip')) await click('#guide-skip');
+    await generate(requirements[0]);
+    const original = await activeTool();
+    if (await visible('#open-generated-tool')) await click('#open-generated-tool');
+    for (const width of [1440, 390]) {
+      await cdp('Emulation.setDeviceMetricsOverride', {width,height:844,deviceScaleFactor:1,mobile:width===390});
+      assert.equal(await visible('#tool-history'), false);
+      assert.equal(await evaluate('document.querySelector("#revise-tool").textContent'), '修改');
+      assert.equal(await evaluate('document.documentElement.scrollWidth <= innerWidth'), true);
+      if (width === 390) assert.equal(await evaluate(`(() => {
+        const title = document.querySelector('#preview-title').getBoundingClientRect();
+        const primary = document.querySelector('#revise-tool').getBoundingClientRect();
+        return primary.top >= title.bottom && Math.abs(primary.left - title.left) < 2;
+      })()`), true);
+      await screenshot('tool-actions-' + width);
+    }
+    await type('#book', '历史版本保留的记录', original.context);
+    await click('form button', original.context);
+    await until(async () => JSON.stringify((await stored(original.id)).entries).includes('历史版本保留的记录'));
+    stage = 'version list and failed modification';
+    await click('#revise-tool');
+    await click('#tool-history');
+    await until(() => evaluate('document.querySelector("#tool-version-list [aria-current=true]")?.textContent.includes("v1")'));
+    assert.equal(await evaluate('document.querySelector(".elys-composer").contains(document.querySelector("#tool-version-panel"))'), true);
+    await generate('回归：不兼容数据');
+    await until(() => visible('#error'));
+    assert.equal((await appRequest('/api/tools/' + original.id + '/versions')).body.current, 1);
+    assert.equal((await activeTool()).id, original.id);
+    stage = 'apply revision and open the ordered version list';
+    await generate('增加已读筛选');
+    await until(async () => (await appRequest('/api/tools/' + original.id + '/versions')).body.current === 2);
+    await until(() => evaluate('!document.querySelector("#revise-tool").disabled'));
+    if (!await visible('#tool-history')) await click('#revise-tool');
+    if (!await visible('#tool-version-panel')) await click('#tool-history');
+    await until(() => evaluate('document.querySelectorAll("#tool-version-list li").length === 2'));
+    const titles = await evaluate('Array.from(document.querySelectorAll("#tool-version-list strong"), e => e.textContent)');
+    assert.deepEqual(titles, ['v2 · 当前', 'v1']);
+    assert.equal(await visible('#requirement'), true);
+    assert.equal(await visible('#preview iframe[data-tool]'), true);
+    await screenshot('tool-history-390');
+    assert.equal(await evaluate(`(() => {
+      const list = document.querySelector('#tool-version-list');
+      const row = list.lastElementChild;
+      const extraRows = Array.from({length: 12}, () => row.cloneNode(true));
+      list.append(...extraRows);
+      const previousPageScroll = window.scrollY;
+      list.scrollTop = list.scrollHeight;
+      const scrollsInside = list.scrollTop > 0 && window.scrollY === previousPageScroll;
+      extraRows.forEach(extra => extra.remove());
+      return scrollsInside;
+    })()`), true);
+    evidence.tests.push({id:'AC-006/007/008', passed:true, versions:titles});
+  } else if (profileFlow) {
     stage = 'AC-022 personal profile';
     const username = 'profile-' + 'a'.repeat(24);
     const displayName = '甲'.repeat(20) + ' 😀甲';
@@ -1050,6 +1106,7 @@ try {
       filter.value = 'all'; filter.dispatchEvent(new Event('change'));
     })()`, updated.context);
     assert.match(await evaluate(books, updated.context), /星际旅行手记/);
+    if (!await visible('#tool-history')) await click('#revise-tool');
     await click('#tool-history');
     await until(() => evaluate('document.querySelectorAll("#tool-version-list li").length === 2'));
     await screenshot('live-revision');
@@ -1180,12 +1237,14 @@ try {
     await waitForVersion(3);
     assert.deepEqual(await evaluate('window.fixturePublishResponses.map(item => item.version)'), [3, 3]);
     assert.deepEqual((await appRequest(toolPath + '/versions')).body.items.map(item => item.version), [3, 2, 1]);
+    if (!await visible('#tool-history')) await click('#revise-tool');
     await click('#tool-history');
     assert.match(await until(() => evaluate('document.querySelector("#tool-version-list li[aria-current=true] strong")?.textContent')), /v3 · 当前/);
     restored = await activeTool();
     await addOldRecord('双确认丢失后仍可保存');
     await evaluate('window.fixtureRestoreFetch()');
     await screenshot('recovered-after-two-lost-confirmations');
+    await click('#library-entry');
 
     stage = 'unknown result disables writes until explicit synchronization';
     await injectPublishFault(2, true);
@@ -1377,7 +1436,7 @@ try {
         await cdp('Emulation.setDeviceMetricsOverride', { width, height: 844, deviceScaleFactor: 1, mobile: width === 390 });
         assert.equal(await visible('.elys-composer'), false, '浏览已保存工具时隐藏整个新建区');
         assert.equal(await visible('#new-tool'), true);
-        assert.equal(await visible('#tool-history'), true);
+        assert.equal(await visible('#tool-history'), false);
         await evaluate('document.querySelector("#new-tool").focus(); document.querySelector("#requirement").focus()');
         assert.equal(await evaluate('document.activeElement.id'), 'new-tool', '隐藏表单不能获取焦点');
         await cdp('Input.dispatchKeyEvent', { type: 'rawKeyDown', key: 'Tab', code: 'Tab', windowsVirtualKeyCode: 9 });
@@ -1494,11 +1553,11 @@ try {
 
       stage = 'tool revision incompatibility preserves version and allows writing';
       const versionPath = '/api/tools/' + first.id + '/versions';
+      await click('#revise-tool');
       await click('#tool-history');
       await until(() => evaluate('document.querySelectorAll("#tool-version-list li").length === 1'));
       const priorHistory = (await appRequest(versionPath)).body;
       assert.equal(priorHistory.current, 1);
-      await click('#revise-tool');
       await generate('回归：不兼容数据');
       assert.match(await until(() => evaluate('document.querySelector("#error").textContent')), /无法.*已有数据/);
       await addOldRecord('修改失败后保存的书');
@@ -1536,16 +1595,16 @@ try {
       assert.deepEqual(history.items.map(item => item.version), [2, 1]);
       assert.equal(history.current, 2);
       assert.equal(history.items[0].note, '增加已读筛选');
+      if (!await visible('#tool-history')) await click('#revise-tool');
       if (await evaluate('document.querySelector("#tool-version-panel").hidden')) await click('#tool-history');
       await until(() => evaluate('document.querySelectorAll("#tool-version-list li").length === 2'));
-      assert.equal(await evaluate(`document.querySelector('.elys-preview').contains(document.querySelector('#tool-version-panel'))`), true);
+      assert.equal(await evaluate(`document.querySelector('.elys-composer').contains(document.querySelector('#tool-version-panel'))`), true);
       await screenshot('tool-version-history');
       await cdp('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
-      assert.equal(await evaluate(`document.querySelector('#tool-version-panel').getBoundingClientRect().top >
-        document.querySelector('#preview').getBoundingClientRect().bottom &&
+      assert.equal(await evaluate(`document.querySelector('#tool-version-panel').getBoundingClientRect().bottom <=
+        document.querySelector('#preview').getBoundingClientRect().top &&
         document.documentElement.scrollWidth === document.documentElement.clientWidth`), true);
       await cdp('Emulation.setDeviceMetricsOverride', { width: 1360, height: 980, deviceScaleFactor: 1, mobile: false });
-      await click('#revise-tool');
       await generate('回归：修改输出失败');
       assert.match(await until(() => evaluate('document.querySelector("#error").textContent')), /模型输出不完整/);
       assert.deepEqual((await appRequest(versionPath)).body, history);
@@ -1827,6 +1886,7 @@ try {
 } catch (error) {
   evidence.status = 'failed';
   evidence.error = error.message;
+  evidence.errorStack = error.stack;
   evidence.failedStage = stage;
   if (runtimeErrors.length) evidence.runtimeErrors = runtimeErrors;
   if (readPage) evidence.page = await readPage().catch(() => null);

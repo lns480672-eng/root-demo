@@ -117,6 +117,13 @@
           <section id="table-panel" hidden></section>
           <p id="generation-balance" class="elys-config" role="status" hidden></p>
           <p id="generation-block" class="elys-error" role="status" hidden></p>
+          <div id="revision-versions" hidden>
+            <button id="tool-history" type="button" aria-expanded="false" aria-controls="tool-version-panel">版本历史</button>
+            <section id="tool-version-panel" class="tool-version-panel" aria-labelledby="tool-history" hidden>
+              <p id="tool-version-status" role="status"></p>
+              <ol id="tool-version-list" class="version-list"></ol>
+            </section>
+          </div>
           <section id="tool-revision-dialog" aria-label="工具修改对话" hidden>
             <p id="tool-revision-status" class="auth-muted" role="status"></p>
             <ol id="tool-revision-log" aria-label="修改消息"></ol>
@@ -223,12 +230,13 @@
         <header class="elys-preview-header">
           <p class="auth-eyebrow" aria-hidden="true">工具预览</p>
           <span id="preview-status" class="elys-status" role="status">待生成</span>
-          <h2 id="preview-title">工具预览</h2>
-          <div class="preview-actions">
-            <button id="open-generated-tool" type="button" hidden>打开工具</button>
-            <button id="revise-tool" type="button" hidden>继续修改</button>
-            <button id="tool-history" type="button" aria-expanded="false" aria-controls="tool-version-panel" hidden>版本历史</button>
-            <button id="sync-tool" type="button" hidden>同步工具</button>
+          <div class="tool-heading">
+            <h2 id="preview-title">工具预览</h2>
+            <div class="preview-actions">
+              <button id="open-generated-tool" type="button" hidden>打开工具</button>
+              <button id="revise-tool" type="button" hidden>修改</button>
+              <button id="sync-tool" type="button" hidden>同步工具</button>
+            </div>
           </div>
           <div id="publish-lock" class="publish-lock" hidden>
             <button id="publish-tool" type="button" aria-describedby="publish-explanation" disabled>发布应用</button>
@@ -250,12 +258,6 @@
         <footer class="elys-preview-footer">
           隔离预览 <span id="storage-warning" class="elys-error" role="status" hidden></span>
         </footer>
-        <section id="tool-version-panel" class="tool-version-panel" aria-labelledby="tool-version-title" hidden>
-          <p class="auth-eyebrow" id="version-tool-name"></p>
-          <h2 id="tool-version-title">工具版本历史</h2>
-          <p id="tool-version-status" role="status"></p>
-          <ol id="tool-version-list" class="version-list"></ol>
-        </section>
       </section>
     </div>
     <dialog id="restore-version-dialog" aria-labelledby="restore-version-title">

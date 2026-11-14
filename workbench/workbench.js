@@ -152,10 +152,14 @@ function render() {
   byId('requirement-label').textContent = editing ? '修改「' + currentTitle + '」' : '工具需求';
   requirement.placeholder = supplementIssue ? '补充这次修改的要求' : editing ? '例如：增加一个按负责人筛选。'
     : '描述你想做的工具、怎么用、需要保存哪些数据。';
-  byId('revise-tool').hidden = byId('tool-history').hidden = syncing || !showingTool || showingResult;
+  byId('revise-tool').hidden = syncing || !showingTool || showingResult || editing;
+  const showVersions = editing && showingTool && !syncing;
+  byId('revision-versions').hidden = !showVersions;
+  byId('tool-history').hidden = !showVersions;
+  if (!showVersions && !toolHistory.hidden) showToolHistory(false);
   byId('publish-lock').hidden = syncing || !showingTool;
   byId('revise-tool').disabled = blocked || !configured;
-  byId('tool-history').textContent = active ? '工具 v' + active.version + ' · 版本历史' : '版本历史';
+  byId('tool-history').textContent = active ? '当前 v' + active.version + ' · 版本历史' : '版本历史';
   const sync = byId('sync-tool');
   sync.hidden = !syncing;
   sync.disabled = pending;
@@ -915,8 +919,10 @@ function versionRecord({ version, note, current, date, label, build }) {
 }
 
 function showToolHistory(open) {
+  if (open && (!editing || !active)) return;
   toolHistory.hidden = !open;
   byId('tool-history').setAttribute('aria-expanded', String(open));
+  if (!open) historyRequest += 1;
   if (open) loadToolHistory();
 }
 
@@ -926,7 +932,6 @@ async function loadToolHistory() {
   const id = active.id;
   const list = byId('tool-version-list');
   const status = byId('tool-version-status');
-  byId('version-tool-name').textContent = byId('preview-title').textContent;
   list.replaceChildren();
   status.textContent = '正在读取工具版本…';
   try {
@@ -2064,7 +2069,7 @@ restoreDialog.addEventListener('close', async () => {
   } finally {
     phase = 'idle';
     render();
-    if (!pendingPublication && toolHistory.hidden) byId('tool-history').focus();
+    if (!pendingPublication && toolHistory.hidden) byId(editing ? 'tool-history' : 'revise-tool').focus();
   }
 });
 
@@ -2248,6 +2253,7 @@ function beginComposition(revise, value = '', category = 'auto', focus = true) {
   toolRevisionTasks = [];
   toolRevisionStatus = '';
   if (revise && stagedEnabled && active) loadToolRevisionLog(active.id);
+  showToolHistory(false);
   entryMode = 'direct';
   compose(true, revise ? 'compose' : 'start');
   requirement.value = value;

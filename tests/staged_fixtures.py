@@ -33,6 +33,7 @@ modules = {
 failed = set()
 theme_check = "--ledger-theme" in sys.argv[5:]
 history_check = "--staged-history" in sys.argv[5:]
+tool_actions_check = "--tool-actions" in sys.argv[5:]
 
 
 def history_program(stage, requirement, admit, record):
@@ -135,6 +136,9 @@ def revise(stage, requirement, prior, key, admit, record, *, base):
         elif base["kind"] == "program" and requirement == "把按钮文案改为收藏，模拟补丁失配":
             before = ">加入书单<" if base.get("repair_feedback") else ">missing<"
             content = {"status":"proposed","edits":[{"part":"markup","before":before,"after":">收藏<"}]}
+        elif tool_actions_check and base["kind"] == "program" and requirement.startswith("验收改按钮："):
+            before, after = requirement.removeprefix("验收改按钮：").split(" → ", 1)
+            content = {"status":"proposed","edits":[{"part":"markup","before":f">{before}<","after":f">{after}<"}]}
         elif base["kind"] == "program" and "不存在" not in requirement and "加入书单" in requirement:
             content = {"status":"proposed","edits":[{"part":"markup","before":">添加<","after":">加入书单<"}]}
         elif base["kind"] == "table" and requirement.startswith("增加一个"):
@@ -150,6 +154,8 @@ def revise(stage, requirement, prior, key, admit, record, *, base):
 
 
 limits = (2, 2) if "--quota-feedback" in sys.argv[5:] else (5, 30)
+if tool_actions_check:
+    limits = (30, 100)
 provider = staged
 if "--demo-site" in sys.argv[5:] and not live:
     from demo_site_fixture import demo_site_provider

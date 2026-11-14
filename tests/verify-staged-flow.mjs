@@ -686,6 +686,10 @@ export async function verifyStagedRevision(ctx) {
   await click('#revise-tool');
   await until(() => evaluate('document.querySelector("#tool-revision-log").textContent.includes("加入书单")'));
   assert.match(await evaluate('document.querySelector("#tool-revision-log").textContent'), /已应用/);
+  await click('#tool-history');
+  await until(() => evaluate('document.querySelectorAll("#tool-version-list li").length === 2'));
+  assert.deepEqual(await evaluate('Array.from(document.querySelectorAll("#tool-version-list strong"), item => item.textContent)'), ['v2 · 当前', 'v1']);
+  await click('#tool-history');
   assert.equal(await visible('#staged-history'), false);
   if (process.env.ROOT_STAGED_LIVE !== '1') {
     const failedChange = '把按钮文案改为收藏，模拟补丁失配';
