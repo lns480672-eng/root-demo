@@ -317,6 +317,51 @@ export async function verifyStagedRegistration(ctx) {
   await screenshot('staged-registration-restored');
 }
 
+export async function verifyRunningLayout(ctx) {
+  const { cdp, evaluate, until, base, click, visible, appRequest, login, generate, accountA, evidence, screenshot } = ctx;
+  const input = '做一份简单读书清单，新增书名并保存。用于核对生成中的任务进度。';
+  await cdp('Emulation.setDeviceMetricsOverride', {width:1440,height:900,deviceScaleFactor:1,mobile:false});
+  await cdp('Page.navigate', {url:base});
+  await login(accountA, true);
+  await generate(input);
+  const task = await until(() => findStagedTask(appRequest, input));
+  const taskButton = '#staged-task-list button[data-task-id="' + task.id + '"]';
+  const assertRunningLayout = async path => {
+    for (const width of [1440, 390]) {
+      await cdp('Emulation.setDeviceMetricsOverride', {width,height:844,deviceScaleFactor:1,mobile:width===390});
+      const layout = await evaluate(`(() => {
+        const composer = document.querySelector('.elys-composer');
+        const preview = document.querySelector('.elys-preview');
+        const progress = document.querySelector('#staged-steps li[aria-current=step]');
+        return {
+          mode: document.querySelector('#workspace').dataset.mode,
+          sidebarFits: ${width} === 390 || (composer.clientWidth >= 260 && composer.clientWidth <= 360),
+          previewVisible: preview.checkVisibility(),
+          original: document.querySelector('#staged-original p').textContent,
+          task: document.querySelector('#staged-task-list [aria-current=true]')?.dataset.taskId,
+          step: progress?.checkVisibility(),
+          fullForm: document.querySelector('#composer').checkVisibility(),
+        };
+      })()`);
+      assert.deepEqual(layout, {mode:'compose',sidebarFits:true,previewVisible:true,original:input,
+        task:task.id,step:true,fullForm:false}, path + ' ' + width + 'px');
+      await screenshot('running-' + path + '-' + width);
+    }
+  };
+  await until(() => visible('#staged-steps li[aria-current=step]'));
+  await assertRunningLayout('submit');
+  await click('#new-tool');
+  assert.equal(await visible('#requirement'), true);
+  await click(taskButton);
+  await assertRunningLayout('reopen');
+  const navigation = await evaluate('performance.timeOrigin');
+  await cdp('Page.reload');
+  await until(() => evaluate(`performance.timeOrigin !== ${navigation} && document.documentElement.dataset.ready === 'true'`));
+  await assertRunningLayout('reload');
+  assert.equal((await appRequest('/api/staged')).body.tasks.filter(item => item.requirement === input).length, 1);
+  evidence.tests.push({id:'BLUE-02',task:task.id,paths:['submit','reopen','reload'],viewports:[1440,390]});
+}
+
 export async function verifyStagedReconnect(ctx) {
   const { cdp, evaluate, until, base, click, visible, appRequest, login, generate,
     activeTool, accountA, evidence, screenshot } = ctx;

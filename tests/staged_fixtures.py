@@ -3,6 +3,7 @@ import json
 import os
 from pathlib import Path
 import sys
+import time
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -53,6 +54,8 @@ def history_program(stage, requirement, admit, record):
 def staged(stage, requirement, prior, key, admit, record, *, category="auto"):
     if live:
         return staged_blueprint.provide(stage, requirement, prior, key, admit, record, category=category)
+    if "--running-layout" in sys.argv and stage == "spec":
+        time.sleep(8)
     if requirement.startswith("做一份简单读书清单"):
         admit()
         content = {"kind":"program","title":"旧清单","goal":"录入并保存书名"} if stage == "spec" else {

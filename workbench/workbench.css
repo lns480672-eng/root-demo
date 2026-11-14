@@ -446,7 +446,7 @@ button:enabled { cursor: pointer; }
 }
 /* Keep the same navigation rail across the entry, assistant, and tool views. */
 .elys-workspace {
-  grid-template-columns: 158px minmax(240px, .4fr) minmax(0, .6fr);
+  grid-template-columns: 158px clamp(260px, 25vw, 360px) minmax(0, 1fr);
   grid-template-areas: "sidebar composer content";
   gap: clamp(12px, 2vw, 28px);
   min-height: calc(100dvh - 66px);
@@ -679,6 +679,7 @@ button:enabled { cursor: pointer; }
 #staged-history { margin-block-start: 10px; border-top: 1px solid var(--elys-line); padding-block-start: 8px; }
 #staged-history summary { cursor: pointer; font-weight: 650; }
 #staged-history-list li { display: grid; gap: 5px; padding: 8px; border: 1px solid var(--elys-line); border-radius: 8px; }
+#staged-original p,
 #staged-history-list p { white-space: pre-wrap; overflow-wrap: anywhere; }
 #staged-history-list button { inline-size: fit-content; }
 

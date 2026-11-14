@@ -13,6 +13,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 const live = process.argv.includes('--live');
 const standaloneCatalog = process.env.ROOT_STANDALONE_CATALOG;
 const stagedFlow = process.argv.includes('--staged-flow');
+const runningLayout = process.argv.includes('--running-layout');
 const completionFlow = process.argv.includes('--completion-flow');
 const ledgerTheme = stagedFlow && process.argv.includes('--ledger-theme');
 const demoSite = stagedFlow && process.argv.includes('--demo-site');
@@ -90,7 +91,7 @@ try {
     const server = launch('python3', [fixture, 'fixture-key', '0', join(root, 'runs'), probeUrl,
       ...(adminFlow ? ['--admin-flow'] : []), ...(entryFlow ? ['--entry-flow'] : []),
       ...(ledgerTheme ? ['--ledger-theme'] : []), ...(quotaFeedback ? ['--quota-feedback'] : []),
-      ...(demoSite ? ['--demo-site'] : []), ...(stagedHistory ? ['--staged-history'] : [])]);
+      ...(demoSite ? ['--demo-site'] : []), ...(runningLayout ? ['--running-layout'] : []), ...(stagedHistory ? ['--staged-history'] : [])]);
     const [line] = await Promise.race([once(server.stdout, 'data'), once(server, 'exit').then(() => [''])]);
     base = String(line).match(/http:\/\/127\.0\.0\.1:\d+/)?.[0];
     assert.ok(base, '工作台应启动并提供本机地址');
@@ -817,7 +818,8 @@ try {
     stage = demoSite ? 'CHG-046 website generation' : stagedHistory ? 'TEST-018-09 generation history' :
       quotaFeedback ? 'TEST-017-06 shared generation quota feedback' : ledgerTheme ? 'ROOT-REV-VIS-01 ledger theme' : reconnect ? 'AC-020 staged reconnect fallback' : tableJourney ? 'CHG-029 same imported tool journey' : registration ? 'staged workbench registration' : revision ? 'staged workbench revision' :
       calculator ? 'staged workbench calculator' : 'staged workbench board flow';
-    const verify = demoSite ? (await import('./verify-demo-site.mjs')).verifyDemoSite :
+    const verify = runningLayout ? (await import('./verify-staged-flow.mjs')).verifyRunningLayout :
+      demoSite ? (await import('./verify-demo-site.mjs')).verifyDemoSite :
       stagedHistory ? (await import('./verify-staged-flow.mjs')).verifyStagedHistory :
       quotaFeedback ? verifyStagedQuotaFeedback : ledgerTheme ? verifyLedgerTheme : reconnect ? verifyStagedReconnect : tableJourney ? verifyTableJourney : registration ? verifyStagedRegistration : revision ? verifyStagedRevision :
       calculator ? verifyStagedCalculator : verifyStagedFlow;
