@@ -1138,6 +1138,32 @@ class StagedHTTP(StagedHTTPFixture):
         self.assertEqual(self.request("/api/generate", request, owner)[1]["task"]["id"], task["id"])
         self.assertEqual(self.request("/api/generate", {**request, "title": "新名称"}, owner)[0], 409)
 
+    def test_initial_publication_uses_draft_tool_name_or_generated_fallback(self):
+        owner = self.account("draft-tool-name")
+        for title in ("旅行费用核算", None):
+            with self.subTest(title=title):
+                data = {"requestId":uuid4().hex, "requirement":"计算两个数字"}
+                if title:
+                    data["title"] = title
+                status, response, _ = self.request("/api/generate", data, owner)
+                self.assertEqual(status, 202)
+                task = self.wait_task(owner, response["task"]["id"], "complete")
+                path = "/api/staged/" + task["id"]
+                status, candidate, _ = self.request(path + "/candidate", {}, owner)
+                self.assertEqual(status, 200)
+                payload = {**candidate["staged"], "toolId":candidate["id"], "entries":[]}
+                self.assert_preview_verified(path, payload, owner)
+                status, published, _ = self.request(path + "/publish", payload, owner)
+                self.assertEqual(status, 200)
+                expected = title or "加法计算器"
+                self.assertEqual(published["id"], candidate["id"])
+                items = self.request("/api/tools", auth=owner)[1]["items"]
+                self.assertEqual(next(item["title"] for item in items if item["id"] == candidate["id"]), expected)
+                self.assertEqual(self.request(path + "/publish", payload, owner)[1]["id"], candidate["id"])
+                with sqlite3.connect(self.runs / "workspace.sqlite3") as db:
+                    self.assertEqual(db.execute("SELECT title FROM tools WHERE id=?", (candidate["id"],)).fetchone(),
+                                     (expected,))
+
     def test_generation_category_is_part_of_the_request_identity(self):
         auth = self.account("generation-category")
         path = "/api/generate"

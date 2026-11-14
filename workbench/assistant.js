@@ -101,7 +101,7 @@ function setupRequirementAssistant({request, offerStorageKey, onViewChange, onBu
     questions: screen('assistant-questions', '还有几个关键问题', questionList,
       node('div', {class: 'assistant-actions'}, organize)),
     draft: screen('assistant-draft', '检查需求草稿',
-      node('label', {for: name.id}, '需求名称'), name,
+      node('label', {for: name.id}, '工具名称'), name,
       node('div', {id: 'assistant-draft-text'}, draftLabel, editor), dirty,
       node('div', {class: 'assistant-actions'}, save, reviewSaved, build), comparisonPanel),
     drafts: screen('assistant-drafts-view', '我的需求', list,
@@ -383,7 +383,7 @@ function setupRequirementAssistant({request, offerStorageKey, onViewChange, onBu
   });
   editor.addEventListener('input', refresh);
   name.addEventListener('input', () => {
-    feedback(titleValid() ? '' : '需求名称最多 40 字。', !titleValid());
+    feedback(titleValid() ? '' : '工具名称最多 40 字。', !titleValid());
     refresh();
   });
 
