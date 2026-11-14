@@ -3,11 +3,13 @@
 import argparse
 import hashlib
 import json
+import logging
 import os
 import re
 import sqlite3
 import tempfile
 import threading
+from concurrent.futures import ThreadPoolExecutor
 from html import escape
 from html.parser import HTMLParser
 from http.cookies import CookieError, SimpleCookie
@@ -17,6 +19,7 @@ from urllib.parse import urlsplit
 from uuid import uuid4
 
 import generate
+import generation_settings
 import agent_production
 import assistant_fixture
 import assistant_model
@@ -24,13 +27,14 @@ import table_import
 import staged_blueprint
 import staged_revision
 import runtime_verify
-from staged_jobs import LEASE_SECONDS, MAX_ATTEMPTS, StagedJobs
+from staged_jobs import MAX_ATTEMPTS, StagedJobs
 from accounts import ApiError, DEFAULT_INVITE_HOURS, InviteError, SESSION_SECONDS, Store, TABLE_STORAGE_BYTES
 from trial_budget import TrialBudget
 
 ROOT = Path(__file__).resolve().parent
 DEFAULT_GENERATION_LIMITS = (1000, 10000)
 DEFAULT_AGENT_MODEL_CALLS = 100
+DEFAULT_MODEL_CONCURRENCY = 2
 ADMIN = "/admin"
 WORKBENCH = "/workbench"
 LOCAL_SITE = "http://[::1]:8788/"
@@ -73,12 +77,15 @@ ADMIN_PASSWORD = "/api/admin/password"
 ADMIN_LOGIN = "/api/admin/login"
 ADMIN_SESSION = "/api/admin/session"
 ADMIN_LOGOUT = "/api/admin/logout"
-ADMIN_ACTIONS = (TRIAL_ADMIN, ADMIN_INVITES, ADMIN_SETUP, ADMIN_PASSWORD, ADMIN_LOGIN, ADMIN_LOGOUT)
+ADMIN_GENERATION_SETTINGS = "/api/admin/generation-settings"
+ADMIN_ACTIONS = (ADMIN_GENERATION_SETTINGS, TRIAL_ADMIN, ADMIN_INVITES, ADMIN_SETUP, ADMIN_PASSWORD, ADMIN_LOGIN, ADMIN_LOGOUT)
 TABLE_INSPECT = "/api/table/inspect"
 TABLE_GENERATE = "/api/table/generate"
 TABLE_CONFIG = "/api/table/config"
 RELEASES = (
-    ("0.9", "2026-11-14", None, "更新工作台和后台。生成任务支持短标题，草稿工具名称在保存后保留，断连后可恢复原任务。"),
+    ("0.9.2", "2026-11-14", None, "新建工具使用统一生成状态卡。可查看失败详情、重试或编辑需求，旧工具仍可使用。"),
+    ("0.9.1", "2026-11-14", "v4-6b961219ca38", "后台新增生成配置。扩大源码与续改上下文容量，更新工作台导航与修改对话，修正草稿和独立工具入口。"),
+    ("0.9", "2026-11-14", "v4-ecf34a605b87", "更新工作台和后台。生成任务支持短标题，草稿工具名称在保存后保留，断连后可恢复原任务。"),
     ("0.8", "2026-11-14", "v4-396a683db32f", "启用编程 Agent 生成与继续修改工具，支持预览后确认适用的记录变更。"),
     ("0.7", "2026-11-13", "v4-49174f46be99", "修复继续修改时的补丁校验和字段类型澄清，新增可空字段后保留原记录。"),
     ("0.6", "2026-11-13", "v4-d83afcadbc2e", "更新登录注册和新建入口。生成成功后可留在原页试用，清单支持确认后新增可空日期字段。"),
@@ -132,7 +139,7 @@ class ToolTitle(HTMLParser):
 def build_id(assets, coding_agent_enabled=False):
     digest = hashlib.sha256()
     for name in ("generate.py", "workbench.py", "accounts.py", "assistant_fixture.py", "assistant_model.py",
-                 "table_import.py", "trial_budget.py", "staged_blueprint.py", "staged_jobs.py", "staged_program.py", "staged_revision.py",
+                 "table_import.py", "trial_budget.py", "generation_settings.py", "staged_blueprint.py", "staged_jobs.py", "staged_program.py", "staged_revision.py",
                  "staged_website.py", "staged_record_code.py", "runtime_verify.py", "runtime-verify.mjs",
                  "workbench/staged-runtime.js"):
         digest.update(name.encode() + b"\0" + (ROOT / name).read_bytes() + b"\0")
@@ -167,11 +174,21 @@ def serve(key, port, runs=generate.RUNS, *, generation_limits=(5, 30), analysis_
           admin_usernames=(), analysis_provider=assistant_model.analyze, table_limits=None,
           staged_enabled=False, public_site_url=LOCAL_SITE, staged_provider=staged_blueprint.provide,
           staged_revision_provider=staged_revision.provide, staged_runtime_verifier=runtime_verify.verify,
-          coding_agent_enabled=False, coding_agent_timeout=120, coding_agent_max_attempts=DEFAULT_AGENT_MODEL_CALLS):
-    model_lock = threading.Lock()
+          coding_agent_enabled=False, coding_agent_timeout=None, coding_agent_max_attempts=DEFAULT_AGENT_MODEL_CALLS,
+          generation_defaults=None,
+          model_concurrency=DEFAULT_MODEL_CONCURRENCY):
+    model_slots = threading.BoundedSemaphore(model_concurrency)
+    staged_workers = ThreadPoolExecutor(max_workers=model_concurrency, thread_name_prefix="root-staged")
+    scheduled_tasks = set()
+    schedule_lock = threading.Lock()
     store = Store(runs / "workspace.sqlite3")
     budget = TrialBudget(store, runs, generation_limits=generation_limits, analysis_limits=analysis_limits,
                          admin_usernames=admin_usernames, admin_session_required=True)
+    generation_defaults = generation_defaults or generation_settings.GenerationSettings()
+    if coding_agent_timeout is not None:
+        generation_defaults = generation_settings.validate({**vars(generation_defaults),
+                                                            "timeoutSeconds": coding_agent_timeout})
+    settings_store = generation_settings.GenerationSettingsStore(store, generation_defaults)
     table_limits = table_limits or table_import.TableLimits()
 
     def stage_receipt(task, dispatch, receipt):
@@ -191,51 +208,73 @@ def serve(key, port, runs=generate.RUNS, *, generation_limits=(5, 30), analysis_
         from coding_agent import provide
 
         def coding_provider(stage, requirement, prior, dispatch, *, base):
-            if not model_lock.acquire(timeout=20):
-                raise ApiError(409, "staged_busy", "模型服务正在处理其他请求，请稍后继续。")
-            try:
-                return provide(stage, requirement, prior, key, dispatch, base=base,
-                               timeout_seconds=coding_agent_timeout)
-            finally:
-                model_lock.release()
+            return provide(stage, requirement, prior, key, dispatch, base=base,
+                           timeout_seconds=generation_settings.current().timeoutSeconds)
 
     history = StagedJobs(store, budget, runs, staged_blueprint, record=stage_receipt, revision=staged_revision,
                          runtime_verifier=staged_runtime_verifier, coding_provider=coding_provider,
-                         max_attempts=coding_agent_max_attempts if coding_agent_enabled else MAX_ATTEMPTS,
-                         lease_seconds=LEASE_SECONDS + coding_agent_timeout if coding_agent_enabled else LEASE_SECONDS)
+                         max_attempts=coding_agent_max_attempts if coding_agent_enabled else MAX_ATTEMPTS)
     staged = history if staged_enabled else None
 
     def stage_provider(stage, requirement, prior, admit, record, base=None, category="auto"):
-        if not model_lock.acquire(timeout=20):
-            raise ApiError(409, "staged_busy", "模型服务正在处理其他请求，请稍后继续。")
-        try:
-            if base is not None:
-                return staged_revision_provider(stage, requirement, prior, key, admit, record, base=base)
-            if staged_provider is staged_blueprint.provide:
-                return staged_provider(stage, requirement, prior, key, admit, record, category=category,
-                                       record_code=True)
-            if category != "auto":
-                return staged_provider(stage, requirement, prior, key, admit, record, category=category)
-            return staged_provider(stage, requirement, prior, key, admit, record)
-        finally:
-            model_lock.release()
+        if base is not None:
+            return staged_revision_provider(stage, requirement, prior, key, admit, record, base=base)
+        if staged_provider is staged_blueprint.provide:
+            return staged_provider(stage, requirement, prior, key, admit, record, category=category,
+                                   record_code=True)
+        if category != "auto":
+            return staged_provider(stage, requirement, prior, key, admit, record, category=category)
+        return staged_provider(stage, requirement, prior, key, admit, record)
+
+    def run_staged(token, marker, task, resume):
+        # Claim after a slot opens so time spent waiting does not consume the lease.
+        with model_slots:
+            try:
+                with store.connection() as db:
+                    settings = settings_store.read(db)
+            except (sqlite3.Error, ValueError) as error:
+                with schedule_lock:
+                    scheduled_tasks.discard(task)
+                logging.getLogger(__name__).warning("generation settings load failed: %s", type(error).__name__)
+                return
+            with generation_settings.activate(settings):
+                execute_staged(token, marker, task, resume)
+
+    def execute_staged(token, marker, task, resume):
+        with schedule_lock:
+            try:
+                fence = staged.claim(token, marker, task, resume=resume)
+            except (ApiError, OSError, ValueError, sqlite3.Error) as error:
+                logging.getLogger(__name__).warning("staged claim failed task=%s reason=%s",
+                                                    task, getattr(error, "code", type(error).__name__))
+                return
+            finally:
+                scheduled_tasks.discard(task)
+        if fence is None:
+            return
+        base = staged.revision_context(task)
+        category = staged.generation_category(task)
+
+        def provider(stage, requirement, prior, admit, record):
+            return stage_provider(stage, requirement, prior, admit, record, base, category)
+
+        def retry_revision(stage, requirement, prior, admit, record, feedback):
+            return stage_provider(stage, requirement, prior, admit, record,
+                                  {**base, "patch_feedback": feedback}, category)
+
+        staged.run(task, fence, provider, retry_revision if base else None)
 
     def start_staged(token, marker, task, *, resume):
-        fence = staged.claim(token, marker, task, resume=resume)
-        if fence is not None:
-            base = staged.revision_context(task)
-            category = staged.generation_category(task)
+        with schedule_lock:
+            if task in scheduled_tasks:
+                return staged.status(token, marker, task)
+            status = staged.resume_status(token, marker, task) if resume else staged.status(token, marker, task)
+            eligible = status["resumable"] if resume else status["state"] == "queued"
+            if eligible:
+                scheduled_tasks.add(task)
+                staged_workers.submit(run_staged, token, marker, task, resume)
+            return status
 
-            def provider(stage, requirement, prior, admit, record):
-                return stage_provider(stage, requirement, prior, admit, record, base, category)
-
-            def retry_revision(stage, requirement, prior, admit, record, feedback):
-                return stage_provider(stage, requirement, prior, admit, record,
-                                      {**base, "patch_feedback": feedback}, category)
-
-            threading.Thread(target=staged.run, args=(task, fence, provider, retry_revision if base else None),
-                             daemon=True).start()
-        return staged.status(token, marker, task)
     assets = {url: (ROOT / "workbench" / name).read_bytes()
               for url, (name, _) in STATIC.items()}
     setup_page = (ROOT / "workbench" / "admin-setup.html").read_bytes()
@@ -381,6 +420,11 @@ def serve(key, port, runs=generate.RUNS, *, generation_limits=(5, 30), analysis_
                     budget.require_admin(db, token, None)
                     session = store.session(db, token, admin=True)
                 self.send_json(200, {"user": session["username"], "marker": session["marker"]})
+            elif self.path == ADMIN_GENERATION_SETTINGS:
+                with store.connection() as db:
+                    budget.require_admin(db, self.cookie_token(admin=True), self.marker())
+                    settings = settings_store.response(db)
+                self.send_json(200, settings)
             elif self.path == TRIAL_ADMIN:
                 self.send_json(200, budget.admin_state(self.cookie_token(admin=True), self.marker()))
             elif self.path == TABLE_CONFIG:
@@ -502,6 +546,12 @@ def serve(key, port, runs=generate.RUNS, *, generation_limits=(5, 30), analysis_
                 if not isinstance(offer_id, str) or not re.fullmatch(UUID, offer_id):
                     raise ApiError(400, "invalid_analysis", "草稿回执编号无效。")
                 self.send_json(200, budget.claim_analysis_draft(token, self.marker(), offer_id))
+                return
+            if self.path == ADMIN_GENERATION_SETTINGS:
+                with store.connection(write=True) as db:
+                    admin = budget.require_admin(db, token, self.marker())
+                    settings = settings_store.update(db, data, admin)
+                self.send_json(200, settings)
                 return
             if self.path == TRIAL_ADMIN:
                 self.send_json(200, budget.admin_action(token, self.marker(), data))
@@ -629,7 +679,7 @@ def serve(key, port, runs=generate.RUNS, *, generation_limits=(5, 30), analysis_
             round_id = data.get("roundId")
             if any(not isinstance(value, str) or not re.fullmatch(UUID, value) for value in (request_id, round_id)):
                 raise ApiError(400, "invalid_analysis", "分析请求或梳理轮标识无效，请重试。")
-            if not model_lock.acquire(blocking=False):
+            if not model_slots.acquire(blocking=False):
                 raise ApiError(409, "busy", "另一个模型请求正在处理，请稍后重试。")
 
             def receipt(evidence):
@@ -664,7 +714,7 @@ def serve(key, port, runs=generate.RUNS, *, generation_limits=(5, 30), analysis_
                     with store.connection() as db:
                         store.session(db, token, marker)
             finally:
-                model_lock.release()
+                model_slots.release()
             self.send_json(200, result)
 
         def handle_generation(self, data, tool_id=None):
@@ -697,7 +747,7 @@ def serve(key, port, runs=generate.RUNS, *, generation_limits=(5, 30), analysis_
                     f"修改要求：{requirement}\n存储键名：{json.dumps(keys, ensure_ascii=False)}\n"
                     f"现有 HTML：\n{previous}"
                 )
-            if not model_lock.acquire(blocking=False):
+            if not model_slots.acquire(blocking=False):
                 self.error(409, "busy", "另一个生成请求正在处理，请稍后重试。")
                 return
             dispatch_id = uuid4().hex
@@ -711,7 +761,7 @@ def serve(key, port, runs=generate.RUNS, *, generation_limits=(5, 30), analysis_
                 self.error(500, "save_failed", "本机无法保存生成结果，请检查运行目录。")
                 return
             finally:
-                model_lock.release()
+                model_slots.release()
             if evidence["status"] == "generated":
                 if tool_id:
                     latest = store.revision_draft(token, marker, tool_id, row["version"], run.name, requirement, model=True)
@@ -737,6 +787,8 @@ def serve(key, port, runs=generate.RUNS, *, generation_limits=(5, 30), analysis_
             server.serve_forever()
         except KeyboardInterrupt:
             pass
+        finally:
+            staged_workers.shutdown(wait=False, cancel_futures=True)
 
 
 def main():
@@ -810,10 +862,14 @@ def main():
         account_default, total_default = DEFAULT_GENERATION_LIMITS
         generation_limits = (int(os.environ.get("ROOT_ACCOUNT_GENERATIONS", account_default)),
                              int(os.environ.get("ROOT_TOTAL_GENERATIONS", total_default)))
+        model_concurrency = int(os.environ.get("ROOT_MODEL_CONCURRENCY", DEFAULT_MODEL_CONCURRENCY))
+        if model_concurrency < 1:
+            raise ValueError("ROOT_MODEL_CONCURRENCY 必须是正整数")
+        generation_defaults = generation_settings.from_environment()
         agent_settings = {}
         if coding_agent_enabled:
             agent_settings = {
-                "coding_agent_timeout": int(os.environ.get("ROOT_AGENT_TIMEOUT_SECONDS", "120")),
+                "coding_agent_timeout": generation_defaults.timeoutSeconds,
                 "coding_agent_max_attempts": int(os.environ.get("ROOT_AGENT_MAX_MODEL_CALLS", DEFAULT_AGENT_MODEL_CALLS)),
             }
             if min(agent_settings.values()) <= 0:
@@ -837,7 +893,8 @@ def main():
     serve(key, args.port, args.runs_dir, generation_limits=generation_limits, analysis_limits=analysis_limits,
           admin_usernames=admins, table_limits=table_limits, public_site_url=public_site_url,
           staged_enabled=os.environ.get("ROOT_STAGED_ENABLED", "1") != "0",
-          coding_agent_enabled=coding_agent_enabled, **agent_settings)
+          coding_agent_enabled=coding_agent_enabled, model_concurrency=model_concurrency,
+          generation_defaults=generation_defaults, **agent_settings)
     return 0
 
 

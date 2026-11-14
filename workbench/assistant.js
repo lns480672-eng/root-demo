@@ -21,6 +21,7 @@ function setupRequirementAssistant({request, offerStorageKey, onViewChange, onBu
   let conflict = false;
   let comparison = null;
   let round = null;
+  let savedRound = null;
   let pendingOffer = null;
   const inFlightAnalysis = new Set();
 
@@ -71,17 +72,19 @@ function setupRequirementAssistant({request, offerStorageKey, onViewChange, onBu
     if (isText(editor.value, maxDraft)) onBuild(editor.value, titleValue());
   });
   const myDrafts = button('assistant-drafts', '我的需求', openDrafts);
-  const ideaTab = button('assistant-idea-tab', '梳理新需求', () => show(view === 'drafts' ? previousView : 'idea'));
+  const ideaTab = button('assistant-idea-tab', '梳理新需求', () => {
+    if (draft?.revision && !draftChanged()) {
+      clearDraft();
+      if (round && round === savedRound && idea.value.trim() === savedRound.idea) resetIdea();
+    }
+    show('idea', idea);
+  });
+  const resumeEdit = button('assistant-resume-edit', '继续编辑草稿', () => show('draft', editor));
   const recoverDraft = button('assistant-recover-draft', '找回草稿', () => {
     run('正在找回草稿…', () => claimDraft(pendingOffer), receiveDraft);
   });
   const newRound = button('assistant-new-round', '梳理新需求', () => {
-    round = null;
-    idea.value = '';
-    directions = [];
-    selectedDirection = null;
-    questions = [];
-    show('idea', idea);
+    startNewRound();
   });
   const editIdea = button('assistant-edit-idea', '修改原始问题', () => show('idea', idea));
   const changeDirection = button('assistant-change-direction', '换个方向', () => show('directions', directionList.firstElementChild));
@@ -112,7 +115,7 @@ function setupRequirementAssistant({request, offerStorageKey, onViewChange, onBu
     node('header', {class: 'assistant-header'}, title),
     node('nav', {class: 'assistant-actions assistant-nav', 'aria-label': '需求栏目'}, ideaTab, myDrafts),
     analysisInfo, balance,
-    node('div', {class: 'assistant-actions assistant-nav'}, editIdea, changeDirection, newRound, recoverDraft),
+    node('div', {class: 'assistant-actions assistant-nav'}, editIdea, changeDirection, newRound, recoverDraft, resumeEdit),
     ...Object.values(views), status,
   );
 
@@ -133,6 +136,8 @@ function setupRequirementAssistant({request, offerStorageKey, onViewChange, onBu
     recoverDraft.disabled = pending;
     newRound.hidden = view !== 'draft' || Boolean(pendingOffer);
     newRound.disabled = pending || saving;
+    resumeEdit.hidden = view !== 'idea' || !(draft || editor.value || titleValue()) || !draftChanged();
+    resumeEdit.disabled = pending || saving;
     start.disabled = pending || Boolean(pendingOffer) || !isText(idea.value, maxIdea);
     organize.disabled = pending || Boolean(pendingOffer) || !questions.length || !readAnswers().every(Boolean);
     const canSave = !pending && !saving && titleValid() && isText(editor.value, maxDraft);
@@ -158,6 +163,30 @@ function setupRequirementAssistant({request, offerStorageKey, onViewChange, onBu
     view = next;
     refresh();
     focus?.focus();
+  }
+
+  function resetIdea() {
+    round = null;
+    savedRound = null;
+    idea.value = '';
+    directions = [];
+    selectedDirection = null;
+    questions = [];
+  }
+
+  function clearDraft() {
+    draft = null;
+    name.value = '';
+    editor.value = '';
+    conflict = false;
+    comparison = null;
+  }
+
+  function startNewRound() {
+    resetIdea();
+    if (!draftChanged() || (!draft && !editor.value && !titleValue())) clearDraft();
+    previousView = 'idea';
+    show('idea', idea);
   }
 
   async function run(message, action, apply) {
@@ -298,7 +327,7 @@ function setupRequirementAssistant({request, offerStorageKey, onViewChange, onBu
 
   async function saveDraft(reviewedRevision) {
     if (reviewedRevision === undefined ? save.disabled : replaceSaved.disabled) return;
-    draft ??= {id: crypto.randomUUID(), revision: 0, savedText: null};
+    draft ??= {id: crypto.randomUUID(), revision: 0, savedText: null, round};
     const {id, revision: originalRevision} = draft;
     const revision = reviewedRevision ?? originalRevision;
     const text = editor.value;
@@ -320,7 +349,8 @@ function setupRequirementAssistant({request, offerStorageKey, onViewChange, onBu
       }
       if (result.text !== text || result.title !== title || result.revision !== revision + 1) throw invalid();
       if (draft?.id === id && draft.revision === originalRevision) {
-        draft = {id, revision: result.revision, savedText: text, savedTitle: title};
+        savedRound = draft.round ?? savedRound;
+        draft = {id, revision: result.revision, savedText: text, savedTitle: title, round: draft.round};
         conflict = false;
         comparison = null;
         if (saveEpoch === epoch) feedback('已保存到「我的需求」。');
@@ -398,6 +428,7 @@ function setupRequirementAssistant({request, offerStorageKey, onViewChange, onBu
       }
       refresh();
       if (destination === 'drafts') openDrafts();
+      else if (destination === 'new') startNewRound();
       else if (view === 'drafts') show(previousView);
       else views[view].querySelector('h2').focus();
     },

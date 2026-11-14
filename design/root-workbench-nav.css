@@ -13,6 +13,8 @@
   font: 14px/1.45 system-ui, "PingFang SC", sans-serif;
 }
 .root-sidebar .root-nav { display: grid; gap: 4px; margin: 0; }
+.root-sidebar .root-nav:has(.root-nav-footer) { display: flex; flex-direction: column; min-height: 100%; }
+.root-sidebar .root-nav-footer { margin-block-start: auto; }
 .root-sidebar .root-nav :is(a, button) {
   box-sizing: border-box;
   display: flex;

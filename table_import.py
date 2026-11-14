@@ -19,6 +19,7 @@ from urllib.parse import unquote, urlsplit
 from xml.etree import ElementTree
 
 from accounts import ApiError, TABLE_STORAGE_BYTES, pack_entries
+from staged_program import validate_style
 
 
 @dataclass(frozen=True)
@@ -550,8 +551,9 @@ def read_saved_table(entries):
     return table
 
 
-def render_tool(title=SUGGESTION, filters=(), *, styled=True):
+def render_tool(title=SUGGESTION, filters=(), *, styled=True, style=""):
     """Render trusted markup. Records and field names stay in sandbox storage."""
+    validate_style(style)
     if not valid_label(title, MAX_HEADER_LENGTH):
         raise ValueError("invalid table title")
     if (not isinstance(filters, (tuple, list))
@@ -562,7 +564,8 @@ def render_tool(title=SUGGESTION, filters=(), *, styled=True):
               .replace("__TABLE_COLUMN_FILTERS__", json.dumps(filters))
               .replace("__TABLE_TITLE__", escape(title)))
     if styled:
-        return markup.replace("</style>", TABLE_VISUAL_STYLE + "</style>", 1)
+        return markup.replace("</style>", TABLE_VISUAL_STYLE + "</style>" +
+                              (f"<style>{style}</style>" if style else ""), 1)
     return markup
 
 

@@ -25,9 +25,10 @@
     <nav class="admin-nav" aria-label="后台模块">
       <p class="nav-title">管理模块</p>
       <a id="trial-nav" href="#manage">用量与额度</a>
+      <a id="generation-settings-nav" href="#generation-settings">生成配置</a>
       <a id="invite-nav" href="#invites">邀请码管理</a>
-      <a id="security-nav" href="#security">账号安全</a>
-      <a id="account-nav" href="#accounts">账号管理 <span class="locked-label">已锁定</span></a>
+      <a id="security-nav" href="#security">密码修改</a>
+      <a id="account-nav" href="#accounts">用户管理 <span class="locked-label">暂未开放</span></a>
     </nav>
     <div class="admin-content">
       <div class="actions">
@@ -92,6 +93,45 @@
           <ol id="audit-list" class="audit-list" aria-label="管理操作记录"></ol>
         </section>
       </section>
+      <section id="generation-settings-module" aria-labelledby="generation-settings-title" hidden>
+        <div class="intro">
+          <h1 id="generation-settings-title">生成配置</h1>
+          <p>保存后，排队中和新建的任务使用新设置。正在运行的任务沿用启动时的设置。</p>
+        </div>
+        <section class="admin-section">
+          <form id="generation-settings-form" novalidate>
+            <fieldset id="generation-settings-fields" disabled>
+              <legend>Agent 生成上限</legend>
+            <div>
+              <label for="setting-sourceBytes">源码大小上限（字节）</label>
+              <input id="setting-sourceBytes" name="sourceBytes" type="number" min="1" step="1" required aria-describedby="limit-sourceBytes">
+              <p id="limit-sourceBytes" class="muted meta"></p>
+            </div>
+            <div>
+              <label for="setting-revisionContextBytes">续改上下文上限（字节）</label>
+              <input id="setting-revisionContextBytes" name="revisionContextBytes" type="number" min="1" step="1" required aria-describedby="limit-revisionContextBytes">
+              <p id="limit-revisionContextBytes" class="muted meta"></p>
+            </div>
+            <div>
+              <label for="setting-outputTokens">单次输出上限（tokens）</label>
+              <input id="setting-outputTokens" name="outputTokens" type="number" min="1" step="1" required aria-describedby="limit-outputTokens">
+              <p id="limit-outputTokens" class="muted meta"></p>
+            </div>
+            <div>
+              <label for="setting-timeoutSeconds">Agent 超时（秒）</label>
+              <input id="setting-timeoutSeconds" name="timeoutSeconds" type="number" min="1" step="1" required aria-describedby="limit-timeoutSeconds">
+              <p id="limit-timeoutSeconds" class="muted meta"></p>
+            </div>
+              <div class="actions">
+                <button type="submit" class="primary">保存配置</button>
+                <button id="generation-settings-reset" type="button">恢复默认值</button>
+              </div>
+            </fieldset>
+          </form>
+          <p id="generation-settings-feedback" class="notice" role="status"></p>
+          <button id="generation-settings-retry" type="button" hidden>重新读取配置</button>
+        </section>
+      </section>
       <section id="invite-module" aria-labelledby="invite-title" hidden>
         <div class="intro">
           <h1 id="invite-title">邀请码管理</h1>
@@ -114,7 +154,7 @@
       </section>
       <section id="security-module" aria-labelledby="security-title" hidden>
         <div class="intro">
-          <h1 id="security-title">账号安全</h1>
+          <h1 id="security-title">密码修改</h1>
           <p>修改自己的密码。保存后需要用新密码重新登录。</p>
         </div>
         <form id="password-form" class="credential-form" method="post">
@@ -131,13 +171,12 @@
       </section>
       <section id="account-preview" aria-labelledby="account-module" aria-describedby="account-preview-note" hidden>
         <div class="intro">
-          <h1 id="account-module">账号管理</h1>
-          <p id="account-preview-note"><strong>暂未开放</strong>。以下用示例账号展示重置密码和删除账号的位置。</p>
+          <h1 id="account-module">用户管理</h1>
+          <p id="account-preview-note"><strong>暂未开放</strong>。</p>
         </div>
         <div class="account-example">
           <p><span class="muted meta">示例账号</span> <strong>reviewer-01</strong></p>
           <div class="actions">
-            <button type="button" disabled>重置密码</button>
             <button type="button" disabled>删除账号</button>
           </div>
         </div>

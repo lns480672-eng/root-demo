@@ -9,6 +9,7 @@ import tempfile
 import threading
 
 from accounts import ApiError, TOOL_STORAGE_BYTES, pack_entries
+from generation_settings import MAX_JSON_BYTES
 from staged_record_code import mutate
 
 
@@ -90,8 +91,8 @@ def verify(html, entries, *, backup=False, storage_limit=TOOL_STORAGE_BYTES, web
                 env[name] = directory
             payload = json.dumps({"html": source, "entries": json.loads(packed), "backup": backup,
                                   "limit": storage_limit, "website": website, "recordField": record_field,
-                                  "recordVisibility": record_visibility}).encode()
-            with subprocess.Popen([*command, directory], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                  "recordVisibility": record_visibility}, ensure_ascii=False).encode()
+            with subprocess.Popen([*command, directory, str(MAX_JSON_BYTES + 6 * storage_limit)], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                   stderr=subprocess.DEVNULL, env=env, start_new_session=True) as process:
                 try:
                     output, _ = process.communicate(payload, timeout=DEADLINE_SECONDS)

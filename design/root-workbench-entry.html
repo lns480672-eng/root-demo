@@ -17,8 +17,9 @@
   <aside class="root-sidebar" id="workbench-sidebar" hidden>
     <nav class="root-nav" aria-label="工作台导航">
       <a href="root-new-tool-review.html" data-nav="new">新建工具</a>
-      <a href="root-workbench-entry.html?section=idea" data-nav="idea">需求</a>
       <a href="root-new-tool-review.html#my-tools" data-nav="tools">我的工具</a>
+      <a href="root-workbench-entry.html?section=idea" data-nav="idea">需求</a>
+      <a class="root-nav-footer" href="root-new-tool-review.html#generation-history">生成历史</a>
     </nav>
   </aside>
 <iframe id="codex-visualization" sandbox="allow-scripts" referrerpolicy="no-referrer" title="ROOT 工作台交互原型" data-srcdoc="&lt;!doctype html&gt;
@@ -1942,7 +1943,7 @@ html&gt;body{padding:0}&lt;/style&gt;
           &lt;div class=&quot;routes&quot;&gt;
             &lt;button type=&quot;button&quot; class=&quot;cursor-interaction&quot; data-go=&quot;fast&quot;&gt;快速体验 &lt;span&gt;选一个模板，用示例需求生成并试用&lt;/span&gt;&lt;/button&gt;
             &lt;button type=&quot;button&quot; class=&quot;cursor-interaction&quot; data-go=&quot;build&quot;&gt;直接开发 &lt;span&gt;输入自己的需求，或从一份表格开始&lt;/span&gt;&lt;/button&gt;
-            &lt;button type=&quot;button&quot; class=&quot;cursor-interaction&quot; data-go=&quot;idea&quot;&gt;需求助手 &lt;span&gt;梳理一个问题，先把需求保存下来&lt;/span&gt;&lt;/button&gt;
+            &lt;button type=&quot;button&quot; class=&quot;cursor-interaction&quot; data-go=&quot;idea&quot; data-new-idea&gt;需求助手 &lt;span&gt;梳理一个问题，先把需求保存下来&lt;/span&gt;&lt;/button&gt;
           &lt;/div&gt;
         &lt;/section&gt;
         &lt;section data-screen=&quot;fast&quot; hidden&gt;
@@ -1961,7 +1962,7 @@ html&gt;body{padding:0}&lt;/style&gt;
           &lt;/div&gt;
         &lt;/section&gt;
         &lt;nav class=&quot;templates&quot; data-assistant-nav aria-label=&quot;需求助手导航&quot; hidden&gt;
-          &lt;button type=&quot;button&quot; data-go=&quot;idea&quot; data-assistant-view=&quot;idea&quot;&gt;梳理新需求&lt;/button&gt;
+          &lt;button type=&quot;button&quot; data-go=&quot;idea&quot; data-new-idea data-assistant-view=&quot;idea&quot;&gt;梳理新需求&lt;/button&gt;
           &lt;button type=&quot;button&quot; data-go=&quot;drafts&quot; data-assistant-view=&quot;drafts&quot;&gt;我的需求&lt;/button&gt;
         &lt;/nav&gt;
         &lt;section data-screen=&quot;idea&quot; hidden&gt;
@@ -2215,6 +2216,15 @@ html&gt;body{padding:0}&lt;/style&gt;
         if (isSpecializedReview &amp;&amp; [&#x27;home&#x27;, &#x27;build&#x27;, &#x27;library&#x27;].includes(button.dataset.go)) {
           parent.postMessage({ type: &#x27;root-review-route&#x27;, route: button.dataset.go }, &#x27;*&#x27;);
           return;
+        }
+        if (button.hasAttribute('data-new-idea')) {
+          idea.value = '';
+          briefName.value = '';
+          brief.value = '';
+          draftIndex = -1;
+          activeDirection = null;
+          updateIdeaButton();
+          updateBriefButtons();
         }
         show(button.dataset.go);
       }));

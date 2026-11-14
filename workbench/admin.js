@@ -19,6 +19,14 @@ let busy = false;
 let pending = null;
 let pendingInvite = null;
 let issuingInvite = false;
+const generationSettingsPath = '/api/admin/generation-settings';
+const generationSettingsForm = get('generation-settings-form');
+const generationSettingKeys = ['sourceBytes', 'revisionContextBytes', 'outputTokens', 'timeoutSeconds'];
+const generationSettingsFields = get('generation-settings-fields');
+const generationSettingsRetry = get('generation-settings-retry');
+const generationSettingsFeedback = get('generation-settings-feedback');
+let generationSettings = null;
+let generationSettingsBusy = false;
 
 function element(tag, value) {
   const node = document.createElement(tag);
@@ -64,16 +72,94 @@ function showSection() {
   const locked = location.hash === '#accounts';
   const invites = location.hash === '#invites';
   const security = location.hash === '#security';
-  get('admin').hidden = locked || invites || security;
+  const settings = location.hash === '#generation-settings';
+  get('admin').hidden = locked || invites || security || settings;
+  get('generation-settings-module').hidden = !settings;
+  get('generation-settings-nav').setAttribute('aria-current', settings ? 'page' : 'false');
+  if (settings && identity && !generationSettings && !generationSettingsBusy) loadGenerationSettings();
   get('account-preview').hidden = !locked;
   get('invite-module').hidden = !invites;
   get('security-module').hidden = !security;
   if (!security) get('password-form').reset();
-  get('trial-nav').setAttribute('aria-current', locked || invites || security ? 'false' : 'page');
+  get('trial-nav').setAttribute('aria-current', locked || invites || security || settings ? 'false' : 'page');
   get('account-nav').setAttribute('aria-current', locked ? 'page' : 'false');
   get('invite-nav').setAttribute('aria-current', invites ? 'page' : 'false');
   get('security-nav').setAttribute('aria-current', security ? 'page' : 'false');
 }
+
+function showGenerationSettingsFeedback(text, error = false) {
+  generationSettingsFeedback.textContent = text;
+  if (error) generationSettingsFeedback.dataset.error = 'true';
+  else delete generationSettingsFeedback.dataset.error;
+}
+
+function renderGenerationSettings(payload) {
+  for (const key of generationSettingKeys) {
+    const field = generationSettingsForm.elements.namedItem(key);
+    field.value = payload.settings[key];
+    field.max = payload.maximums[key];
+    field.removeAttribute('aria-invalid');
+    get('limit-' + key).textContent = '默认 ' + payload.defaults[key].toLocaleString('zh-CN') +
+      '，最高 ' + payload.maximums[key].toLocaleString('zh-CN');
+  }
+  generationSettings = payload;
+}
+
+async function loadGenerationSettings(data) {
+  if (generationSettingsBusy) return;
+  generationSettingsBusy = true;
+  generationSettingsFields.disabled = generationSettingsRetry.disabled = true;
+  generationSettingsRetry.hidden = true;
+  showGenerationSettingsFeedback(data ? '正在保存配置…' : '正在读取配置…');
+  try {
+    renderGenerationSettings(await request(generationSettingsPath, data));
+    showGenerationSettingsFeedback(data?.reset ? '已恢复默认值。' : data ? '配置已保存。' : '');
+  } catch (error) {
+    if (error.authorizationChanged) {
+      location.reload();
+      return;
+    }
+    if (!data || !error.knownRejection) generationSettings = null;
+    generationSettingsRetry.hidden = Boolean(generationSettings);
+    showGenerationSettingsFeedback(data && !error.knownRejection
+      ? '暂时无法确认保存结果，请重新读取配置后核对。' : error.message, true);
+  } finally {
+    generationSettingsBusy = false;
+    generationSettingsRetry.disabled = false;
+    generationSettingsFields.disabled = !generationSettings;
+  }
+}
+
+generationSettingsForm.addEventListener('input', event => {
+  event.target.removeAttribute('aria-invalid');
+});
+generationSettingsForm.addEventListener('submit', event => {
+  event.preventDefault();
+  if (!generationSettings || generationSettingsBusy) return;
+  const settings = {};
+  for (const key of generationSettingKeys) {
+    const field = generationSettingsForm.elements.namedItem(key);
+    field.removeAttribute('aria-invalid');
+    const value = field.valueAsNumber;
+    if (!Number.isSafeInteger(value) || value < 1 || value > generationSettings.maximums[key]) {
+      showGenerationSettingsFeedback('请输入 1 到 ' + generationSettings.maximums[key].toLocaleString('zh-CN') + ' 之间的整数。', true);
+      field.setAttribute('aria-invalid', 'true');
+      field.focus();
+      return;
+    }
+    settings[key] = value;
+  }
+  if (settings.revisionContextBytes < settings.sourceBytes) {
+    const context = generationSettingsForm.elements.namedItem('revisionContextBytes');
+    showGenerationSettingsFeedback('续改上下文上限须大于或等于源码大小上限。', true);
+    context.setAttribute('aria-invalid', 'true');
+    context.focus();
+    return;
+  }
+  loadGenerationSettings({settings});
+});
+get('generation-settings-reset').addEventListener('click', () => loadGenerationSettings({reset:true}));
+generationSettingsRetry.addEventListener('click', () => loadGenerationSettings());
 
 get('password-form').addEventListener('submit', async event => {
   event.preventDefault();

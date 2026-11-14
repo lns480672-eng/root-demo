@@ -223,6 +223,12 @@ export async function verifyAssistant({
   await click('#assistant-replace-saved');
   await waitStatus('已保存');
   assert.equal((await appRequest(draftsPath + '/' + id)).body.text, edited);
+  await click('#assistant-drafts');
+  await until(() => visible(`#assistant-draft-list [data-draft-id="${id}"]`));
+  await click('#assistant-idea-tab');
+  assert.equal(await visible(idea), true);
+  assert.equal(await input(idea), '', '已保存这一轮草稿后，梳理新需求应开启空白一轮');
+  assert.equal(await visible('#assistant-resume-edit'), false);
 
   stage('saved drafts survive login and stay private to their account');
   await logout();

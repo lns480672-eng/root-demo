@@ -12,13 +12,14 @@ import urllib.error
 import urllib.request
 
 from accounts import ApiError
+from generation_settings import MAX_CONTEXT_BYTES
 from generate import ENDPOINT, MODEL, NoRedirects
 
 
 WALL_SECONDS = 30
 INPUT_BYTES = 24 * 1024
-REVISION_INPUT_BYTES = 96 * 1024
-OUTPUT_BYTES = 64 * 1024
+REVISION_INPUT_BYTES = 2 * MAX_CONTEXT_BYTES + INPUT_BYTES
+OUTPUT_BYTES = 8 * 1024 * 1024
 WORKER_COMMAND = (sys.executable, "-E", "-s", "-B", str(Path(__file__).resolve()))
 STAGES = {
     "start": ("draft", "directions"),

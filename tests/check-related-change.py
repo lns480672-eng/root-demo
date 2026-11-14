@@ -18,7 +18,7 @@ CHECKS = {
     "recovery": ("AC-018-B2", "失败恢复", "design/root-revision-clarification.html#recovery", "repair"),
 }
 REFERENCES = {
-    "docs/实施计划.md": ("继续修改前先确认", "继续修改失败后的自助恢复"),
+    "实施计划.md": ("继续修改前先确认", "继续修改失败后的自助恢复"),
     "DESIGN.md": ("工具修改对话",),
     "docs/开发与验收流程.md": ("继续修改已保存工具",),
 }

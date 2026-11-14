@@ -51,10 +51,11 @@
   .stage-detail summary { cursor: pointer; color: #314b92; padding-block: 8px; }
   .stage-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-block: 14px; }
   .category { display: grid; gap: 4px; margin-bottom: 10px; font-size: 14px; }
-  .category p, #stage-step { color: #565969; }
-  .stage-note { color: #246743; font-weight: 650; }
-  .status { color: #565969; }
-  .status[data-error="true"] { color: #a3372e; }
+  .category p { color: #565969; }
+  .generation-status { margin-top: 16px; }
+  .generation-status .stage-actions { margin-block: 10px 0; }
+  .generation-status .stage-actions:has(> button:not([hidden])) { min-height: 44px; }
+  .generation-status .stage-actions:not(:has(> button:not([hidden]))) { display: none; }
   .preview { min-width: 0; min-height: 60vh; padding: clamp(16px, 3vw, 34px); background: #fafafe; }
   .preview-label { margin-bottom: 10px; color: #314b92; font-size: 13px; font-weight: 650; }
   .preview-card { margin-top: 18px; padding: clamp(12px, 2vw, 24px); border: 1px solid #dfe1e9; border-radius: 14px; background: #fff; }
@@ -92,6 +93,7 @@
 
 </style>
 <link rel="stylesheet" href="root-workbench-nav.css">
+<link rel="stylesheet" href="root-generation-status.css">
 <link rel="stylesheet" href="root-visual-v4.css">
 <link rel="stylesheet" href="root-brand-blue.css">
 </head>
@@ -108,7 +110,6 @@
   <aside class="root-sidebar">
     <nav class="root-nav" aria-label="工作台导航">
       <button id="new-tool" type="button" aria-current="page">新建工具</button>
-      <a href="root-workbench-entry.html?section=idea">需求</a>
       <button id="my-tools-nav" type="button" aria-controls="library" aria-expanded="false">我的工具</button>
       <div class="root-nav-children" id="library" hidden>
         <button id="open-old" type="button">读书清单</button>
@@ -116,6 +117,8 @@
         <a href="root-owner-feedback-review.html?v=brand-a#tool">AA 分账示例</a>
         <a href="root-tool-experience-review.html#tool">更多已保存工具</a>
       </div>
+      <a href="root-workbench-entry.html?section=idea">需求</a>
+      <button id="history-entry" class="root-nav-footer" type="button">生成历史</button>
     </nav>
   </aside>
   <main class="content">
@@ -127,9 +130,8 @@
         <div class="prompt-entry"><textarea id="requirement" placeholder="描述你想做的工具、怎么用、需要保存哪些数据。"></textarea><p class="coachmark" id="coachmark" hidden>点这里，写下你想做的工具</p></div>
         <div class="actions">
           <div class="examples" role="group" aria-label="需求示例">
-            <button type="button" data-example="做一个读书清单，可以添加书名、标记已读，刷新后保留记录。">试试读书清单</button>
-            <button type="button" data-example="做一个 AA 分账计算器，输入总金额和人数，算出每人应付多少。">试试 AA 分账</button>
-            <button type="button" data-example="做一个交付跟进板，记录事项、负责人和进度，可以按状态筛选，刷新后保留记录。">试试交付跟进板</button>
+            <button id="example-teapot-website" type="button" data-example="做一个茶壶品牌官网，包含首页、茶壶系列和制壶工艺三个页面。用暖米白底色、深茶褐文字和宽幅茶壶主视觉，首页展示主打茶壶，导航可以切换页面。">试试茶壶官网</button>
+            <button id="example-calculator" type="button" data-example="做一个简易计算器，输入两个数，进行四则运算。除数为 0 时提示不能除以 0。">试试简易计算器</button>
           </div>
           <button class="primary" id="send" type="submit" disabled>开始</button>
         </div>
@@ -138,19 +140,44 @@
         <a href="root-workbench-entry.html?section=idea"><strong>需求助手</strong><span>把想法梳理成需求</span></a>
         <a href="root-workbench-entry.html?section=table"><strong>从表格生成</strong><span>用现有数据开始</span></a>
       </nav>
-      <details class="stage-detail"><summary>新建历史</summary><p>读书清单 · 未通过检查</p><button id="restore-new" type="button">带回需求</button></details>
+    </section>
+    <section class="start" id="generation-history" hidden>
+      <h1 tabindex="-1">生成历史</h1>
+      <h2>未完成的生成任务</h2>
+      <p>暂无未完成任务。</p>
+      <h2>失败或过期的任务</h2>
+      <p>读书清单 · 未通过检查</p>
+      <details class="stage-detail"><summary>查看完整需求</summary><p>做一个读书清单，可以添加书名、标记已读，刷新后保留记录。</p></details>
+      <button id="restore-new" type="button">带回需求</button>
     </section>
     <div class="split" id="split" hidden>
       <section class="progress" id="progress">
         <h2 id="stage-title" tabindex="-1">生成工具</h2>
-        <p class="status" id="status" role="status"></p>
-        <p id="stage-step" hidden>当前阶段 · 生成工具</p>
-        <div class="stage-actions">
-          <button class="primary" id="open-result" type="button" hidden>打开工具</button>
-          <button class="primary" id="retry" type="button" hidden>重试</button>
-          <button id="edit" type="button" hidden>编辑需求</button>
-        </div>
-        <details class="stage-detail"><summary>查看原需求</summary><p id="submitted"></p></details>
+        <article class="generation-status system-status" id="generation-status">
+          <p class="system-status-label">系统提示</p>
+          <div class="status-row">
+            <p class="status" id="status" role="status"></p>
+            <span class="stage-count" id="stage-count" hidden>
+              <span class="stage-meter" aria-hidden="true"><i></i><i></i><i></i></span>
+              <span id="stage-count-text"></span>
+            </span>
+          </div>
+          <p class="status-info" id="status-info" hidden></p>
+          <details class="stage-detail" id="failure-details" hidden>
+            <summary>查看失败详情</summary>
+            <p id="failure-reason"></p>
+          </details>
+          <details class="stage-detail status-steps" id="stage-step" hidden>
+            <summary>查看进度</summary>
+            <ol></ol>
+          </details>
+          <div class="stage-actions">
+            <button class="primary" id="open-result" type="button" hidden>打开工具</button>
+            <button class="primary" id="retry" type="button" hidden>重试</button>
+            <button id="edit" type="button" hidden>编辑需求</button>
+          </div>
+          <details class="stage-detail"><summary>查看原需求</summary><p id="submitted"></p></details>
+        </article>
       </section>
       <section class="preview" id="running-preview" hidden><p class="preview-label">工具预览</p><h2>正在准备预览</h2><p>生成完成后可在这里试用。</p></section>
       <section class="preview" id="old-preview" hidden aria-labelledby="old-title">
@@ -206,28 +233,32 @@
     return '';
   }
 
-  function recordTitleDemo(mode) {
+  function recordTitleDemo(mode, keepOldPreview = false) {
     try {
       sessionStorage.setItem(titleDemoKey, JSON.stringify({
-        mode, requirement: prompt.value, title: taskTitle, draftName, outcome: byId('outcome').value,
+        mode, requirement: prompt.value, title: taskTitle, draftName, outcome: byId('outcome').value, keepOldPreview,
       }));
     } catch {}
   }
 
-  function show(mode, { focusHeading = true } = {}) {
+  function show(mode, { focusHeading = true, keepOldPreview = false } = {}) {
     clearTimeout(timer);
     openResult.hidden = mode !== 'ready';
     start.hidden = mode !== 'start';
+    byId('generation-history').hidden = mode !== 'history';
     split.dataset.arriving = 'false';
     if (['start', 'old', 'created'].includes(mode)) split.dataset.stage = mode;
     dismissGuide();
-    split.hidden = mode === 'start';
-    oldPreview.hidden = mode !== 'old' && mode !== 'failed';
-    byId('running-preview').hidden = mode !== 'running';
+    split.hidden = mode === 'start' || mode === 'history';
+    oldPreview.hidden = mode !== 'old' && mode !== 'failed' && !keepOldPreview;
+    byId('running-preview').hidden = mode !== 'running' || keepOldPreview;
     byId('created-actions').hidden = mode !== 'created';
     byId('preview-label').hidden = mode !== 'ready';
     byId('review-state').value = ['running','ready','failed'].includes(mode) ? mode : 'start';
     byId('stage-step').hidden = mode !== 'running';
+    byId('stage-count').hidden = mode !== 'running';
+    byId('failure-details').hidden = mode !== 'failed';
+    byId('failure-details').open = false;
     retry.hidden = mode !== 'failed';
     edit.hidden = mode !== 'failed';
     newPreview.hidden = mode !== 'created' && mode !== 'ready';
@@ -237,28 +268,59 @@
     library.hidden = !browsing;
     byId('my-tools-nav').setAttribute('aria-expanded', String(browsing));
     byId('my-tools-nav').setAttribute('aria-current', browsing ? 'page' : 'false');
-    byId('new-tool').setAttribute('aria-current', browsing ? 'false' : 'page');
+    byId('new-tool').setAttribute('aria-current', browsing || mode === 'history' ? 'false' : 'page');
+    byId('history-entry').setAttribute('aria-current', mode === 'history' ? 'page' : 'false');
     if (focusHeading && mode === 'old') byId('old-title').focus({ preventScroll:true });
     if (focusHeading && mode === 'created') byId('new-title').focus({ preventScroll:true });
   }
   function showInput() {
+    if (location.hash) history.replaceState(null, '', location.pathname + location.search);
+    recordTitleDemo('start');
     show('start');
     prompt.focus();
   }
-  function stage(mode) {
+  function showStep(current) {
+    const steps = ['理解需求', '生成工具', '组装工具'];
+    status.textContent = ['正在理解需求', '正在生成工具', '正在组装工具'][current];
+    byId('stage-count-text').textContent = (current + 1) + ' / ' + steps.length;
+    document.querySelectorAll('.stage-meter i').forEach((segment, index) => {
+      segment.dataset.state = index < current ? 'done' : index === current ? 'active' : 'waiting';
+    });
+    byId('stage-step').querySelector('ol').replaceChildren(...steps.map((step, index) => {
+      const item = document.createElement('li');
+      item.textContent = step + ' · ' + (index < current ? '已完成' : index === current ? '进行中' : '等待中');
+      if (index === current) item.setAttribute('aria-current', 'step');
+      return item;
+    }));
+  }
+  function stage(mode, current = mode === 'failed' ? 0 : 1, keepOldPreview = false) {
     const completing = split.dataset.stage === 'running' && mode === 'ready';
-    show(mode);
+    show(mode, { keepOldPreview });
     split.dataset.stage = mode;
     split.dataset.arriving = String(completing);
     byId('stage-title').textContent = taskTitle || '新工具';
     byId('submitted').textContent = prompt.value.trim();
     status.dataset.error = String(mode === 'failed');
-    status.textContent = {
-      running: '正在生成',
-      ready: '生成完成，已保存到「我的工具」。',
-      failed: '这次生成未通过预览检查。右侧读书清单仍可使用。'
+    status.closest('.status-row').dataset.tone = mode === 'failed' ? 'error' : '';
+    byId('generation-status').dataset.tone = mode === 'failed' ? 'error' : '';
+    if (mode === 'failed') {
+      byId('failure-reason').textContent = current === 0
+        ? '理解需求 · 本阶段的结果未能保存。'
+        : '组装工具 · 新版未通过预览检查。';
+    }
+    const [label, info] = {
+      running: ['正在生成工具', ''],
+      ready: ['已保存', '可以打开工具，也可以稍后从「我的工具」找回。'],
+      failed: ['生成未完成', current === 0
+        ? '需求分析结果未能保存。可以编辑需求或重试，右侧读书清单仍可使用。'
+        : '新版未通过预览检查。可以编辑需求或重试，右侧读书清单仍可使用。']
     }[mode];
+    status.textContent = label;
+    byId('status-info').textContent = info;
+    byId('status-info').hidden = !info;
+    byId('stage-step').open = false;
     status.classList.toggle('stage-note', mode === 'ready');
+    if (mode === 'running') showStep(current);
     if (mode === 'ready') {
       const toolName = taskTitle || 'AA 分账';
       byId('new-title').textContent = toolName;
@@ -266,27 +328,31 @@
       byId('open-created').hidden = false;
     }
   }
-  function generate(resume = false) {
+  function generate(resume = false, keepOldPreview = false) {
     if (!prompt.value.trim()) return;
     const outcome = byId('outcome').value;
     if (resume !== true) taskTitle = draftName;
-    stage('running');
+    stage('running', 0, keepOldPreview);
     byId('stage-title').focus();
-    recordTitleDemo('running');
+    recordTitleDemo('running', keepOldPreview);
     timer = setTimeout(() => {
       taskTitle ||= sampleTitle(prompt.value);
       byId('stage-title').textContent = taskTitle;
-      recordTitleDemo('running');
+      showStep(1);
+      recordTitleDemo('running', keepOldPreview);
       timer = setTimeout(() => {
-        const mode = outcome === 'failure' ? 'failed' : 'ready';
-        stage(mode);
-        recordTitleDemo(mode);
-      }, 1400);
+        showStep(2);
+        timer = setTimeout(() => {
+          const mode = outcome === 'failure' ? 'failed' : 'ready';
+          stage(mode, 2);
+          recordTitleDemo(mode);
+        }, 450);
+      }, 950);
     }, 700);
   }
   function review(mode) {
     if(mode === 'start') return showInput();
-    if(!prompt.value.trim()) prompt.value = composer.querySelectorAll('[data-example]')[1].dataset.example;
+    if (!prompt.value.trim()) prompt.value = '做一个 AA 分账计算器，输入总金额和人数，算出每人应付多少。';
     syncPrompt();
     taskTitle = draftName || (mode === 'running' ? '' : sampleTitle(prompt.value));
     stage(mode);
@@ -316,6 +382,11 @@
     syncPrompt();
     showInput();
   };
+  byId('history-entry').onclick = () => {
+    if (location.hash !== '#generation-history') history.pushState(null, '', '#generation-history');
+    show('history');
+    byId('generation-history').querySelector('h1').focus();
+  };
   byId('my-tools-nav').onclick = () => {
     if (location.hash !== '#my-tools') history.pushState(null, '', '#my-tools');
     show('old');
@@ -326,7 +397,7 @@
     if (location.hash !== '#my-tools') history.pushState(null, '', '#my-tools');
     show('created');
   };
-  byId('restore-new').onclick = () => { draftName=''; prompt.value=composer.querySelector('[data-example]').dataset.example; syncPrompt(); showInput(); };
+  byId('restore-new').onclick = () => { draftName=''; prompt.value=byId('restore-new').previousElementSibling.querySelector('p').textContent; syncPrompt(); showInput(); };
   prompt.oninput = syncPrompt;
   prompt.addEventListener('focus', dismissGuide);
   prompt.addEventListener('pointerdown', dismissGuide);
@@ -345,7 +416,7 @@
     if (event.key === 'Escape') dismissGuide();
   });
   composer.onsubmit = event => { event.preventDefault(); generate(); };
-  retry.onclick = generate;
+  retry.onclick = () => generate(false, true);
   edit.onclick = showInput;
   byId('books').onsubmit = event => {
     event.preventDefault();
@@ -365,6 +436,7 @@
   function syncLocation() {
     const reviewState = location.hash.slice(1);
     if (['running','ready','failed'].includes(reviewState)) return review(reviewState);
+    if (location.hash === '#generation-history') return show('history');
     if (location.hash === '#my-tools') {
       show('old', { focusHeading:false });
       return;
@@ -394,8 +466,8 @@
         taskTitle = saved.title;
         byId('outcome').value = saved.outcome;
         syncPrompt();
-        if (saved.mode === 'running') generate(true);
-        else stage(saved.mode);
+        if (saved.mode === 'running') generate(true, saved.keepOldPreview === true);
+        else stage(saved.mode, 2);
       }
     } catch {}
   }

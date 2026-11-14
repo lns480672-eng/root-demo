@@ -10,6 +10,7 @@ import unicodedata
 
 from accounts import ApiError
 import staged_blueprint as blueprint
+import generation_settings
 import staged_program
 import staged_website
 import staged_record_code
@@ -50,8 +51,8 @@ STRUCTURED_REVISION_PLAN_SYSTEM = """根据用户原话和当前工具结构提�
 台账可用 {"kind":"remove_csv"} 或 {"kind":"ledger_filter","field":"已有字段 ID","mode":"exact|search|date"}。
 用户明确要求保留、不要添加、或不希望修改的能力不可改。不能删字段、改类型、写记录、执行 SQL 或修改权限。"""
 
-MAX_LEGACY_HTML = 24 * 1024
-MAX_BASE_BYTES = 40 * 1024
+MAX_LEGACY_HTML = generation_settings.MAXIMUMS.sourceBytes + 64 * 1024
+MAX_BASE_BYTES = generation_settings.MAX_CONTEXT_BYTES
 MAX_CODE_EDITS = 12
 MAX_EDIT_FRAGMENT_CHARS = 400
 MAX_EDIT_TOTAL_CHARS = 6400
@@ -202,7 +203,7 @@ def prepare(prior_artifacts, legacy_html=None):
             for stage in plan[:-1]:
                 payload = prior_artifacts[stage + ".json"]
                 blueprint.validate(stage, payload, prior_artifacts)
-                limit = staged_program.MAX_ARTIFACT_BYTES if stage == "implementation" else blueprint.MAX_ARTIFACT_BYTES
+                limit = staged_program.MAX_ARTIFACT_BYTES if stage in ("implementation", "spec") else blueprint.MAX_ARTIFACT_BYTES
                 source[stage] = blueprint.read_artifact(payload, limit=limit)
             kind = "record_code" if staged_record_code.matches(source["spec"]) else source["spec"].get("kind", "ledger")
         keys = storage_keys(source["implementation"]["script"]) if kind == "program" else []
@@ -233,7 +234,7 @@ def prepare_table(entries, *, prior_artifacts=None, html=None):
         spec = {"kind": "table", **configuration}
     else:
         blueprint.require(set(prior_artifacts) == {"spec.json", "app.html"}, "bad_table_artifacts")
-        spec = blueprint.read_artifact(prior_artifacts["spec.json"])
+        spec = blueprint.read_spec(prior_artifacts["spec.json"])
         blueprint.require(spec.get("kind") == "table", "bad_table_source_kind")
     blueprint.validate_spec(spec)
     blueprint.require(all(index < len(columns) for index in spec["filters"]), "bad_table_column")
@@ -545,6 +546,11 @@ def _check_plan(payload, base, requirement, *, model_response=False):
         blueprint.validate("spec", artifacts["spec"], {})
         blueprint.validate("implementation", artifacts["implementation"], {"spec.json": artifacts["spec"]})
         return plan
+    if status == "proposed" and base["kind"] == "table" and plan.keys() == {"status", "style"}:
+        staged_program.validate_style(plan["style"])
+        if plan["style"] == base["source"]["spec"].get("style", ""):
+            raise _no_change()
+        return plan
     if status == "proposed" and plan.keys() == {"status", "operation"} and base["kind"] in ("ledger", "table"):
         operation = plan["operation"]
         if not isinstance(operation, dict):
@@ -659,10 +665,14 @@ def agent_artifacts(base, plan):
         raise _no_change()
     operation = plan.get("operation", {})
     retyped_field = operation.get("field") if operation.get("kind") == "change_type" else None
-    check_markup_bindings(original["markup"], implementation["markup"], retyped_field)
-    if (base["kind"] == "program" and source["spec"].get("storage") != "none"
-            and implementation["script"] != original["script"]):
-        raise ApiError(422, "revision_script_data", REVISION_GUIDANCE["revision_script_data"])
+    stateless_program = base["kind"] == "program" and source["spec"].get("storage") == "none"
+    if stateless_program:
+        if any(count > 1 for count in markup_bindings(implementation["markup"]).identifiers.values()):
+            raise RevisionPatchError("bindings_changed", part="markup")
+    else:
+        check_markup_bindings(original["markup"], implementation["markup"], retyped_field)
+        if base["kind"] == "program" and implementation["script"] != original["script"]:
+            raise ApiError(422, "revision_script_data", REVISION_GUIDANCE["revision_script_data"])
     return artifacts
 
 
@@ -670,6 +680,8 @@ def plan_artifacts(payload, base):
     plan = check_plan(payload, base)
     if plan["status"] != "proposed":
         raise ValueError("bad_revision_plan")
+    if "style" in plan:
+        return encode_source({"spec": {**base["source"]["spec"], "style":plan["style"]}})
     if "implementation" in plan:
         return agent_artifacts(base, plan)
     if "operation" in plan:
@@ -1133,6 +1145,8 @@ def local_revision(base, requirement):
 def describe(base, files, requirement, entries):
     if "revision-plan.json" in files:
         plan = check_plan(files["revision-plan.json"], base)
+        if "style" in plan:
+            return ["更新表格样式。", "保留现有字段、记录和操作。"]
         if "operation" in plan:
             if base["kind"] == "record_code":
                 operation = plan["operation"]
@@ -1169,6 +1183,9 @@ def describe(base, files, requirement, entries):
         if "implementation" in plan:
             original = base["source"]["implementation"]
             updated = plan["implementation"]
+            if (base["kind"] == "program" and base["source"]["spec"].get("storage") == "none" and entries
+                    and (updated["markup"] != original["markup"] or updated["script"] != original["script"])):
+                raise ApiError(409, "revision_script_data", REVISION_GUIDANCE["revision_script_data"])
             labels = {"markup": "页面内容", "style": "样式", "script": "交互脚本"}
             return [f"更新{label}。" for part, label in labels.items() if original.get(part) != updated.get(part)]
         changes = []
@@ -1185,7 +1202,7 @@ def describe(base, files, requirement, entries):
     if local:
         changes = [local[1]]
     else:
-        spec = blueprint.read_artifact(files["spec.json"])
+        spec = blueprint.read_spec(files["spec.json"])
         old = base["source"]["spec"]
         changes = []
         if spec["title"] != old["title"]:
@@ -1224,7 +1241,7 @@ def check(stage, payload, base, requirement="", *, previous=None):
             for name in blueprint.stage_plan(previous["spec.json"])[:-1]:
                 check(name, previous[name + ".json"], base, requirement)
         elif stage in source:
-            limit = staged_program.MAX_ARTIFACT_BYTES if stage == "implementation" else blueprint.MAX_ARTIFACT_BYTES
+            limit = staged_program.MAX_ARTIFACT_BYTES if stage in ("implementation", "spec") else blueprint.MAX_ARTIFACT_BYTES
             if blueprint.read_artifact(payload, limit=limit) != source[stage]:
                 raise _out_of_scope()
         return

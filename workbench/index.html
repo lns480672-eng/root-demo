@@ -84,14 +84,15 @@
         <div class="workspace-navigation">
           <nav aria-label="工作台栏目">
             <button id="new-tool" type="button">新建工具</button>
-            <button id="idea-entry" type="button">需求</button>
             <button id="library-entry" type="button" aria-controls="saved-tools" aria-expanded="false">我的工具</button>
+            <section class="tool-library" id="saved-tools" aria-labelledby="library-entry" hidden>
+              <p id="library-empty">成功生成的工具会显示在这里。</p>
+              <ul id="tool-list" aria-label="已保存的工具"></ul>
+            </section>
+            <button id="idea-entry" type="button">需求</button>
+            <button id="history-entry" class="navigation-footer" type="button" aria-controls="staged-history" hidden>生成历史</button>
           </nav>
         </div>
-        <section class="tool-library" id="saved-tools" aria-labelledby="library-entry" hidden>
-          <p id="library-empty">成功生成的工具会显示在这里。</p>
-          <ul id="tool-list" aria-label="已保存的工具"></ul>
-        </section>
       </aside>
       <section id="profile" aria-labelledby="profile-title" hidden>
         <h1 id="profile-title" tabindex="-1">个人中心</h1>
@@ -117,8 +118,8 @@
         <section aria-labelledby="profile-quota-title">
           <h2 id="profile-quota-title">个人额度</h2>
           <div class="profile-quotas">
-            <div class="profile-card">个人生成<strong id="profile-generation">—</strong><span>剩余次数 / 上限</span></div>
-            <div class="profile-card">需求梳理<strong id="profile-analysis">—</strong><span>剩余次数 / 上限</span></div>
+            <div class="profile-card">个人生成成功额度<strong id="profile-generation">—</strong><span>剩余次数 / 上限</span><span id="profile-generation-rule">新建成功保存或修改确认生效记 1 次。模型调用另计。</span></div>
+            <div class="profile-card">今日需求梳理额度<strong id="profile-analysis">—</strong><span>剩余次数 / 上限</span><span id="profile-analysis-rule">每轮首次取得可编辑草稿记 1 次。北京时间零点刷新今日额度。</span></div>
           </div>
         </section>
       </section>
@@ -132,6 +133,7 @@
             <ol id="tool-revision-log" aria-label="修改消息"></ol>
           </section>
           <section id="generation-result" class="generation-result" aria-labelledby="generation-saved" hidden>
+            <p class="system-status-label">系统提示</p>
             <p id="generation-saved" role="status">已保存</p>
             <details id="generation-original"><summary>查看原需求</summary><p></p></details>
             <button id="open-generated-tool" type="button" class="elys-primary">打开工具</button>
@@ -155,9 +157,8 @@
             <div class="elys-actions">
               <p id="error" class="elys-error" role="alert" hidden></p>
               <div id="requirement-examples" class="requirement-examples" role="group" aria-label="需求示例">
-                <button id="example-reading" type="button" data-example="做一个读书清单，可以添加书名、标记已读，刷新后保留记录。">试试读书清单</button>
-                <button id="example-split" type="button" data-example="做一个 AA 分账计算器，输入总金额和人数，算出每人应付多少。">试试 AA 分账</button>
-                <button id="example-board" type="button" data-example="做一个交付跟进板，记录事项、负责人和进度，可以按状态筛选，刷新后保留记录。">试试交付跟进板</button>
+                <button id="example-teapot-website" type="button" data-example="做一个茶壶品牌官网，包含首页、茶壶系列和制壶工艺三个页面。用暖米白底色、深茶褐文字和宽幅茶壶主视觉，首页展示主打茶壶，导航可以切换页面。">试试茶壶官网</button>
+                <button id="example-calculator" type="button" data-example="做一个简易计算器，输入两个数，进行四则运算。除数为 0 时提示不能除以 0。">试试简易计算器</button>
               </div>
               <button id="generate" class="elys-primary" type="submit" disabled>生成工具</button>
             </div>
@@ -170,13 +171,27 @@
           <section id="staged-panel" class="staged-panel" aria-labelledby="staged-title" hidden>
             <h3 id="staged-title">生成任务</h3>
             <details id="staged-original" hidden><summary>查看完整需求</summary><p></p></details>
-            <p id="staged-list-status" class="auth-muted" role="status"></p>
-            <ul id="staged-task-list" aria-label="尚可查看的生成任务"></ul>
             <div id="staged-detail" class="staged-detail" hidden>
-              <p id="staged-status" role="status"></p>
-              <ol id="staged-steps" aria-label="生成进度"></ol>
+              <div class="staged-status-heading">
+                <p id="staged-status" role="status" tabindex="-1"></p>
+                <span id="revision-waiting-dots" aria-hidden="true" hidden><i></i><i></i><i></i></span>
+              </div>
+              <div id="new-generation-stage-count" hidden>
+                <span id="new-generation-stage-meter" aria-hidden="true"></span>
+                <span id="new-generation-stage-number"></span>
+              </div>
+              <p id="staged-current-step" class="auth-muted" hidden></p>
+              <details id="staged-progress" open>
+                <summary id="staged-progress-summary" hidden>查看进度详情</summary>
+                <ol id="staged-steps" aria-label="生成进度"></ol>
+              </details>
               <p id="staged-reason" class="elys-error" role="status" hidden></p>
               <p id="staged-issue" class="auth-muted" hidden></p>
+              <p id="new-generation-failure-copy" class="auth-muted" hidden></p>
+              <details id="new-generation-failure" hidden>
+                <summary>查看失败详情</summary>
+                <p id="new-generation-failure-stage"></p>
+              </details>
             </div>
             <section id="revision-clarification" aria-labelledby="revision-question" hidden>
               <h3 id="revision-question"></h3>
@@ -203,10 +218,13 @@
               </div>
             </section>
             <div class="entry-actions">
+              <button id="new-generation-retry" class="elys-primary" type="button" hidden>重试</button>
+              <button id="new-generation-edit" type="button" hidden>编辑需求</button>
               <button id="staged-resume" type="button" hidden>恢复中断</button>
               <button id="staged-preview" type="button" hidden>检查预览</button>
               <button id="staged-sync" type="button" hidden>核对保存</button>
               <button id="staged-refresh" type="button" hidden>重新读取任务</button>
+              <button id="revision-restore-request" type="button" hidden>带回需求</button>
               <button id="revision-repair" type="button" hidden>让 AI 修</button>
               <button id="revision-supplement" type="button" hidden>补充要求</button>
               <p id="revision-trial-note" class="auth-muted" hidden>正在试用修复结果，试填数据不会保存。</p>
@@ -214,12 +232,6 @@
               <button id="revision-close-trial" type="button" hidden>返回当前版本</button>
               <button id="revision-abandon" type="button" hidden>放弃这次修改</button>
             </div>
-            <details id="staged-history">
-              <summary>生成历史</summary>
-              <p id="staged-history-status" class="auth-muted" role="status"></p>
-              <button id="staged-history-refresh" type="button" hidden>重新读取历史</button>
-              <ul id="staged-history-list" aria-label="失败或过期的生成任务"></ul>
-            </details>
           </section>
           <div id="loading" class="elys-loading" role="status" hidden>
             <p id="phase"></p>
@@ -235,6 +247,18 @@
       </section>
       <p id="entry-coachmark" class="entry-coachmark" role="status" hidden>点这里，写下你想做的工具</p>
       <section id="assistant-panel" hidden></section>
+      <section id="staged-history" aria-labelledby="staged-history-title" hidden>
+        <h2 id="staged-history-title" tabindex="-1">生成历史</h2>
+        <section aria-labelledby="staged-active-title">
+          <h3 id="staged-active-title">未完成的生成任务</h3>
+          <p id="staged-list-status" class="auth-muted" role="status"></p>
+          <ul id="staged-task-list" aria-label="尚可查看的生成任务"></ul>
+        </section>
+        <h3>失败或过期的任务</h3>
+        <p id="staged-history-status" class="auth-muted" role="status"></p>
+        <button id="staged-history-refresh" type="button" hidden>重新读取历史</button>
+        <ul id="staged-history-list" aria-label="失败或过期的生成任务"></ul>
+      </section>
       <section class="elys-preview" aria-labelledby="preview-title">
         <header class="elys-preview-header">
           <p class="auth-eyebrow" aria-hidden="true">工具预览</p>
@@ -252,6 +276,7 @@
             <p id="publish-explanation">应用发布暂未开放。你仍可在工作台使用和保存这个工具。</p>
           </div>
           <span id="candidate-badge" class="revision-candidate-badge" hidden>新版预览 · 尚未应用</span>
+          <button id="compare-revision" class="revision-candidate-badge" type="button" hidden>查看当前版本</button>
           <div id="revision-views" class="revision-views" role="group" aria-label="工具视图" hidden>
             <button id="preview-view" type="button" aria-pressed="true" aria-controls="preview"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s3.6-6 10-6 10 6 10 6-3.6 6-10 6-10-6-10-6Z"/><circle cx="12" cy="12" r="2.5"/></svg>预览</button>
             <button id="source-view" type="button" aria-pressed="false" aria-controls="source-panel"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 7-5 5 5 5m8-10 5 5-5 5m-3-12-2 14"/></svg>代码</button>

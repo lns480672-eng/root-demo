@@ -92,6 +92,12 @@
   .admin-layout { display: grid; grid-template-columns: 194px minmax(0, 1fr); margin-top: 14px; }
   .admin-nav { padding: 21px 14px; background: var(--soft); border-right: 1px solid var(--line); border-radius: 20px 0 0 20px; }
   .nav-title { padding: 0 10px 9px; color: var(--muted); font-size: 13px; }
+  .admin-accounts { margin-top: 14px; padding-top: 10px; border-top: 1px solid var(--line); }
+  .password-form { display: grid; gap: 16px; max-width: 420px; padding-top: 20px; border-top: 1px solid var(--line); }
+  .password-field { display: grid; gap: 6px; min-width: 0; }
+  .password-field input { width: 100%; min-width: 0; }
+  .password-form button { justify-self: start; }
+  .password-form .notice:empty { display: none; }
   .admin-nav a {
     display: flex; align-items: center; justify-content: space-between; gap: 7px;
     min-height: 44px; padding: 8px 10px; margin: 4px 0; border-radius: 9px;
@@ -250,7 +256,10 @@
       <p class="nav-title">管理模块</p>
       <a id="trial-nav" href="#manage">用量与额度</a>
       <a id="invite-nav" href="#invites">邀请码管理</a>
-      <a id="account-nav" href="#accounts">账号管理 <span class="locked-label">已锁定</span></a>
+      <a id="security-nav" href="#security">密码修改</a>
+      <div class="admin-accounts">
+        <a id="account-nav" href="#accounts">用户管理 <span class="locked-label">暂未开放</span></a>
+      </div>
     </nav>
     <div class="admin-content">
       <section id="admin" aria-labelledby="trial-title" hidden>
@@ -335,16 +344,35 @@
       </section>
       <section id="account-preview" aria-labelledby="account-module" hidden>
         <div class="intro">
-          <h1 id="account-module">账号管理</h1>
-          <p><strong>暂未开放</strong>。以下用示例账号展示重置密码和删除账号的位置。</p>
+          <h1 id="account-module">用户管理</h1>
+          <p>工作台用户账号删除功能暂未开放。</p>
         </div>
         <div class="account-example">
           <p><span class="muted meta">示例账号</span> <strong>reviewer-01</strong></p>
           <div class="actions">
-            <button type="button" disabled>重置密码</button>
             <button type="button" disabled>删除账号</button>
           </div>
         </div>
+      </section>
+      <section id="security-preview" aria-labelledby="security-title" hidden>
+        <div class="intro">
+          <h1 id="security-title">密码修改</h1>
+          <p>修改当前管理员账号的登录密码，保存后需要重新登录。</p>
+        </div>
+        <form class="password-form" id="password-preview-form" method="post">
+          <label class="password-field">当前密码
+            <input name="current-password" type="password" autocomplete="current-password" maxlength="128" required>
+          </label>
+          <label class="password-field">新密码
+            <input name="new-password" type="password" autocomplete="new-password" minlength="15" maxlength="128" aria-describedby="password-length" required>
+            <span class="muted meta" id="password-length">15–128 个字符</span>
+          </label>
+          <label class="password-field">确认新密码
+            <input name="confirmation" type="password" autocomplete="new-password" minlength="15" maxlength="128" required>
+          </label>
+          <p class="notice" id="password-preview-feedback" role="status"></p>
+          <button class="primary" type="submit">保存新密码</button>
+        </form>
       </section>
     </div>
   </main>
@@ -550,6 +578,22 @@
     }
   });
 
+  const passwordForm = get('password-preview-form');
+  const passwordFeedback = get('password-preview-feedback');
+  passwordForm.addEventListener('submit', event => {
+    event.preventDefault();
+    const data = new FormData(passwordForm);
+    if (data.get('new-password') !== data.get('confirmation')) {
+      passwordFeedback.dataset.error = 'true';
+      passwordFeedback.textContent = '两次输入的新密码不一致。';
+      passwordForm.elements.namedItem('confirmation').focus();
+      return;
+    }
+    passwordForm.reset();
+    passwordFeedback.dataset.error = 'false';
+    passwordFeedback.textContent = '演示提交成功。实际修改后需要重新登录。';
+  });
+
   function renderView() {
     if (location.hash === '#access-denied') role.value = 'member';
     const admin = role.value === 'admin';
@@ -557,12 +601,18 @@
     const showBackend = admin && !workbench;
     const showAccounts = showBackend && location.hash === '#accounts';
     const showInvites = showBackend && location.hash === '#invites';
-    const showUsage = showBackend && !showAccounts && !showInvites;
+    const showSecurity = showBackend && location.hash === '#security';
+    const showUsage = showBackend && !showAccounts && !showInvites && !showSecurity;
     closeEditor?.();
     if (confirm.open) confirm.close('cancel');
     get('admin').hidden = !showUsage;
     get('backend').hidden = !showBackend;
     get('account-preview').hidden = !showAccounts;
+    get('security-preview').hidden = !showSecurity;
+    if (!showSecurity) {
+      passwordForm.reset();
+      passwordFeedback.textContent = '';
+    }
     get('invite-preview').hidden = !showInvites;
     if (!showInvites) {
       get('invite-result').hidden = true;
@@ -572,6 +622,7 @@
     get('trial-nav').setAttribute('aria-current', showUsage ? 'page' : 'false');
     get('invite-nav').setAttribute('aria-current', showInvites ? 'page' : 'false');
     get('account-nav').setAttribute('aria-current', showAccounts ? 'page' : 'false');
+    get('security-nav').setAttribute('aria-current', showSecurity ? 'page' : 'false');
     get('workbench').hidden = !workbench;
     get('denied').hidden = admin || workbench;
     get('admin-entry').hidden = !admin || !workbench;

@@ -7,6 +7,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 
 const chromePath = process.argv[2];
 const profile = process.argv[3];
+const maxMessageSize = Number(process.argv[4] || 2 * 1024 * 1024);
 const input = [];
 for await (const part of process.stdin) input.push(part);
 const { html, entries, backup, limit, website, recordField, recordVisibility } = JSON.parse(Buffer.concat(input).toString());
@@ -160,7 +161,7 @@ function receive(message) {
 let buffer = '';
 reply.setEncoding('utf8');
 reply.on('data', chunk => {
-  if (buffer.length + chunk.length > 2 * 1024 * 1024) {
+  if (buffer.length + chunk.length > maxMessageSize) {
     failure ||= 'isolation_event';
     close();
     reply.destroy();

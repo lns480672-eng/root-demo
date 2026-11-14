@@ -8,6 +8,9 @@ const generate = byId('generate');
 const preview = byId('preview');
 const workspace = byId('workspace');
 const composer = form.closest('section');
+const revisionDialog = byId('tool-revision-dialog');
+const stagedPanel = byId('staged-panel');
+const stagedPanelNext = stagedPanel.nextElementSibling;
 const library = byId('saved-tools');
 const previewSection = preview.closest('section');
 const standaloneBack = byId('standalone-back');
@@ -19,7 +22,7 @@ function toolIdFromLocation() {
 const standaloneToolId = toolIdFromLocation();
 const standalone = standaloneToolId !== null;
 const coachmark = byId('entry-coachmark');
-const primaryNavigation = ['new-tool', 'idea-entry', 'library-entry'];
+const primaryNavigation = ['new-tool', 'library-entry', 'idea-entry', 'history-entry'];
 requirement.closest('.elys-requirement').append(coachmark);
 const toolHistory = byId('tool-version-panel');
 const restoreDialog = byId('restore-version-dialog');
@@ -59,7 +62,7 @@ const stagedStepLabels = {
   filters: '设计筛选', summary: '设计统计', export: '设计导出', assemble: '组装工具',
 };
 const stagedStates = {
-  queued: '等待生成', running: '正在生成工具', failed: '阶段未完成', interrupted: '生成已中断',
+  queued: '等待执行', running: '正在生成工具', failed: '阶段未完成', interrupted: '生成已中断',
   complete: '等待检查预览', published: '已保存', expired: '已过期', exhausted: '已达调用上限',
   clarifying: '等待补充说明', unsupported: '暂不支持此需求', cancelled: '已取消修改',
 };
@@ -89,6 +92,7 @@ let toolRevisionStatus = '';
 let selectedStagedId = null;
 let stagedAutoId = null;
 let foregroundGeneration = null;
+let keepPreviousPreviewOnRetry = false;
 let animateSavedResult = false;
 let stagedRead = 0;
 let stagedTimer = null;
@@ -100,6 +104,7 @@ let stagedPendingNonce = null;
 let stagedSubmission = null;
 let pendingRevision = null;
 let revisionInspection = null;
+let showingCurrentRevision = false;
 let revisionView = 'preview';
 let sourceRequest = 0;
 let sourceKey = '';
@@ -144,21 +149,28 @@ function render() {
   byId('generation-scope').hidden = !stagedEnabled || editing || tableMode;
   generationCategory.disabled = blocked;
   const assistantOpen = !byId('assistant-panel').hidden;
+  const showingHistory = stagedEnabled && !standalone && workspace.dataset.mode === 'history';
+  byId('history-entry').hidden = !stagedEnabled;
+  byId('staged-history').hidden = !showingHistory;
   const browsing = !standalone && !assistantOpen && (workspace.dataset.mode === 'browse' || editing);
   library.hidden = !browsing;
   byId('library-entry').setAttribute('aria-expanded', String(browsing));
-  markNavigation(profileRoute() ? null : assistantOpen ? 'idea-entry' : browsing ? 'library-entry' : 'new-tool');
+  markNavigation(profileRoute() ? null : assistantOpen ? 'idea-entry' : showingHistory ? 'history-entry' : browsing ? 'library-entry' : 'new-tool');
   for (const id of primaryNavigation) byId(id).disabled = blocked || (starting && id === 'library-entry');
   byId('new-tool-options').hidden = !atStart && !tableMode;
   const composingNewTool = !assistantOpen && !editing && workspace.dataset.mode === 'compose';
   const runningNewTool = composingNewTool && !tableMode && (phase === 'model' || isRunningStagedTask(stagedTask));
-  const failedNewTool = Boolean(failure) || stagedTask?.state === 'failed';
+  const generationFailed = stagedEnabled && composingNewTool && !tableMode && !blocked &&
+    !stagedLoadError && ['failed', 'unsupported', 'expired', 'exhausted'].includes(stagedTask?.state);
+  const failedNewTool = Boolean(failure) || generationFailed;
   const showGenerationPreview = composingNewTool &&
     (pending || Boolean(stagedActivity) || Boolean(stagedTask) || failedNewTool);
+  const waitingForNewTool = !tableMode && !failedNewTool && !stagedLoadError && !keepPreviousPreviewOnRetry &&
+    (runningNewTool || phase === 'preview' || stagedTask?.state === 'complete');
   const awaitingNewPreview = showGenerationPreview && !syncing && !stagedPendingId &&
-    (!failedNewTool || !showingTool);
-  previewSection.hidden = !standalone && !browsing && !editing && !syncing && !stagedPendingId &&
-    !showingResult && !showGenerationPreview;
+    (!showingTool || waitingForNewTool);
+  previewSection.hidden = assistantOpen || (!standalone && !browsing && !editing && !syncing && !stagedPendingId &&
+    !showingResult && !showGenerationPreview);
   const result = byId('generation-result');
   result.hidden = !showingResult || blocked || Boolean(failure);
   if (animateSavedResult && !result.hidden) {
@@ -170,7 +182,7 @@ function render() {
     }
   }
   const returnToLibrary = byId('return-to-library');
-  returnToLibrary.hidden = !active || showingResult;
+  returnToLibrary.hidden = !active || showingResult || editing && stagedEnabled;
   returnToLibrary.disabled = blocked;
   let currentTitle = '工具预览';
   for (const button of byId('tool-list').querySelectorAll('button')) {
@@ -208,7 +220,7 @@ function render() {
     : pending ? '正在核对新工具是否已保存。' : '暂时无法确认新工具是否已保存，请先点击「同步工具」。';
   byId('requirement-examples').hidden = !atStart || editing || blocked || Boolean(failure);
   byId('error').textContent = failure;
-  byId('error').hidden = !failure;
+  byId('error').hidden = !failure || editing && stagedEnabled;
   byId('admin-entry').hidden = !session || !trial?.admin;
   const balance = byId('generation-balance');
   const restriction = currentGenerationRestriction();
@@ -220,8 +232,8 @@ function render() {
   const generationBlock = byId('generation-block');
   generationBlock.hidden = showingResult || tableMode || !restriction;
   generationBlock.textContent = restriction?.label || '';
-  byId('generation-retry-note').hidden = tableMode || !failure;
-  byId('loading').hidden = syncing || !pending || Boolean(stagedActivity);
+  byId('generation-retry-note').hidden = tableMode || !failure || editing && stagedEnabled;
+  byId('loading').hidden = syncing || !pending || Boolean(stagedActivity) || stagedEnabled && (editing || runningNewTool);
   byId('phase').textContent = {
     model: '正在等待 DeepSeek 响应',
     preview: '正在准备预览',
@@ -239,7 +251,7 @@ function render() {
   status.textContent = standalone && !active ? (starting ? '正在打开工具…' : '工具不可用')
     : stagedEditsPaused ? '待核对保存 · 暂停编辑'
     : pausingEdits ? '待同步 · 暂停编辑' : awaitingNewPreview ? (failedNewTool ? '生成未完成' : '等待预览') : active
-    ? pending || failedNewTool || syncing ? '上次工具仍可用' : tableMode ? '上次工具 · 可用' : restored ? '已恢复' : '已就绪'
+    ? pending || runningNewTool || failedNewTool || syncing ? '上次工具仍可用' : tableMode ? '上次工具 · 可用' : restored ? '已恢复' : '已就绪'
     : syncing ? '新工具待同步' : pending ? '等待预览' : '待生成';
   byId('empty').hidden = standalone || syncing || (showingTool && !awaitingNewPreview);
   byId('empty-title').textContent = awaitingNewPreview && !failedNewTool ? '正在准备预览' : '还没有生成工具';
@@ -247,10 +259,10 @@ function render() {
     ? '生成完成后可在这里试用。' : '输入需求后，工具会在这里出现。';
   byId('table-panel').hidden = !tableMode;
   byId('table-panel').inert = syncing;
-  form.hidden = tableMode || showingResult || runningNewTool;
+  form.hidden = tableMode || showingResult || runningNewTool || generationFailed;
   byId('table-entry').setAttribute('aria-pressed', String(tableMode));
   byId('table-entry').disabled = byId('assistant-entry').disabled = blocked;
-  renderStagedTasks(blocked, restriction);
+  renderStagedTasks(blocked, restriction, {runningNewTool, generationFailed});
 }
 
 async function api(path, options) {
@@ -344,6 +356,7 @@ function rememberRunningGeneration(id) {
 }
 
 function clearStagedSelection() {
+  keepPreviousPreviewOnRetry = false;
   rememberRunningGeneration(null);
   closeRepairTrial();
   closeRevisionInspection();
@@ -377,34 +390,39 @@ function revisionMessage(role, text) {
   message.dataset.role = role;
   const author = document.createElement('div');
   author.className = 'revision-author';
-  if (role === 'assistant') {
+  if (role !== 'system') {
+    const name = role === 'user' ? profile?.nickname ?? session.user : '小 R';
     const avatar = document.createElement('span');
     avatar.className = 'revision-avatar';
     avatar.setAttribute('aria-hidden', 'true');
-    avatar.textContent = 'R';
-    author.append(avatar, '小 R');
+    avatar.textContent = role === 'user' ? Array.from(name)[0]?.toUpperCase() || 'U' : 'R';
+    const label = document.createElement('span');
+    label.className = 'revision-name';
+    label.textContent = name;
+    author.append(avatar, label);
   } else {
-    author.textContent = role === 'user' ? profile?.nickname ?? session.user : '系统提示';
+    author.textContent = '系统提示';
   }
   const body = document.createElement('p');
+  body.className = 'revision-message-body';
   body.textContent = text;
   message.append(author, body);
   return message;
 }
 
-function renderToolRevisionLog(restriction, canAct) {
-  const dialog = byId('tool-revision-dialog');
-  dialog.hidden = !editing || !stagedEnabled || !active;
-  if (dialog.hidden) return;
+function renderToolRevisionLog(restriction, canAct, statusVisible) {
   byId('tool-revision-status').textContent = toolRevisionStatus;
   const list = byId('tool-revision-log');
-  const signature = JSON.stringify([toolRevisionTasks, selectedStagedId, restriction, canAct, stagedPendingId, profile?.nickname ?? session.user]);
+  const submitting = phase === 'model' && !selectedStagedTask() && requirement.value.trim();
+  const signature = JSON.stringify([toolRevisionTasks, selectedStagedId, restriction, canAct, stagedPendingId,
+    profile?.nickname ?? session.user, statusVisible, submitting]);
   if (list.dataset.signature === signature) return;
   list.dataset.signature = signature;
   const focusedTask = document.activeElement?.dataset.revisionTask;
   const focusedRestore = document.activeElement?.dataset.bringBackRevision;
-  list.replaceChildren(...toolRevisionTasks.map(task => {
+  const rows = toolRevisionTasks.map(task => {
     const row = document.createElement('li');
+    row.dataset.task = task.id;
     row.append(revisionMessage('user', task.requirement));
     for (const { question, answer } of task.clarification?.answers || []) {
       row.append(revisionMessage('assistant', question));
@@ -414,27 +432,46 @@ function renderToolRevisionLog(restriction, canAct) {
       row.append(revisionMessage('system', stagedReason({state:'failed', reason:repair.reason}, restriction)));
       row.append(revisionMessage('user', repair.supplement ? '补充要求 · ' + repair.supplement : '让 AI 修'));
     }
-    const status = task.state === 'published' ? '已应用' : stagedStatus(task, restriction);
-    row.append(revisionMessage('system', [status, stagedReason(task, restriction)].filter(Boolean).join('。')));
-    if (!['published', 'cancelled'].includes(task.state)) {
+    const selected = statusVisible && task.id === selectedStagedId;
+    let note;
+    if (!selected) {
+      const status = revisionStatus(task, restriction);
+      note = revisionMessage('system', status);
+      note.dataset.tone = task.state === 'failed' ? 'failed' : task.state === 'clarifying' ? 'question' : '';
+      const reason = stagedReason(task, restriction);
+      if (reason) {
+        const explanation = document.createElement('p');
+        explanation.className = 'revision-message-reason';
+        explanation.textContent = reason;
+        note.append(explanation);
+      }
+      row.append(note);
+    }
+    if (!selected && !['published', 'cancelled'].includes(task.state)) {
       const button = document.createElement('button');
       button.type = 'button';
       button.dataset.revisionTask = task.id;
       button.textContent = '查看这次修改';
       button.disabled = !canAct;
       button.setAttribute('aria-current', String(task.id === selectedStagedId));
-      row.append(button);
+      note.append(button);
     }
-    if (['failed', 'expired', 'exhausted', 'unsupported'].includes(task.state)) {
+    if (!selected && ['failed', 'expired', 'exhausted', 'unsupported'].includes(task.state)) {
       const restore = document.createElement('button');
       restore.type = 'button';
       restore.dataset.bringBackRevision = task.id;
       restore.textContent = '带回需求';
       restore.disabled = !canAct || Boolean(stagedPendingId);
-      row.append(restore);
+      note.append(restore);
     }
     return row;
-  }));
+  });
+  if (submitting) {
+    const row = document.createElement('li');
+    row.append(revisionMessage('user', submitting));
+    rows.push(row);
+  }
+  list.replaceChildren(...rows);
   if (canAct && (focusedTask || focusedRestore)) {
     [...list.querySelectorAll('button')].find(button => focusedRestore
       ? button.dataset.bringBackRevision === focusedRestore
@@ -459,6 +496,22 @@ async function loadToolRevisionLog(id) {
   render();
 }
 
+function restoreRevisionRequirement(task) {
+  if (stagedPendingId || pendingPublication || !networkIsolated) return;
+  clearStagedSelection();
+  stagedSubmission = null;
+  requirement.value = task.requirement;
+  failure = '';
+  setRevisionView('preview');
+  requirement.focus();
+  render();
+}
+
+byId('revision-restore-request').addEventListener('click', () => {
+  const task = selectedStagedTask();
+  if (editing && task?.baseToolId === active?.id && phase === 'idle') restoreRevisionRequirement(task);
+});
+
 byId('tool-revision-log').addEventListener('click', event => {
   const button = event.target.closest('button');
   const restoreId = button?.dataset.bringBackRevision;
@@ -466,14 +519,7 @@ byId('tool-revision-log').addEventListener('click', event => {
   const task = toolRevisionTasks.find(item => item.id === id);
   if (!task || !editing || active?.id !== task.baseToolId || phase !== 'idle') return;
   if (restoreId) {
-    if (stagedPendingId || pendingPublication || !networkIsolated) return;
-    clearStagedSelection();
-    stagedSubmission = null;
-    requirement.value = task.requirement;
-    failure = '';
-    setRevisionView('preview');
-    requirement.focus();
-    render();
+    restoreRevisionRequirement(task);
     return;
   }
   clearStagedSelection();
@@ -484,6 +530,7 @@ byId('tool-revision-log').addEventListener('click', event => {
     scheduleStagedRefresh();
   }
   render();
+  byId('staged-status').focus({preventScroll:true});
 });
 
 function stagedStatus(task, restriction) {
@@ -495,6 +542,15 @@ function stagedStatus(task, restriction) {
     if (previous) return trial ? '上次生成被限制' : previous.label;
   }
   return stagedStates[task.state] || '';
+}
+
+function revisionStatus(task, restriction) {
+  if (!task) return '';
+  if (task.resumable && (restriction || generationRestrictions.has(task.reason))) return stagedStatus(task, restriction);
+  return {
+    queued: '正在修改', running: '正在修改', clarifying: '需要补充', complete: '方案已就绪',
+    interrupted: '连接中断', failed: '修改失败', published: '已应用',
+  }[task.state] || stagedStatus(task, restriction);
 }
 
 function stagedReason(task, restriction) {
@@ -597,21 +653,9 @@ function renderRevisionQuestion(task, canAct) {
   byId('revision-question-cancel').disabled = !canAct;
 }
 
-function renderStagedTasks(blocked, restriction) {
-  const panel = byId('staged-panel');
-  const task = selectedStagedTask();
-  panel.hidden = !session || !stagedEnabled || workspace.dataset.mode === 'result';
-  if (panel.hidden) {
-    byId('tool-revision-dialog').hidden = true;
-    return;
-  }
-  const canAct = phase === 'idle' && networkIsolated && !pendingPublication;
-  renderToolRevisionLog(restriction, canAct);
-  byId('staged-history').hidden = editing;
+function renderActiveGenerationList(blocked, restriction) {
   const list = byId('staged-task-list');
-  list.hidden = editing;
-  byId('staged-list-status').hidden = editing && !stagedLoadError;
-  const activeTasks = stagedTasks.filter(isActiveStagedTask);
+  const activeTasks = stagedTasks.filter(item => !item.baseToolId && isActiveStagedTask(item));
   const signature = JSON.stringify(activeTasks.map(item => [item.id, stagedTaskTitle(item), stagedStatus(item, restriction)]));
   if (list.dataset.signature !== signature) {
     list.dataset.signature = signature;
@@ -637,43 +681,131 @@ function renderStagedTasks(blocked, restriction) {
   }
   byId('staged-list-status').textContent = stagedLoadError ||
     (activeTasks.length || stagedPendingId ? '' : '暂无未完成任务。');
+}
+
+function renderStagedTasks(blocked, restriction, {runningNewTool, generationFailed}) {
+  const panel = stagedPanel;
+  const task = selectedStagedTask();
+  const mode = workspace.dataset.mode;
+  if (mode === 'history') {
+    renderActiveGenerationList(blocked, restriction);
+    renderStagedHistory(blocked);
+  }
+  const enabled = session && stagedEnabled && mode !== 'result' && mode !== 'history';
+  const inRevision = enabled && editing && active && byId('assistant-panel').hidden;
+  revisionDialog.hidden = !inRevision;
+  if (!inRevision && panel.parentElement !== composer) {
+    composer.insertBefore(panel, stagedPanelNext);
+    revisionDialog.scrollTop = 0;
+  }
+  const submitting = inRevision && phase === 'model';
+  const revisionActivity = stagedPendingId || stagedActivity || stagedMessage || stagedLoadError || submitting || failure;
+  panel.hidden = !enabled || Boolean(inRevision && !task && !revisionActivity) ||
+    (mode === 'start' && !task && !stagedPendingId && !stagedActivity && !stagedMessage);
+  const canAct = phase === 'idle' && networkIsolated && !pendingPublication;
+  const focusedAction = inRevision && panel.contains(document.activeElement) ? document.activeElement : null;
+  if (inRevision) {
+    renderToolRevisionLog(restriction, canAct, !panel.hidden);
+    const rows = byId('tool-revision-log').children;
+    const row = task && [...rows].find(item => item.dataset.task === task.id);
+    const target = row || (submitting ? rows[rows.length - 1] : null) || revisionDialog;
+    if (panel.parentElement !== target) target.append(panel);
+  }
+  if (panel.hidden) return;
+  const inNewGeneration = !editing && mode === 'compose';
+  const systemCard = inRevision || inNewGeneration;
+  byId('staged-title').textContent = systemCard ? '系统提示' : '生成任务';
+  panel.classList.toggle('new-generation-status', inNewGeneration);
+  panel.classList.toggle('revision-message', Boolean(inRevision));
+  panel.dataset.role = inRevision ? 'system' : '';
+  byId('revision-restore-request').hidden = !inRevision || !['failed', 'expired', 'exhausted', 'unsupported'].includes(task?.state);
+  byId('revision-restore-request').disabled = !canAct;
   const quotaBlocked = Boolean(restriction);
   byId('staged-refresh').hidden = !stagedLoadError && !(isActiveStagedTask(task) && task.resumable && quotaBlocked);
   byId('staged-refresh').disabled = phase !== 'idle';
-  byId('staged-detail').hidden = !task && !stagedPendingId && !stagedActivity && !stagedMessage;
+  byId('staged-detail').hidden = !inRevision && !runningNewTool && !task && !stagedPendingId && !stagedActivity && !stagedMessage;
   const original = byId('staged-original');
   const originalText = task?.requirement || (!editing && phase === 'model' ? requirement.value.trim() : '');
-  original.hidden = !originalText;
+  original.hidden = inRevision || !originalText;
   if (original.lastElementChild.textContent !== originalText) {
     original.open = false;
     original.lastElementChild.textContent = originalText;
   }
   const status = byId('staged-status');
-  const statusText = stagedActivity || (stagedPendingId ? '保存结果待核对' : stagedStatus(task, restriction));
+  const taskStatus = inRevision ? revisionStatus(task, restriction) : stagedStatus(task, restriction);
+  const statusText = stagedActivity || (stagedPendingId ? '保存结果待核对' :
+    inNewGeneration && stagedLoadError ? '任务状态待读取' :
+    inNewGeneration && task?.state === 'interrupted' ? '连接中断' :
+    generationFailed ? '生成未完成' :
+    runningNewTool && !task ? '正在提交生成任务' :
+    submitting ? '正在修改' : inRevision && failure ? '修改失败' : taskStatus);
   if (status.textContent !== statusText) status.textContent = statusText;
+  byId('revision-waiting-dots').hidden = !inRevision || stagedPendingId || pendingPublication ||
+    Boolean(stagedLoadError || failure || stagedActivity) || !(submitting || isRunningStagedTask(task));
+  panel.dataset.tone = generationFailed || inRevision && (task?.state === 'failed' || failure) ? 'failed' :
+    inRevision && task?.state === 'clarifying' ? 'question' : '';
   const steps = byId('staged-steps');
+  const progressDetails = byId('staged-progress');
+  const progressSummary = byId('staged-progress-summary');
+  progressSummary.hidden = !systemCard;
+  const stepLabel = byId('staged-current-step');
   const completed = task?.completed || [];
   const stage = task?.stage || (task?.state === 'queued' ? 'spec' : null);
   const plan = task ? (task.steps?.length ? task.steps : [...new Set([...completed, stage].filter(Boolean))]) : [];
-  const progress = JSON.stringify([plan, completed, stage]);
+  progressDetails.hidden = !plan.length || generationFailed;
+  const knownStage = stage && Object.hasOwn(stagedStepLabels, stage) ? stagedStepLabels[stage] : '';
+  stepLabel.textContent = (inRevision || runningNewTool && !stagedLoadError) ? knownStage : '';
+  const stageNumber = plan.indexOf(stage) + 1;
+  const showStageNumber = runningNewTool && !stagedLoadError && stageNumber > 0;
+  byId('new-generation-stage-count').hidden = !showStageNumber;
+  byId('new-generation-stage-number').textContent = showStageNumber ? stageNumber + ' / ' + plan.length : '';
+  const detailKey = JSON.stringify([task?.id, generationFailed, inNewGeneration]);
+  if (panel.dataset.detailKey !== detailKey) {
+    progressDetails.open = !systemCard;
+    byId('new-generation-failure').open = false;
+    panel.dataset.detailKey = detailKey;
+  }
+  stepLabel.hidden = !stepLabel.textContent;
+  const progress = JSON.stringify([plan, completed, stage, inNewGeneration]);
   if (steps.dataset.progress !== progress) {
     steps.dataset.progress = progress;
+    byId('new-generation-stage-meter').replaceChildren(...plan.map((name, index) => {
+      const segment = document.createElement('i');
+      segment.dataset.state = index + 1 < stageNumber ? 'done' : index + 1 === stageNumber ? 'active' : 'waiting';
+      return segment;
+    }));
     steps.replaceChildren(...plan.map((name, index) => {
       const step = document.createElement('li');
       const done = completed.includes(name);
       step.dataset.stage = name;
       step.toggleAttribute('data-completed', done);
       const label = Object.hasOwn(stagedStepLabels, name) ? stagedStepLabels[name] : '处理步骤 ' + (index + 1);
-      step.textContent = label + (done ? '（已完成）' : '');
+      step.textContent = label + (done ? '（已完成）' : inNewGeneration ? name === stage ? '（进行中）' : '（等待中）' : '');
       if (name === stage) step.setAttribute('aria-current', 'step');
       return step;
     }));
   }
-  const reason = stagedMessage || stagedReason(task, restriction);
+  const reason = stagedMessage || (inRevision && failure) || (inNewGeneration && stagedLoadError) || stagedReason(task, restriction);
   const reasonNode = byId('staged-reason');
   reasonNode.hidden = !reason;
   reasonNode.textContent = reason;
   const issue = byId('staged-issue');
+  const failureDetails = byId('new-generation-failure');
+  failureDetails.hidden = !generationFailed || !(knownStage || reason || task?.issue);
+  const failureStage = byId('new-generation-failure-stage');
+  failureStage.hidden = !(generationFailed && knownStage);
+  failureStage.textContent = failureStage.hidden ? '' : '未完成阶段 · ' + knownStage;
+  if (generationFailed && reasonNode.parentElement !== failureDetails) failureDetails.append(reasonNode, issue);
+  if (!generationFailed && reasonNode.parentElement === failureDetails) failureDetails.before(reasonNode, issue);
+  const failureCopy = byId('new-generation-failure-copy');
+  failureCopy.hidden = !generationFailed;
+  failureCopy.textContent = generationFailed
+    ? (active ? '上次工具仍可使用，生成失败不扣个人次数。' : '需求已保留，生成失败不扣个人次数。') : '';
+  for (const id of ['new-generation-retry', 'new-generation-edit']) {
+    byId(id).hidden = !generationFailed;
+    byId(id).disabled = !canAct;
+  }
+  byId('new-generation-retry').disabled ||= generate.disabled || quotaBlocked;
   issue.hidden = !task?.issue || generationRestrictions.has(task.reason) || Boolean(task.resumable && restriction);
   issue.textContent = issue.hidden ? '' : '问题编号 ' + task.issue;
   const resume = byId('staged-resume');
@@ -721,7 +853,21 @@ function renderStagedTasks(blocked, restriction) {
   const sync = byId('staged-sync');
   sync.hidden = !stagedPendingId;
   sync.disabled = !canAct;
-  renderStagedHistory(blocked);
+  if (inRevision) {
+    const state = JSON.stringify([task?.id, statusText, reason, proposal?.confirmation, Boolean(repairTrial)]);
+    if (focusedAction && document.activeElement === document.body && focusedAction.getClientRects().length) {
+      focusedAction.focus({preventScroll:true});
+    }
+    if (panel.dataset.revisionState !== state) {
+      if (panel.dataset.revisionTask !== (task?.id || '')) progressDetails.open = false;
+      panel.dataset.revisionTask = task?.id || '';
+      panel.dataset.revisionState = state;
+      revisionDialog.scrollTop += panel.getBoundingClientRect().top - revisionDialog.getBoundingClientRect().top;
+    }
+  } else {
+    delete panel.dataset.revisionState;
+    delete panel.dataset.revisionTask;
+  }
 }
 
 function scheduleStagedRefresh(delay = 850) {
@@ -747,7 +893,7 @@ async function refreshStagedTasks() {
       tasks = [task, ...tasks];
       if (!isActiveStagedTask(task) && task.state !== 'published' && stagedAutoId === followed) {
         stagedAutoId = null;
-        if (byId('staged-history').open) refreshStagedHistory();
+        if (workspace.dataset.mode === 'history') refreshStagedHistory();
       }
     } else if (selected && !followed) {
       tasks = [selected, ...tasks];
@@ -797,36 +943,45 @@ byId('staged-task-list').addEventListener('click', async event => {
   if (!await restoreStagedRequirement(task, event.target)) return;
   rememberStagedTask(task);
   selectedStagedId = id;
+  compose(true);
   if (isRunningStagedTask(task)) {
     stagedAutoId = id;
-    if (!task.baseToolId) {
-      compose(true);
-      rememberRunningGeneration(id);
-    }
+    rememberRunningGeneration(id);
   }
   render();
 });
 
 async function refreshStagedHistory() {
-  if (!stagedEnabled || !session || !byId('staged-history').open) return;
+  if (!stagedEnabled || !session || workspace.dataset.mode !== 'history') return;
   const request = ++stagedHistoryRead;
+  const ownerSession = session.marker;
+  stagedHistory = [];
   stagedHistoryStatus = '正在读取生成历史…';
   stagedHistoryFailed = false;
   render();
   try {
     const result = await workspaceApi('/api/staged/history', undefined, publicationTimeout);
-    if (request !== stagedHistoryRead) return;
+    if (request !== stagedHistoryRead || session?.marker !== ownerSession) return;
     stagedHistory = result.tasks;
     stagedHistoryStatus = stagedHistory.length ? '' : '暂无失败或过期任务。';
   } catch {
-    if (request !== stagedHistoryRead) return;
+    if (request !== stagedHistoryRead || session?.marker !== ownerSession) return;
     stagedHistoryStatus = '暂时无法读取生成历史。';
     stagedHistoryFailed = true;
   }
   render();
 }
 
-byId('staged-history').addEventListener('toggle', refreshStagedHistory);
+byId('history-entry').addEventListener('click', () => {
+  requirementAssistant.close();
+  clearStagedSelection();
+  if (entryMode === 'table') tableImport.close();
+  failure = '';
+  finishComposition();
+  workspace.dataset.mode = 'history';
+  refreshStagedHistory();
+  byId('staged-history-title').focus();
+});
 byId('staged-history-refresh').addEventListener('click', refreshStagedHistory);
 byId('staged-history-list').addEventListener('click', async event => {
   const id = event.target.closest('button')?.dataset.historyTaskId;
@@ -835,7 +990,6 @@ byId('staged-history-list').addEventListener('click', async event => {
   stagedSubmission = null;
   rememberStagedTask(task);
   selectedStagedId = task.id;
-  byId('staged-history').open = false;
   render();
 });
 
@@ -990,6 +1144,7 @@ byId('table-entry').addEventListener('click', () => {
   tableImport.open();
 });
 function openAssistant(destination) {
+  if (workspace.dataset.mode === 'history') compose(false);
   clearStagedSelection();
   dismissCoachmark();
   requirementAssistant.open(destination);
@@ -997,7 +1152,7 @@ function openAssistant(destination) {
 }
 
 byId('idea-entry').addEventListener('click', () => openAssistant());
-byId('assistant-entry').addEventListener('click', () => openAssistant());
+byId('assistant-entry').addEventListener('click', () => openAssistant('new'));
 function versionRecord({ version, note, current, date, label, build }) {
   const row = document.createElement('li');
   const header = document.createElement('div');
@@ -1035,7 +1190,16 @@ function renderRevisionViews() {
   }
   byId('tool-history').hidden = !visible;
   byId('tool-history').setAttribute('aria-label', active ? '版本历史 · 当前 v' + active.version : '版本历史');
-  const inspecting = revisionInspection?.tool ?? repairTrial?.tool;
+  const candidateRevision = revisionInspection ?? repairTrial;
+  const inspecting = showingCurrentRevision ? null : candidateRevision?.tool;
+  const compare = byId('compare-revision');
+  compare.hidden = !visible || !candidateRevision || revisionView === 'history';
+  compare.textContent = showingCurrentRevision ? '返回新版预览' : '查看当前版本';
+  compare.disabled = Boolean(stagedPendingId) || phase !== 'idle';
+  if (candidateRevision && active) {
+    candidateRevision.frame.iframe.hidden = showingCurrentRevision;
+    active.iframe.hidden = !showingCurrentRevision;
+  }
   const badge = byId('candidate-badge');
   badge.hidden = !visible;
   badge.textContent = inspecting ? '新版预览 · 尚未应用' : '当前 v' + active?.version;
@@ -1298,6 +1462,10 @@ window.addEventListener('pageshow', event => {
     preview.replaceChildren();
     location.reload();
   }
+});
+byId('compare-revision').addEventListener('click', () => {
+  showingCurrentRevision = !showingCurrentRevision;
+  render();
 });
 byId('preview-view').addEventListener('click', () => setRevisionView('preview'));
 byId('source-view').addEventListener('click', () => setRevisionView('source'));
@@ -1887,6 +2055,7 @@ function closeRepairTrial() {
   frame.iframe.remove();
   if (candidate === frame) candidate = null;
   repairTrial = null;
+  showingCurrentRevision = false;
   if (active) active.iframe.hidden = false;
 }
 
@@ -2134,6 +2303,7 @@ function closeRevisionInspection() {
   frame.recordPort?.close();
   frame.iframe.remove();
   revisionInspection = null;
+  showingCurrentRevision = false;
   if (active) active.iframe.hidden = false;
 }
 
@@ -2350,7 +2520,29 @@ async function generateTable(table) {
   }
 }
 
-byId('generation-category').addEventListener('change', render);
+function editNewGeneration(category) {
+  beginComposition(false, requirement.value, category, true, draftTaskTitle);
+}
+
+byId('new-generation-edit').addEventListener('click', () => {
+  const task = selectedStagedTask();
+  if (!task || phase !== 'idle') return;
+  editNewGeneration(task.category || 'auto');
+});
+byId('new-generation-retry').addEventListener('click', () => {
+  if (byId('new-generation-retry').disabled) return;
+  clearStagedSelection();
+  keepPreviousPreviewOnRetry = true;
+  form.requestSubmit();
+});
+byId('generation-category').addEventListener('change', event => {
+  if (!editing && phase === 'idle' && workspace.dataset.mode === 'compose' &&
+      !stagedPendingId && !pendingPublication) {
+    editNewGeneration(event.target.value);
+  } else {
+    render();
+  }
+});
 form.addEventListener('submit', async event => {
   event.preventDefault();
   if (generate.disabled) return;

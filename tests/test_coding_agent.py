@@ -18,7 +18,7 @@ class AgentConfigurationTests(unittest.TestCase):
             "ROOT_ACCOUNT_GENERATIONS": "11",
             "ROOT_TOTAL_GENERATIONS": "180",
         }
-        for environment, expected in (({}, (120, 100, (1000, 10000))), (overrides, (150, 16, (11, 180)))):
+        for environment, expected in (({}, (300, 100, (1000, 10000))), (overrides, (150, 16, (11, 180)))):
             with self.subTest(environment=environment), tempfile.TemporaryDirectory() as directory:
                 args = ["workbench.py", "--coding-agent", "--runs-dir", str(Path(directory))]
                 with patch("sys.argv", args), patch.dict("os.environ", environment, clear=True), patch.object(workbench, "serve") as serve:
@@ -31,6 +31,34 @@ class AgentConfigurationTests(unittest.TestCase):
 
 
 class AgentWebsiteTests(unittest.TestCase):
+    def test_large_website_and_table_styles_fit_shared_budget_and_can_be_reopened(self):
+        import staged_blueprint as blueprint
+        from generation_settings import MAXIMUMS
+        import staged_program
+
+        style = "".join(f".item-{i} {{ padding: 10px; color: #234; }}\n" for i in range(350))
+        self.assertGreater(len(style.encode()), 4096)
+        for spec, code in (
+            ({"kind":"website", "title":"茶壶官网", "layout":"brand", "goal":"展示茶具"},
+             {"format":"website-code-v1", "markup":"<h1>茶具</h1>", "style":style, "script":"void 0;"}),
+            ({"kind":"program", "title":"计算器", "goal":"计算", "storage":"none"},
+             {"markup":"<p>计算</p>", "style":style, "script":"void 0;"}),
+            ({"kind":"table", "title":"导入表格", "filters":[], "style":style}, None),
+        ):
+            files = {"spec.json":json.dumps(spec, ensure_ascii=False).encode()}
+            if code is not None:
+                files["implementation.json"] = json.dumps(code, ensure_ascii=False).encode()
+                blueprint.validate("implementation", files["implementation.json"], files)
+                self.assertEqual(staged_revision.prepare(files)["source"]["implementation"], code)
+            else:
+                blueprint.validate("spec", files["spec.json"], {})
+            self.assertIn(style.encode(), blueprint.assemble(files))
+
+        with self.assertRaisesRegex(ValueError, "style_reference"):
+            staged_program.validate_style(style + "body { background: url(https://example.test/a) }")
+        with self.assertRaisesRegex(ValueError, "style_size"):
+            staged_program.validate_style(" " * (MAXIMUMS.sourceBytes + 1))
+
     def test_agent_receives_render_diagnostic_before_accepting_website(self):
         import coding_agent
         from runtime_verify import RuntimeVerificationError
@@ -65,6 +93,45 @@ class AgentWebsiteTests(unittest.TestCase):
                                           timeout_seconds=120)
         self.assertEqual(json.loads(result)["style"], good_style)
         self.assertEqual(len(responses), 2)
+
+
+class AgentProgramTests(unittest.TestCase):
+    def test_calculator_agent_can_style_and_replace_stateless_controls(self):
+        import coding_agent
+        import staged_blueprint as blueprint
+
+        spec = {"kind":"program", "title":"计算器", "goal":"四则运算", "storage":"none"}
+        old = {"markup":"<form><select id='op'><option>加</option></select><button>计算</button></form>",
+               "script":"void 0;"}
+        markup = "<section class='keys'><button id='plus'>+</button><button id='equals'>=</button><output id='result'></output></section>"
+        style = ".keys { display: grid; grid-template-columns: repeat(2, 1fr); }"
+        script = "document.getElementById('equals').onclick = () => { document.getElementById('result').textContent = '5'; };"
+        base = {"kind":"program", "source":{"spec":spec, "implementation":old}}
+        prior = {"spec.json":json.dumps(spec).encode()}
+
+        def submit(request, _key, _dispatch, validate, _timeout):
+            self.assertIn("tool.css", request["files"])
+            files = {"tool.html":markup, "tool.js":script, "tool.css":style}
+            with self.assertRaisesRegex(ValueError, "style_reference"):
+                validate({"files":{**files, "tool.css":"body { background: url(https://example.test/a) }"}, "decision":{}})
+            return validate({"files":files, "decision":{}})
+
+        with patch.object(coding_agent, "run", submit):
+            generated = coding_agent.provide("implementation", "做个四则计算器", prior, "fixture-key", None,
+                                            timeout_seconds=120)
+            revised = coding_agent.provide("revision-plan", "用按钮替换下拉框和计算按钮", {}, "fixture-key", None,
+                                          base=base, timeout_seconds=120)
+        artifacts = staged_revision.plan_artifacts(revised, base)
+        with self.assertRaises(staged_revision.ApiError):
+            staged_revision.describe(base, {"revision-plan.json":revised}, "", [["old", "record"]])
+        self.assertEqual(json.loads(generated), json.loads(artifacts["implementation"]))
+        html = blueprint.assemble({**prior, "implementation.json":artifacts["implementation"]}).decode()
+        self.assertIn(style, html)
+        self.assertIn("id='equals'", html)
+        self.assertNotIn('<select', html)
+        with self.assertRaises(staged_revision.RevisionPatchError):
+            stored = {**base, "source":{**base["source"], "spec":{**spec, "storage":"tool"}}}
+            staged_revision.plan_artifacts(revised, stored)
 
 
 class AgentRevisionTests(unittest.TestCase):

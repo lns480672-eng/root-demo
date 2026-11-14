@@ -65,7 +65,8 @@ export async function verifyStagedFlow(ctx) {
       await cdp('Emulation.setDeviceMetricsOverride', {width,height:844,deviceScaleFactor:1,mobile:width===390});
       assert.equal(await visible('#staged-panel'), false);
       await click('#new-tool');
-      if (!await evaluate('document.querySelector("#staged-history").open')) await click('#staged-history summary');
+      assert.equal(await visible('#staged-history'), false);
+      await click('#history-entry');
       await until(() => visible(selected));
       assert.equal(await evaluate('document.querySelectorAll("#staged-history-list button[data-history-task-id]").length'), 2);
       assert.equal(await evaluate('document.querySelectorAll("#staged-task-list button[data-task-id]").length'), 0);
@@ -343,24 +344,27 @@ export async function verifyRunningLayout(ctx) {
           sidebarFits: ${width} === 390 || (composer.clientWidth >= 260 && composer.clientWidth <= 360),
           previewVisible: preview.checkVisibility(),
           original: document.querySelector('#staged-original p').textContent,
-          task: document.querySelector('#staged-task-list [aria-current=true]')?.dataset.taskId,
-          step: progress?.checkVisibility(),
+          step: Boolean(progress),
+          folded: !document.querySelector('#staged-progress').open,
           fullForm: document.querySelector('#composer').checkVisibility(),
           heading: document.querySelector('#composer-title').textContent,
-          caption: document.querySelector('#staged-task-list [aria-current=true]')?.textContent,
         };
       })()`);
       assert.deepEqual(layout, {mode:'compose',sidebarFits:true,previewVisible:true,original:input,
-        task:task.id,step:true,fullForm:false,heading:title,caption:title}, path + ' ' + width + 'px');
+        step:true,folded:true,fullForm:false,heading:title}, path + ' ' + width + 'px');
       await screenshot('running-' + path + '-' + width);
     }
   };
-  await until(() => visible('#staged-steps li[aria-current=step]'));
+  await until(() => visible('#new-generation-stage-count'));
   await assertRunningLayout('submit', '新工具');
   await until(() => evaluate('document.querySelector("#composer-title").textContent === "旧清单"'));
   await assertRunningLayout('named', '旧清单');
   await click('#new-tool');
   assert.equal(await visible('#requirement'), true);
+  assert.equal(await visible('#staged-panel'), false);
+  await click('#history-entry');
+  await until(() => visible(taskButton));
+  assert.equal(await evaluate(`document.querySelector(${JSON.stringify(taskButton)}).textContent`), '旧清单');
   await click(taskButton);
   await assertRunningLayout('reopen', '旧清单');
   const navigation = await evaluate('performance.timeOrigin');
@@ -502,6 +506,17 @@ export async function verifyLedgerTheme(ctx) {
   assert.deepEqual((await stored(old.id)).entries, before.entries);
   assert.equal((await balance()).used, beforeBalance.used);
   assert.equal((await balance()).totalUsed, beforeBalance.totalUsed + 1);
+  const metrics = {width:1440,height:980,deviceScaleFactor:1,mobile:false};
+  for (const width of [1440,390]) {
+    await cdp('Emulation.setDeviceMetricsOverride', {...metrics,width,mobile:width===390});
+    assert.deepEqual(await evaluate(`(() => {
+      const card = document.querySelector('#revision-answer-submit').closest('[data-role=system]');
+      return [card.dataset.tone, card.querySelector('#staged-status').textContent,
+        getComputedStyle(card).backgroundColor, getComputedStyle(card).borderTopColor];
+    })()`), ['question','需要补充','rgb(255, 255, 255)','rgb(96, 125, 177)']);
+    await screenshot('revision-question-' + width);
+  }
+  await cdp('Emulation.setDeviceMetricsOverride', metrics);
   await screenshot('ambiguous-color-asks-target');
   await evaluate('document.querySelector("#revision-answer").value = "把颜色改成黄色"');
   await click('#revision-answer-submit');
@@ -553,7 +568,7 @@ export async function verifyLedgerTheme(ctx) {
     await screenshot('field-rename-cancel-plan');
     await click('#revision-cancel');
     await until(async () => !await visible('#revision-confirm') && await visible('#requirement'));
-    await click('#return-to-library');
+    await click('#library-entry');
     assert.equal((await versions()).current, 2);
     assert.deepEqual((await stored(old.id)).entries, before.entries);
     assert.equal((await balance()).used, beforeLocal.used);
@@ -566,6 +581,8 @@ export async function verifyLedgerTheme(ctx) {
       await screenshot('local-plan-v' + version);
       await click('#revision-confirm');
       await until(async () => (await versions()).current === version);
+      await until(() => evaluate('!document.querySelector("#library-entry").disabled'));
+      await click('#library-entry');
       await until(() => evaluate('document.querySelector("#revise-tool")?.checkVisibility()'
         + ' && !document.querySelector("#revise-tool").disabled'));
       await screenshot('local-applied-v' + version);
@@ -723,6 +740,27 @@ export async function verifyStagedRevision(ctx) {
         horizontalOverflow: document.documentElement.scrollWidth > innerWidth,
       };
     })()`), {theme:'rgb(237, 241, 248)',viewsFit:true,layout:true,horizontalOverflow:false});
+    assert.equal(await visible('#return-to-library'), false, '修改页用侧栏返回');
+    assert.equal(await visible('#staged-panel'), false, '空闲对话收起生成状态');
+    assert.deepEqual(await evaluate(`(() => {
+      const messages = document.querySelector('#tool-revision-dialog');
+      const input = document.querySelector('#requirement');
+      const submit = document.querySelector('#generate');
+      const heading = document.querySelector('#composer-title');
+      const content = document.querySelector('#tool-revision-log');
+      const items = Array.from({length:20}, () => {
+        const item = document.createElement('li');
+        item.textContent = '用于验证独立滚动的历史消息';
+        return item;
+      });
+      content.append(...items);
+      const position = [input, submit, heading].map(node => node.getBoundingClientRect().top);
+      messages.scrollTop = messages.scrollHeight;
+      const result = {height:input.offsetHeight, scrolls:messages.scrollTop > 0,
+        fixed:[input, submit, heading].every((node, index) => node.getBoundingClientRect().top === position[index])};
+      for (const item of items) item.remove();
+      return result;
+    })()`), {height:58,scrolls:true,fixed:true});
     await screenshot('revision-layout-' + width);
   }
   await cdp('Emulation.setDeviceMetricsOverride', {width:1440,height:980,deviceScaleFactor:1,mobile:false});
@@ -755,17 +793,59 @@ export async function verifyStagedRevision(ctx) {
   await until(() => evaluate('!document.querySelector("#generate").disabled'));
   await evaluate('document.querySelector("#requirement").value = ""');
 
-  await generate(change);
+  await evaluate(`(() => {
+    const original = window.fetch;
+    window.restoreRevisionFetch = () => { window.fetch = original; };
+    window.fetch = async (...args) => {
+      if (String(args[0]).endsWith('/revise')) await new Promise(resolve => { window.releaseRevision = resolve; });
+      return original(...args);
+    };
+  })()`);
+  await type('#requirement', change);
+  await click('#generate');
+  await until(() => evaluate('Boolean(window.releaseRevision)'));
+  assert.deepEqual(await evaluate(`(() => {
+    const status = document.querySelector('#staged-status');
+    return [status.textContent, status.closest('li').textContent.includes(${JSON.stringify(change)}),
+      document.querySelector('#loading').hidden];
+  })()`), ['正在修改', true, true]);
+  assert.equal(await currentVersion(), 1);
+  assert.equal(await evaluate('document.querySelector("#add").textContent', old.context), '添加');
+  assert.equal(await visible('#revision-waiting-dots'), true);
+  assert.deepEqual(await evaluate(`(() => {
+    const dots = document.querySelector('#revision-waiting-dots');
+    return [dots.childElementCount, dots.getAttribute('aria-hidden'),
+      getComputedStyle(dots.firstElementChild).animationName];
+  })()`), [3, 'true', 'revision-waiting-dot']);
+  await cdp('Emulation.setEmulatedMedia', {features:[{name:'prefers-reduced-motion', value:'reduce'}]});
+  assert.equal(await evaluate('getComputedStyle(document.querySelector("#revision-waiting-dots i")).animationName'), 'none');
+  await screenshot('revision-waiting-reduced');
+  await cdp('Emulation.setEmulatedMedia', {features:[]});
+  await screenshot('revision-waiting');
+  await evaluate('window.releaseRevision()');
   await until(() => visible('#revision-confirm'));
+  await evaluate('window.restoreRevisionFetch()');
+  assert.equal(await visible('#revision-waiting-dots'), false);
+
   assert.equal(await visible('.elys-preview'), true);
   assert.equal(await currentVersion(), 1);
-  assert.equal(await evaluate('document.querySelector("#tool-revision-log [data-role=user] .revision-author").textContent'), '验收昵称');
+  assert.equal(await evaluate('document.querySelector("#tool-revision-log [data-role=user] .revision-name").textContent'), '验收昵称');
   assert.match(await evaluate('document.querySelector("#revision-plan-tool .revision-author").textContent'), /小 R/);
   assert.equal(await visible('#candidate-badge'), true);
   const inspected = await activeTool('', '#preview iframe[data-revision-inspection]');
   assert.equal(await evaluate('document.querySelector("#add").textContent', inspected.context), '加入书单');
   assert.equal(await evaluate('document.querySelector("[data-revision-inspection]").inert'), true);
+  assert.equal(await evaluate('document.querySelector("#staged-progress").open'), false);
+  await click('#staged-progress-summary');
+  assert.equal(await evaluate('document.querySelector("#staged-progress").open'), true);
+  await click('#staged-progress-summary');
+  await click('#compare-revision');
+  assert.equal(await visible('#preview iframe[data-revision-inspection]'), false);
+  assert.equal(await evaluate('document.querySelector("#add").textContent', old.context), '添加');
   await click('#source-view');
+  await until(() => evaluate('document.querySelector("#source-status").textContent === "当前 v1"'));
+  await click('#compare-revision');
+  assert.equal(await evaluate('document.querySelector("#candidate-badge").dataset.candidate'), 'true');
   await until(() => evaluate('document.querySelector("#source-code").textContent.includes("加入书单")'));
   assert.match(await evaluate('document.querySelector("#source-status").textContent'), /尚未应用/);
   assert.deepEqual(await evaluate('Array.from(document.querySelector("#source-files").options, o => o.textContent)'),
@@ -777,6 +857,13 @@ export async function verifyStagedRevision(ctx) {
   await until(() => evaluate('document.querySelectorAll("#tool-version-list li").length === 1'));
   assert.equal(await visible('#requirement'), true);
   await click('#preview-view');
+  assert.deepEqual(await evaluate(`(() => {
+    const user = document.querySelector('#tool-revision-log [data-role=user]');
+    const card = document.querySelector('#revision-confirm').closest('[data-role=system]');
+    return [getComputedStyle(user.querySelector('.revision-message-body')).backgroundColor,
+      getComputedStyle(user.querySelector('.revision-avatar')).borderTopColor,
+      getComputedStyle(card).backgroundColor, card.querySelector('#staged-title').textContent];
+  })()`), ['rgb(219, 231, 251)','rgb(96, 125, 177)','rgb(255, 255, 255)','系统提示']);
   await screenshot('program-plan-before-concurrent-write');
   await anotherBrowser('staged-revision-second', async () => {
     await cdp('Emulation.setDeviceMetricsOverride', {width:1360,height:980,deviceScaleFactor:1,mobile:false});
@@ -857,6 +944,10 @@ export async function verifyStagedRevision(ctx) {
     });
     await click(action);
     await until(() => visible('#revision-abandon'));
+    assert.equal(await evaluate('document.querySelector("#staged-status").textContent'), '修改失败');
+    assert.equal(await evaluate('document.querySelector("#revision-repair").closest("[data-tone=failed][data-role=system]") !== null'), true);
+    assert.equal(await evaluate('document.querySelector("#revision-restore-request").closest("[data-role=system]")?.id'), 'staged-panel');
+    await screenshot('revision-failed-390');
     await click('#revision-repair');
     await until(() => visible('#revision-confirm'));
     await click('#revision-confirm');
@@ -881,6 +972,8 @@ export async function verifyStagedRevision(ctx) {
     await until(async () => (await trial()).used === before.used + 2);
     evidence.tests.push({id:'TEST-007-REPAIR-03', failedConversationRestored:true, trialBeforeApply:true, applied:true});
   }
+  evidence.tests.push({id:'TEST-007-revision-conversation', desktop:true, narrow:true, fixedInput:true,
+    inlineStatus:true, expandableProgress:true, compareCurrent:true});
   evidence.tests.push({id:'TEST-007-program-copy', sameTool:true, staleConfirmationRejected:true,
     olderAndConcurrentRecordsPreserved:true, originalActionVerified:true, chargedOnce:true, conversationRestored:true});
   await screenshot('staged-revision-restored');
@@ -938,7 +1031,7 @@ export async function verifyStagedHistory(ctx) {
   });
   const historyButton = id => '#staged-history-list button[data-history-task-id="' + id + '"]';
   const bringBack = async id => {
-    await click('#staged-history summary');
+    await click('#history-entry');
     await until(() => visible(historyButton(id)));
     await click(historyButton(id));
   };
@@ -952,6 +1045,25 @@ with sqlite3.connect(sys.argv[1]) as db:
   await cdp('Page.navigate', {url:base});
   await login(accountA, true);
   if (await visible('#workspace-guide')) await click('#guide-skip');
+  for (const width of [1440, 390]) {
+    await cdp('Emulation.setDeviceMetricsOverride', {width,height:844,deviceScaleFactor:1,mobile:width===390});
+    assert.equal(await visible('#staged-history'), false, '新建页不应显示历史');
+    assert.equal(await visible('#history-entry'), true, '侧栏应提供生成历史入口');
+    assert.deepEqual(await evaluate(`[...document.querySelector('.workspace-navigation nav').children]
+      .map(item => item.id)`), ['new-tool','library-entry','saved-tools','idea-entry','history-entry']);
+    assert.equal(await evaluate(`(() => {
+      const rail = document.querySelector('.workspace-sidebar').getBoundingClientRect();
+      const history = document.querySelector('#history-entry').getBoundingClientRect();
+      return rail.bottom - history.bottom <= 20;
+    })()`), true, '生成历史放在侧栏底部');
+    await click('#history-entry');
+    await until(() => evaluate('document.querySelector("#staged-history-status").textContent.includes("暂无")'));
+    assert.equal(await evaluate('document.querySelector("#history-entry").getAttribute("aria-current")'), 'page');
+    assert.equal(await visible('#requirement'), false);
+    assert.equal(await evaluate('document.documentElement.scrollWidth <= innerWidth'), true);
+    await screenshot('generation-history-empty-' + width);
+    await click('#new-tool');
+  }
   await generate(initial);
   const old = await activeTool();
   await type('#book', '原工具的数据', old.context);
@@ -970,16 +1082,58 @@ with sqlite3.connect(sys.argv[1]) as db:
   await waitTask(ready.id, 'complete');
 
   await click('#new-tool');
+  await evaluate(`(() => {
+    const original = window.fetch;
+    window.fetch = async (url, options) => {
+      if (url === '/api/generate' && options?.method === 'POST') {
+        window.fetch = original;
+        await new Promise(resolve => { window.releaseNewGeneration = resolve; });
+      }
+      return original(url, options);
+    };
+  })()`);
   await generate(failedRequirement);
+  await until(() => evaluate('Boolean(window.releaseNewGeneration)'));
+  for (const width of [1440, 390]) {
+    await cdp('Emulation.setDeviceMetricsOverride', {width,height:844,deviceScaleFactor:1,mobile:width===390});
+    assert.equal(await visible('#preview iframe[data-tool]'), false, '新建任务等待受理时不展示上一件工具');
+    assert.equal(await evaluate('document.querySelector("#preview-title").textContent'), '工具预览');
+    await screenshot('new-generation-placeholder-' + width);
+  }
+  await evaluate('window.releaseNewGeneration()');
   const failed = await until(() => findStagedTask(appRequest, failedRequirement));
   await waitTask(failed.id, 'failed');
-  await until(() => visible('#staged-reason'));
+  await until(() => visible('#new-generation-retry'));
+  for (const width of [1440, 390]) {
+    await cdp('Emulation.setDeviceMetricsOverride', {width,height:844,deviceScaleFactor:1,mobile:width===390});
+    assert.equal(await visible('#new-generation-retry'), true);
+    assert.equal(await visible('#new-generation-edit'), true);
+    assert.equal(await visible('#composer'), false);
+    assert.equal(await evaluate('document.querySelector("#staged-panel").dataset.tone'), 'failed');
+    await click('#new-generation-failure summary');
+    assert.equal(await visible('#staged-reason'), true);
+    assert.ok((await evaluate('document.querySelector("#new-generation-failure-stage").textContent')).length > 0);
+    await click('#new-generation-failure summary');
+    await screenshot('new-generation-failure-' + width);
+  }
   assert.equal(await evaluate('document.querySelector("#requirement").value'), failedRequirement);
   assert.equal(await visible('#staged-resume'), false);
   assert.equal((await balance()).used, oldBalance.used);
   assert.equal(await visible('.elys-preview'), true);
   assert.equal(await evaluate('document.querySelector("#preview iframe[data-tool]").dataset.tool'), old.id);
   assert.equal((await appRequest('/api/tools')).body.items.length, 1);
+  await type('#book', '失败时旧工具仍能写入', old.context);
+  await click('#add', old.context);
+  await until(async () => JSON.stringify((await stored(old.id)).entries).includes('失败时旧工具仍能写入'));
+  const beforeRetry = taskCount();
+  await click('#new-generation-retry');
+  await until(() => Number(taskCount()) === Number(beforeRetry) + 1);
+  await until(() => visible('#new-generation-retry'));
+  assert.equal(await evaluate('document.querySelector("#preview iframe[data-tool]").dataset.tool'), old.id);
+  // A category selection is an edit until the user submits it.
+  await click('#new-generation-edit');
+  assert.equal(await visible('#requirement'), true);
+  assert.equal(await evaluate('document.querySelector("#requirement").value'), failedRequirement);
   fixtureSql(`
 import sqlite3, sys, time, uuid
 with sqlite3.connect(sys.argv[1]) as db:
@@ -995,22 +1149,69 @@ with sqlite3.connect(sys.argv[1]) as db:
   await click('#new-tool');
   const listed = (await appRequest('/api/staged')).body.tasks;
   assert.deepEqual(listed.map(task => [task.id, task.state]), [[ready.id, 'complete']]);
-  assert.equal(await visible('#staged-task-list button[data-task-id="' + ready.id + '"]'), true);
+  assert.equal(await visible('#staged-panel'), false, '新建起始页不显示生成任务');
+  assert.equal(await visible('#staged-task-list button[data-task-id="' + ready.id + '"]'), false);
   const beforeBringBack = await balance();
   const beforeNewTaskCount = taskCount();
+  await click('#history-entry');
+  await until(() => visible(historyButton(failed.id)));
+  assert.equal(await visible('#staged-task-list button[data-task-id="' + ready.id + '"]'), true);
+  const detail = '#staged-history-list li:has(button[data-history-task-id="' + failed.id + '"]) details';
+  await click(detail + ' summary');
+  assert.match(await evaluate(`document.querySelector(${JSON.stringify(detail)}).innerText`), /历史验证首次失败/);
+  await screenshot('generation-history-failure-390');
   await bringBack(failed.id);
+  assert.equal(await evaluate('document.querySelector("#new-tool").getAttribute("aria-current")'), 'page');
+  assert.equal(await visible('#staged-history'), false);
   assert.equal(await evaluate('document.querySelector("#requirement").value'), failedRequirement);
   assert.equal(await visible('#staged-resume'), false);
   assert.deepEqual(await balance(), beforeBringBack);
   assert.equal(taskCount(), beforeNewTaskCount);
   await screenshot('failure-history-brought-back');
+  const beforeCategory = taskCount();
+  const beforeCategoryBalance = await balance();
+  const failedSnapshot = (await appRequest(taskPath + failed.id)).body.task;
+  await evaluate(`(() => {
+    const task = ${JSON.stringify(failedSnapshot)};
+    rememberStagedTask(task);
+    selectedStagedId = task.id;
+    compose(true);
+    render();
+    const category = document.querySelector('#generation-category');
+    category.value = 'brand';
+    category.dispatchEvent(new Event('change', {bubbles:true}));
+  })()`);
+  assert.deepEqual(await evaluate(`[
+    document.querySelector('#workspace').dataset.mode,
+    document.querySelector('#generation-category').value,
+    document.querySelector('#requirement').value,
+    document.querySelector('#staged-panel').hidden,
+    document.querySelector('.elys-preview').hidden,
+  ]`), ['start', 'brand', failedRequirement, true, true]);
+  assert.equal(taskCount(), beforeCategory);
+  assert.deepEqual(await balance(), beforeCategoryBalance);
+  await evaluate(`document.querySelector('#generation-category').value = 'auto'`);
   const edited = '做一个小工具，历史验证重新提交';
+  await evaluate(`(() => {
+    window.oldPreviewDuringGeneration = false;
+    const watch = () => {
+      const oldFrame = document.querySelector('#preview iframe[data-tool="${old.id}"]');
+      if (oldFrame?.checkVisibility()) window.oldPreviewDuringGeneration = true;
+      if (document.querySelector('#workspace').dataset.mode !== 'result') requestAnimationFrame(watch);
+    };
+    requestAnimationFrame(watch);
+  })()`);
   await generate(edited);
   const tool = await activeTool(old.id);
+  await until(() => visible('#open-generated-tool'));
+  assert.equal(await evaluate('window.oldPreviewDuringGeneration'), false);
   const published = (await appRequest(taskPath + failed.id)).body.task;
   assert.equal(published.state, 'failed');
   assert.equal((await appRequest('/api/tools')).body.items.length, 2);
   assert.equal((await balance()).used, oldBalance.used + 1);
+  assert.ok(JSON.stringify((await stored(old.id)).entries).includes('失败时旧工具仍能写入'));
+  await until(() => visible('#open-generated-tool'));
+  await screenshot('new-generation-saved-390');
 
   const previous = (await appRequest('/api/tools/' + old.id + '/revise', {
     requirement:revisedRequirement, version:1, requestId:'5'.repeat(32),
@@ -1088,6 +1289,31 @@ with sqlite3.connect(sys.argv[1]) as db:
   assert.deepEqual(receipts.filter(item => item.task === failed.id).map(item => item.stage), ['spec','implementation']);
   assert.deepEqual(receipts.filter(item => item.task === current.id).map(item => item.stage), ['revision-plan']);
   assert.notEqual(tool.id, old.id);
+  const pendingRevisionId = fixtureSql(`
+import sqlite3, sys, time, uuid
+with sqlite3.connect(sys.argv[1]) as db:
+    owner = db.execute("SELECT id FROM accounts WHERE username=?", (sys.argv[2],)).fetchone()[0]
+    identifier = uuid.uuid4().hex
+    now = time.time()
+    db.execute("INSERT INTO staged_jobs(id,owner,request_id,requirement,head,expires,state,updated_at) VALUES(?,?,?,?,?,?,?,?)",
+               (identifier, owner, uuid.uuid4().hex, '旧工具待查看的修改', '0'*40, now+1000, 'complete', now))
+    db.execute("INSERT INTO staged_revisions VALUES(?,?,?,?,?)", (identifier, '${old.id}', 2, '0'*64, '{}'))
+    print(identifier)
+`);
+  await click('#new-tool');
+  await cdp('Page.reload');
+  await until(() => evaluate('document.documentElement.dataset.ready === "true"'));
+  assert.ok((await appRequest('/api/staged')).body.tasks.some(task => task.id === pendingRevisionId && task.baseToolId === old.id));
+  assert.equal(await visible('#staged-panel'), false);
+  await click('#history-entry');
+  const resumeReady = '#staged-task-list button[data-task-id="' + ready.id + '"]';
+  await until(() => visible(resumeReady));
+  assert.equal(await visible('#staged-task-list button[data-task-id="' + pendingRevisionId + '"]'), false);
+  await click(resumeReady);
+  assert.equal(await evaluate('document.querySelector("#workspace").dataset.mode'), 'compose');
+  assert.equal(await visible('#staged-preview'), true);
+  await enterRevision(old.id);
+  await until(() => visible('#tool-revision-log button[data-revision-task="' + pendingRevisionId + '"]'));
   evidence.tests.push({id:'TEST-018-09', historyLimitSeparate:true, failedPersonalCharge:0,
     newTool:tool.id, revisedTool:old.id, separateToolRevisionHistory:true,
     revisionRestoreDidNotCreateTask:true, originalRepository:originalRepo, savedOperation:current.id});

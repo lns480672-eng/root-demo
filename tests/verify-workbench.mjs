@@ -25,8 +25,10 @@ if (live && stagedFlow) throw new Error('--staged-flow uses ROOT_STAGED_LIVE=1 f
 const liveRevision = live && process.argv.includes('--revision');
 const collectCoverage = process.argv.includes('--coverage');
 const mainOnly = process.argv.includes('--main');
-const entryFlow = process.argv.includes('--entry-flow');
-const adminFlow = process.argv.includes('--admin-flow');
+const examplesOnly = process.argv.includes('--entry-examples');
+const entryFlow = examplesOnly || process.argv.includes('--entry-flow');
+const adminOnly = process.argv.includes('--admin-only');
+const adminFlow = adminOnly || process.argv.includes('--admin-flow');
 const adminSetup = process.argv.includes('--admin-setup');
 const profileFlow = process.argv.includes('--profile-flow');
 if ((entryFlow || adminFlow || adminSetup) && live) throw new Error('选定的流程使用模型替身，请移除 --live');
@@ -76,6 +78,7 @@ const requirements = [
   : requirement);
 
 try {
+  verification: {
   let base = app;
   if (!live && !standaloneCatalog) {
     probe = createServer((request, response) => {
@@ -489,6 +492,7 @@ try {
       assert.equal(await evaluate('document.querySelector("#revise-tool").textContent'), '修改');
       assert.equal(await evaluate('document.documentElement.scrollWidth <= innerWidth'), true);
       await evaluate('window.scrollTo(0, 0)');
+      await until(() => evaluate('document.querySelector("#preview").getAnimations().length === 0'));
       await screenshot('tool-actions-' + width);
       const geometry = await evaluate(`(() => {
         const box = selector => document.querySelector(selector).getBoundingClientRect().toJSON();
@@ -498,18 +502,24 @@ try {
           standalone: box('#open-standalone'),
           actions: box('.tool-heading .preview-actions'),
           content: box('#preview iframe[data-tool]'),
+          panel: box('.elys-preview'),
+          sidebar: box('.workspace-sidebar'),
+          header: box('.elys-preview-header'),
+          viewport: {width:document.documentElement.clientWidth,height:innerHeight},
         };
       })()`);
-      const { title, primary, standalone, actions, content } = geometry;
-      assert.ok(Math.abs(title.left - content.left) < 2, '工具名和工具预览应共享左边界');
+      const { title, primary, standalone, content, panel, sidebar, header, viewport } = geometry;
+      assert.ok(Math.abs(content.left - sidebar.right) <= 1 &&
+        Math.abs(content.right - viewport.width) <= 1, '工具预览应铺满侧栏右侧');
+      assert.ok(Math.abs(content.top - header.bottom) <= 1 &&
+        Math.abs(content.bottom - viewport.height) <= 1, '工具预览应铺满操作栏下方：' + JSON.stringify(geometry));
+      assert.ok(Math.abs(panel.left - content.left) <= 1);
       if (width === 1440) {
-        assert.ok(Math.abs(content.width - 520) < 2, '桌面工具内容应沿用确认稿 520 px 的内容列');
-        assert.ok(Math.abs(actions.right - content.right) < 2, '桌面工具操作和工具预览应共享右边界');
         assert.ok(primary.top < title.bottom && primary.bottom > title.top, '桌面修改操作应与工具名同排');
         assert.ok(standalone.left >= primary.right && Math.abs(standalone.top - primary.top) < 2,
           '桌面修改和独立打开操作应并排');
       } else {
-        assert.ok(primary.top >= title.bottom && Math.abs(primary.left - content.left) < 2,
+        assert.ok(primary.top >= title.bottom && Math.abs(primary.left - title.left) < 2,
           '390 px 修改操作应在工具名下方并对齐左边界');
       }
       layoutEvidence.push({width, geometry});
@@ -649,6 +659,8 @@ try {
     const quota = (await appRequest('/api/trial')).body;
     assert.equal(await text('#profile-generation'), `${quota.generation.remaining} / ${quota.generation.limit}`);
     assert.equal(await text('#profile-analysis'), `${quota.analysis.remaining} / ${quota.analysis.limit}`);
+    assert.match(await text('#profile-generation-rule'), /成功保存.*确认生效.*模型调用另计/);
+    assert.match(await text('#profile-analysis-rule'), /首次取得可编辑草稿.*北京时间零点/);
     await click('#edit-nickname');
     assert.equal(await evaluate('document.querySelector("#nickname").value'), username);
     await save();
@@ -686,6 +698,68 @@ try {
     await openProfile();
     assert.equal(await text('#profile-nickname'), accountB);
     evidence.tests.push('AC-022: 额度、预填、取消、长度、保存、刷新、重登、清空和账号隔离');
+  } else if (process.argv.includes('--assistant-new-round')) {
+    stage = 'AC-011/013 new requirement after saving a draft';
+    await cdp('Page.navigate', {url:base});
+    await login(accountA, true);
+    if (await visible('#workspace-guide')) await click('#guide-skip');
+    const fields = ['#assistant-idea-text', '#assistant-draft-name', '#assistant-draft-editor'];
+    const values = () => evaluate(`[${fields.map(id => `document.querySelector(${JSON.stringify(id)}).value`).join(',')}]`);
+    const quota = async () => {
+      const {analysis, generation} = (await appRequest('/api/trial')).body;
+      return [analysis, generation];
+    };
+    const drafts = '/api/requirement-drafts';
+    for (const width of [1440, 390]) {
+      await cdp('Emulation.setDeviceMetricsOverride', {width,height:844,deviceScaleFactor:1,mobile:width===390});
+      await click('#new-tool');
+      await click('#assistant-entry');
+      await type(fields[0], '做一个读书清单，可以新增书名并保存。宽度 ' + width);
+      await click('#assistant-analyze button');
+      await until(() => visible(fields[2]));
+      await type(fields[1], '馆藏登记 ' + width);
+      await click('#assistant-save');
+      await until(() => evaluate('document.querySelector("#assistant-status").textContent.includes("已保存")'));
+      const [, title, body] = await values();
+      const item = (await appRequest(drafts)).body.items.find(item => item.title === title);
+      assert.ok(item);
+      const path = drafts + '/' + item.id;
+      const saved = (await appRequest(path)).body;
+      const balance = await quota();
+      const reopen = async () => {
+        if (!await visible('#assistant-drafts-view')) await click('#assistant-drafts');
+        const row = '[data-draft-id="' + item.id + '"]';
+        await until(() => visible(row));
+        await click(row);
+        await until(() => visible(fields[2]));
+        assert.deepEqual((await values()).slice(1), [title, body]);
+      };
+      const empty = async entry => {
+        assert.equal(await visible(fields[0]), true, `${width} px ${entry} 应打开原始问题表单`);
+        assert.deepEqual(await values(), ['', '', ''], `${width} px ${entry} 应清空三个字段`);
+        assert.equal(await visible(fields[2]), false);
+        assert.equal(await evaluate('document.activeElement.id'), 'assistant-idea-text');
+      };
+      await screenshot('assistant-saved-' + width);
+      await click('#new-tool');
+      await click('#assistant-entry');
+      await empty('需求助手卡片');
+      await screenshot('assistant-empty-' + width);
+      await reopen();
+      await click('#assistant-new-round');
+      await empty('草稿页梳理新需求');
+      await reopen();
+      await click('#assistant-drafts');
+      await until(() => visible('[data-draft-id="' + item.id + '"]'));
+      await click('#assistant-idea-tab');
+      await empty('列表梳理新需求');
+      await reopen();
+      await screenshot('assistant-reopened-' + width);
+      assert.deepEqual((await appRequest(path)).body, saved);
+      assert.deepEqual(await quota(), balance);
+      assert.equal(await evaluate('document.documentElement.scrollWidth <= innerWidth'), true);
+    }
+    evidence.tests.push({id:'AC-011/013', bug:'ROOT-ASSIST-UX-02', widths:[1440,390], savedDraftUnchanged:true, quotaUnchanged:true});
   } else if (draftNaming) {
     stage = 'AC-011/012/013 named requirement handoff';
     await cdp('Page.navigate', {url:base});
@@ -698,7 +772,7 @@ try {
     for (const width of [1440, 390]) {
       await cdp('Emulation.setDeviceMetricsOverride', {width,height:844,deviceScaleFactor:1,mobile:width===390});
       await click('#idea-entry');
-      assert.equal(await evaluate('document.querySelectorAll(".workspace-navigation nav button").length'), 3);
+      assert.equal(await evaluate('document.querySelectorAll(".workspace-navigation nav > button:not([hidden])").length'), 4);
       assert.equal(await visible('#assistant-draft-name'), false);
       await click('#assistant-drafts');
       await until(() => visible('[data-draft-id="' + oldId + '"]'));
@@ -714,6 +788,43 @@ try {
     await type('#assistant-draft-name', '图书借阅登记');
     await click('#assistant-save');
     await until(async () => (await appRequest(path)).body.title === '图书借阅登记');
+    const savedPath = '[data-draft-id="' + oldId + '"]';
+    await click('#assistant-drafts');
+    await until(() => visible(savedPath));
+    await click('#assistant-idea-tab');
+    assert.equal(await visible('#assistant-idea-text'), true, '梳理新需求应回到原始想法输入');
+    assert.equal(await visible('#assistant-draft-editor'), false, '梳理新需求不打开已保存草稿');
+    assert.equal(await evaluate('document.querySelector("#assistant-idea-text").value'), '');
+    await screenshot('requirements-new-idea-after-saving');
+    await type('#assistant-idea-text', '记录我的午餐');
+    await click('#assistant-drafts');
+    await until(() => visible(savedPath));
+    await click(savedPath);
+    await until(() => visible('#assistant-draft-name'));
+    assert.equal(await evaluate('document.querySelector("#assistant-draft-name").value'), '图书借阅登记');
+    await type('#assistant-draft-editor', '补充筛选条件');
+    const unsavedText = await evaluate('document.querySelector("#assistant-draft-editor").value');
+    await click('#assistant-drafts');
+    await until(() => visible(savedPath));
+    await click('#assistant-idea-tab');
+    assert.equal(await evaluate('document.querySelector("#assistant-idea-text").value'), '记录我的午餐');
+    await click('#assistant-resume-edit');
+    assert.equal(await evaluate('document.querySelector("#assistant-draft-editor").value'), unsavedText);
+    assert.equal((await appRequest(path)).body.text, body);
+    await evaluate(`(() => {
+      const editor = document.querySelector("#assistant-draft-editor");
+      editor.value = "";
+      editor.dispatchEvent(new Event("input", {bubbles: true}));
+    })()`);
+    await click('#assistant-idea-tab');
+    assert.equal(await visible('#assistant-resume-edit'), true, '清空正文的未保存修改也能继续编辑');
+    await click('#assistant-resume-edit');
+    assert.equal(await evaluate('document.querySelector("#assistant-draft-editor").value'), '');
+    await evaluate(`(() => {
+      const editor = document.querySelector("#assistant-draft-editor");
+      editor.value = ${JSON.stringify(body)};
+      editor.dispatchEvent(new Event("input", {bubbles: true}));
+    })()`);
     await click('#assistant-build');
     assert.equal((await appRequest('/api/staged')).body.tasks.length, 0);
     await click('#generate');
@@ -735,7 +846,43 @@ try {
     await click('#tool-list button[data-id="' + tool.id + '"]');
     await until(() => evaluate('document.querySelector("#preview-title").textContent === "图书借阅登记"'));
     assert.equal((await library()).items.find(item => item.id === tool.id)?.title, '图书借阅登记');
-    evidence.tests.push({id:'AC-011/012/013', title:readback.title, fullText:readback.requirement, task:task.id});
+    evidence.tests.push({id:'AC-011/012/013', title:readback.title, fullText:readback.requirement, task:task.id,
+      startsNewIdeaAfterSavedDraft: true, explicitlyRecoversUnsavedDraft: true});
+    stage = 'AC-011/013 assistant layout after viewing and revising a saved tool';
+    for (const width of [1440, 390]) {
+      await cdp('Emulation.setDeviceMetricsOverride', {width,height:844,deviceScaleFactor:1,mobile:width===390});
+      const panelBounds = () => evaluate(`(() => {
+        const {x, width} = document.querySelector('#assistant-panel').getBoundingClientRect();
+        return [Math.round(x), Math.round(width)];
+      })()`);
+      await click('#idea-entry');
+      await click('#assistant-drafts');
+      await until(() => visible(savedPath));
+      await click(savedPath);
+      await until(() => visible('#assistant-draft-editor'));
+      const baseline = await panelBounds();
+      for (const from of ['preview', 'revision']) {
+        await click('#library-entry');
+        await selectHistory(tool.id);
+        if (from === 'revision') {
+          await click('#revise-tool');
+          await until(() => visible('#tool-revision-dialog'));
+        }
+        await click('#idea-entry');
+        await until(() => visible('#assistant-draft-editor'));
+        await screenshot('assistant-after-' + from + '-' + width);
+        assert.deepEqual(await panelBounds(), baseline, `${width} px 从 ${from} 返回需求应恢复独立内容列`);
+        assert.equal(await evaluate('document.querySelector("#idea-entry").getAttribute("aria-current")'), 'page');
+        assert.equal(await visible('#tool-revision-dialog'), false);
+        assert.equal(await visible('#preview'), false);
+        assert.equal(await evaluate('document.querySelector("#assistant-draft-editor").value'), body);
+        assert.equal(await evaluate('document.documentElement.scrollWidth <= innerWidth'), true);
+      }
+      await click('#library-entry');
+      assert.equal((await selectHistory(tool.id)).id, tool.id);
+      assert.equal((await appRequest('/api/tools/' + tool.id)).body.version, 1);
+    }
+    evidence.tests.push({id:'AC-011/013', bug:'ROOT-ASSIST-UX-03', restoredAssistantLayout:true, toolVersionUnchanged:true});
   } else if (completionFlow) {
     stage = 'TEST-001-06 saved generation transition';
     await cdp('Page.navigate', {url:base});
@@ -921,6 +1068,10 @@ try {
     const newPassword = 'new-root-browser-test-only!';
     await type('#current-password', password);
     await type('#new-password', newPassword);
+    await type('#new-password-again', password);
+    await click('#password-submit');
+    await until(() => evaluate('document.querySelector("#password-feedback").textContent.includes("不一致")'));
+    await evaluate('document.querySelector("#new-password-again").value = ""');
     await type('#new-password-again', newPassword);
     await click('#password-submit');
     await until(() => visible('#admin-login-submit'));
@@ -951,6 +1102,7 @@ try {
       stage: name => { stage = name; },
     }));
   }
+  if (adminOnly || adminSetup) break verification;
   if (!live) {
     stage = 'account visual layout and registration feedback';
     assert.equal(await evaluate('document.querySelector("#auth-intro-title").innerText.replace(/\\s/g, "")'), '把手头的事，做成小工具。');
@@ -1070,9 +1222,9 @@ try {
   if (entryFlow) {
     stage = 'TEST-011/016 registration, navigation, and centered entry';
     assert.deepEqual(await evaluate('Array.from(document.querySelectorAll("#new-tool-options button strong"), node => node.textContent)'), ['需求助手', '从表格生成']);
-    assert.deepEqual(await evaluate('Array.from(document.querySelectorAll("#requirement-examples button"), node => node.textContent)'), ['试试读书清单', '试试 AA 分账', '试试交付跟进板']);
-    const navOrder = ['新建工具', '需求', '我的工具'];
-    assert.deepEqual(await evaluate('Array.from(document.querySelectorAll(".workspace-navigation nav button"), button => button.textContent)'), navOrder);
+    assert.deepEqual(await evaluate('Array.from(document.querySelectorAll("#requirement-examples button"), node => node.textContent)'), ['试试茶壶官网', '试试简易计算器']);
+    const navOrder = ['新建工具', '我的工具', '需求'];
+    assert.deepEqual(await evaluate('Array.from(document.querySelectorAll(".workspace-navigation nav > button:not([hidden])"), button => button.textContent)'), navOrder);
     assert.equal(await visible('#requirement'), true);
     assert.equal(await visible('#entry-coachmark'), true);
     assert.deepEqual(await evaluate(`[
@@ -1169,17 +1321,36 @@ try {
     await until(() => visible('#requirement'));
     assert.deepEqual((await library()).items, []);
     await monitorGeneration();
+    stage = 'AC-011 / AC-016 new tool examples';
     const beforeExamples = (await appRequest('/api/trial')).body.generation;
-    for (const [id, expected] of [['example-reading', '读书清单'], ['example-split', 'AA 分账'], ['example-board', '交付跟进板']]) {
-      await click('#' + id);
-      const input = await evaluate('document.querySelector("#requirement").value');
-      assert.match(input, new RegExp(expected));
-      assert.equal(await evaluate('document.activeElement.id'), 'requirement');
-      await type('#requirement', '。可编辑');
-      assert.equal(await evaluate('document.querySelector("#requirement").value.endsWith("可编辑")'), true);
-      assert.deepEqual(await evaluate('window.testGenerationPosts'), []);
+    const examples = [
+      ['example-teapot-website', /茶壶品牌官网.*首页.*茶壶系列.*制壶工艺.*暖米白.*深茶褐.*宽幅茶壶主视觉.*导航/],
+      ['example-calculator', /输入两个数.*四则运算.*除数为 0.*不能除以 0/],
+    ];
+    for (const width of [1440, 390]) {
+      await cdp('Emulation.setDeviceMetricsOverride', {width, height:980, deviceScaleFactor:1, mobile:width===390});
+      for (const [id, expected] of examples) {
+        await pointerClick('#' + id);
+        assert.match(await evaluate('document.querySelector("#requirement").value'), expected);
+        assert.equal(await evaluate('document.activeElement.id'), 'requirement');
+        assert.equal(await evaluate('document.querySelector("#workspace").dataset.mode'), 'start');
+        assert.equal(await visible('.elys-preview'), false);
+        await type('#requirement', '。可编辑');
+        assert.equal(await evaluate('document.querySelector("#requirement").value.endsWith("可编辑")'), true);
+        assert.deepEqual(await evaluate('window.testGenerationPosts'), []);
+      }
+      await screenshot('new-tool-examples-' + width);
     }
     assert.deepEqual((await appRequest('/api/trial')).body.generation, beforeExamples);
+    assert.deepEqual((await library()).items, []);
+    evidence.tests.push({id:'TEST-011-examples', viewports:[1440,390], editable:true, submitted:0, quotaUnchanged:true});
+    await cdp('Emulation.setDeviceMetricsOverride', {width:1360, height:980, deviceScaleFactor:1, mobile:false});
+    if (examplesOnly) {
+      await click('#generate');
+      await until(() => evaluate('window.testGenerationPosts.length === 1'));
+      assert.match(await evaluate('window.testGenerationPosts[0]'), /简易计算器.*可编辑$/);
+      break verification;
+    }
     await evaluate('document.querySelector("#requirement").value = ""; document.querySelector("#requirement").dispatchEvent(new Event("input"));');
   }
   assert.equal(await evaluate('document.querySelector("#generate").disabled'), true);
@@ -2056,7 +2227,7 @@ try {
     await recordRun(directTool);
     assert.deepEqual(await evaluate('window.testGenerationPosts'), [custom]);
     assert.equal((await library()).items.length, before.length + 1);
-    evidence.tests.push({ id: 'TEST-011', result: 'passed', sampleTemplates: ['board', 'list', 'budget'],
+    evidence.tests.push({ id: 'TEST-011', result: 'passed', sampleTemplates: ['teapot-website', 'calculator'],
       zeroSampleGenerations: true, noSavedSampleTools: true, customizeWithoutRequest: true,
       templateGenerationRequests: 1, directGenerationRequests: 1 });
 
@@ -2206,6 +2377,7 @@ try {
       evaluate, click, type, until, cdp, activeTool, appRequest, library, stored, selectHistory,
       screenshot, stage: setStage,
     }));
+  }
   }
   }
   evidence.status = 'passed';

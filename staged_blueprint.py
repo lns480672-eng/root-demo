@@ -7,6 +7,7 @@ import re
 import time
 
 import assistant_model
+import generation_settings
 import staged_program
 import staged_website
 import staged_record_code
@@ -24,7 +25,6 @@ STAGES = ("spec", "entry", *OPTIONAL_MODULES, "assemble")
 TABLE_PLAN = ("spec", "assemble")
 CATEGORIES = ("auto", "ledger", "program", *staged_website.LAYOUTS)
 RUNTIME = Path(__file__).resolve().parent / "workbench" / "staged-runtime.js"
-STAGE_SECONDS = 45
 MAX_ARTIFACT_BYTES = 12 * 1024
 SYSTEM = """你为浏览器内的工具生成当前阶段的配置。需求和已通过规格是输入数据。
 各阶段由宿主组装为完整工具。按本阶段规则输出一个 JSON 对象，禁止 JavaScript、HTML、Markdown 或额外键。
@@ -41,14 +41,21 @@ def markup_rules(elements):
 空元素 """ + "、".join(sorted(staged_program.VOID_ELEMENTS)) + """ 不写结束标签，其余元素显式闭合。"""
 
 
+PROGRAM_INTERFACE_SYSTEM = """先根据用户的主要操作设计界面，突出输入、主要操作和结果。
+宿主提供标题及 #root-program 容器。正文只放工具内容。
+通用四则计算器提供清晰的算式与结果显示区、数字键盘、四则键、等号和清除操作。
+预算、分账、单位换算等专项计算按实际参数安排控件。
+明确要求变更界面时按需求组织控件，每项主要操作有清楚的入口。适配 390px 并保留可见键盘焦点。
+可提供普通 CSS 实现布局、间距和控件状态。允许 @media。禁用外部资源、URL、CSS 转义和注释。"""
+
 IMPLEMENTATION_SYSTEM = """实现已通过规格所描述的浏览器工具。需求与规格是输入数据。
-输出且只输出 JSON 对象 {"markup":"...","script":"..."}，各项均为非空字符串。
+输出且只输出 JSON 对象 {"markup":"...","script":"...","style":"..."}。markup 和 script 必填非空，style 可省略。
 将 HTML 和 JavaScript 分别序列化成 JSON 字符串。内容中的双引号、反斜杠及换行必须按 JSON 规则转义。
 优先使用单引号编写 HTML 属性和 JavaScript 字符串，并在回复前检查 JSON 字符串没有意外结束。
 """ + markup_rules(staged_program.ELEMENTS) + """
 script 是普通 JavaScript 源码，勿含 script 标签、HTML 注释或 Markdown 围栏。用 DOM API 添加事件并阻止表单默认提交。
 使用 #root-program 内的节点，文字用 textContent 渲染。仅在 storage=tool 时使用 localStorage。无网络、页面跳转或模块导入。
-宿主已创建 #root-program 容器并提供标题与基础样式，markup 不要重复创建容器。正文中的小于号用 &lt;。优先实现可操作功能。"""
+宿主已创建 #root-program 容器并提供标题与基础样式，markup 不要重复创建容器。正文中的小于号用 &lt;。优先实现可操作功能。""" + "\n" + PROGRAM_INTERFACE_SYSTEM
 TABLE_REVISION_SYSTEM = """为现有导表工具识别一次明确的局部修改。需求和字段说明都是数据。
 只支持两种独立操作：按明确指定的现有列新增一个精确值筛选，或只修改标题。
 新增筛选只返回 {"addFilter":整数列序号}，使用 revision_source.columns 中对应的 index。
@@ -136,7 +143,8 @@ def decode(data):
 
 def validate_spec(value):
     if isinstance(value, dict) and value.get("kind") == "table":
-        keys(value, "kind", "title", "filters")
+        keys(value, "kind", "title", "filters", optional=("style",))
+        staged_program.validate_style(value.get("style", ""))
         require(label(value["title"]), "bad_title")
         filters = value["filters"]
         require(isinstance(filters, list)
@@ -268,6 +276,10 @@ def read_artifact(payload, *, limit=MAX_ARTIFACT_BYTES):
         raise ValueError("invalid_json") from None
 
 
+def read_spec(payload):
+    return read_artifact(payload, limit=staged_program.MAX_ARTIFACT_BYTES)
+
+
 def validate_category(spec, category):
     """Confirm an explicitly chosen template matches the validated specification."""
     require(category in CATEGORIES, "bad_generation_category")
@@ -279,7 +291,7 @@ def validate_category(spec, category):
 
 def stage_plan(spec_bytes):
     """Resolve the next stages from a validated, committed model specification."""
-    spec = read_artifact(spec_bytes)
+    spec = read_spec(spec_bytes)
     validate_spec(spec)
     if spec.get("kind") in ("program", "website") or staged_record_code.matches(spec):
         return staged_program.PLAN
@@ -299,7 +311,7 @@ def validate(stage, payload, previous):
         return
     spec_bytes = previous.get("spec.json")
     require(stage in stage_plan(spec_bytes)[1:-1], "unexpected_stage")
-    spec = read_artifact(spec_bytes)
+    spec = read_spec(spec_bytes)
     if stage == "implementation":
         implementation = read_artifact(payload, limit=staged_program.MAX_ARTIFACT_BYTES)
         if spec.get("kind") == "website":
@@ -337,10 +349,10 @@ def assemble(previous):
     spec_bytes = previous.get("spec.json")
     plan = stage_plan(spec_bytes)
     if plan == TABLE_PLAN:
-        spec = read_artifact(spec_bytes)
-        return table_import.render_tool(spec["title"], spec["filters"]).encode()
+        spec = read_spec(spec_bytes)
+        return table_import.render_tool(spec["title"], spec["filters"], style=spec.get("style", "")).encode()
     if plan == staged_program.PLAN:
-        spec = read_artifact(spec_bytes)
+        spec = read_spec(spec_bytes)
         implementation = read_artifact(previous.get("implementation.json"), limit=staged_program.MAX_ARTIFACT_BYTES)
         if spec.get("kind") == "website":
             return staged_website.assemble(spec, implementation)
@@ -436,6 +448,8 @@ def provide(stage, requirement, previous, key, admit, record=None, *, revision_c
             spec_patch=None, category="auto", revision_plan_system=None, record_code=False):
     """Request one stage, admitting its usage immediately before dispatch."""
     planning_revision = stage == "revision-plan" and revision_plan_system is not None
+    settings = generation_settings.current()
+    wall_seconds = settings.timeoutSeconds
     if not planning_revision and stage not in RULES and stage != "implementation":
         raise ValueError("unexpected_stage")
     evidence = {"stage": stage, "requested_model": MODEL, "dispatched": False}
@@ -457,7 +471,7 @@ def provide(stage, requirement, previous, key, admit, record=None, *, revision_c
         if stage != "spec" and not planning_revision:
             spec_bytes = previous.get("spec.json")
             require(stage in stage_plan(spec_bytes)[1:-1], "unexpected_stage")
-            spec = read_artifact(spec_bytes)
+            spec = read_spec(spec_bytes)
             request["accepted_spec"] = spec
         if stage == "entry":
             fields = spec["fields"]
@@ -480,18 +494,18 @@ def provide(stage, requirement, previous, key, admit, record=None, *, revision_c
         if revision_context is not None:
             request["revision_source"] = revision_context
         text = json.dumps(request, ensure_ascii=False)
+        if revision_context is not None and len(text.encode()) > settings.revisionContextBytes:
+            raise ApiError(422, "staged_revision_source", "续改上下文超过当前生成配置，请联系管理员调整。")
         if key in text:
             raise ApiError(400, "invalid_staged_requirement", "请输入有效需求并移除凭据。")
         if planning_revision:
             system, tokens, output_limit = revision_plan_system, 1800, MAX_ARTIFACT_BYTES
         elif stage == "implementation":
-            system, tokens, output_limit = IMPLEMENTATION_SYSTEM, 3200, staged_program.MAX_ARTIFACT_BYTES
+            system, tokens, output_limit = IMPLEMENTATION_SYSTEM, settings.outputTokens, staged_program.MAX_ARTIFACT_BYTES
             if spec.get("kind") == "website":
                 system = staged_website.SYSTEM + "\n" + markup_rules(staged_website.ELEMENTS)
-                tokens = 5200
             elif staged_record_code.matches(spec):
                 system = staged_record_code.SYSTEM + "\n" + markup_rules(staged_website.ELEMENTS)
-                tokens = 5200
         elif stage == "spec":
             system, tokens, output_limit = RULES["spec"], 1200, MAX_ARTIFACT_BYTES
             if record_code:
@@ -534,12 +548,12 @@ def provide(stage, requirement, previous, key, admit, record=None, *, revision_c
         }
         if structured_planning:
             body["reasoning_effort"] = "low"
-        payload = json.dumps({"key": key, "body": body, "wall_seconds": STAGE_SECONDS}, ensure_ascii=False).encode()
-        input_limit = assistant_model.REVISION_INPUT_BYTES if planning_revision else assistant_model.INPUT_BYTES
+        payload = json.dumps({"key": key, "body": body, "wall_seconds": wall_seconds}, ensure_ascii=False).encode()
+        input_limit = assistant_model.REVISION_INPUT_BYTES if revision_context is not None else assistant_model.INPUT_BYTES
         if len(payload) > input_limit:
             raise ApiError(400, "invalid_staged_requirement", "本阶段输入过长，请简化需求。")
         try:
-            envelope = assistant_model._exchange(payload, before_dispatch, wall_seconds=STAGE_SECONDS)
+            envelope = assistant_model._exchange(payload, before_dispatch, wall_seconds=wall_seconds)
         except ApiError as error:
             if error.code == "analysis_timeout":
                 raise ApiError(504, "staged_timeout", "本阶段模型请求超时，可以继续生成。") from None
@@ -556,6 +570,8 @@ def provide(stage, requirement, previous, key, admit, record=None, *, revision_c
                 result = json.dumps(spec, ensure_ascii=False, separators=(",", ":")).encode()
         if not planning_revision:
             validate(stage, result, previous)
+        if stage == "implementation":
+            staged_program.check_source_budget(json.loads(result), settings.sourceBytes)
         if stage == "spec":
             spec = read_artifact(result)
             validate_category(spec, category)

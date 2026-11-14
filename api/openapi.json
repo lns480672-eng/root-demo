@@ -455,7 +455,7 @@
         "operationId": "readAppliedToolSource",
         "tags": ["工具"],
         "summary": "读取当前已应用版本的生成文件",
-        "description": "仅工具所有者可读取。版本必须与当前已应用版一致。没有保留生成制品的旧工具返回空文件列表。",
+        "description": "仅工具所有者可读取。版本必须与当前已应用版一致。直接导入表格返回已保存的 app.html。没有保留生成制品的旧工具返回空文件列表。",
         "parameters": [
           {"$ref": "#/components/parameters/Origin"},
           {"$ref": "#/components/parameters/ToolId"}
@@ -1716,6 +1716,150 @@
         }
       }
     },
+    "/api/admin/generation-settings": {
+      "get": {
+        "operationId": "readGenerationSettings",
+        "tags": [
+          "试用"
+        ],
+        "summary": "读取生成配置",
+        "security": [
+          {
+            "AdminCookie": [],
+            "SessionMarker": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "当前生效设置、启动默认值和允许上限",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "settings",
+                    "defaults",
+                    "maximums"
+                  ],
+                  "properties": {
+                    "settings": {
+                      "$ref": "#/components/schemas/GenerationSettings"
+                    },
+                    "defaults": {
+                      "$ref": "#/components/schemas/GenerationSettings"
+                    },
+                    "maximums": {
+                      "$ref": "#/components/schemas/GenerationSettings"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Http401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Http403"
+          },
+          "409": {
+            "$ref": "#/components/responses/Http409"
+          }
+        }
+      },
+      "post": {
+        "operationId": "updateGenerationSettings",
+        "tags": [
+          "试用"
+        ],
+        "summary": "保存生成配置",
+        "security": [
+          {
+            "AdminCookie": [],
+            "SessionMarker": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "当前生效设置、启动默认值和允许上限",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "settings",
+                    "defaults",
+                    "maximums"
+                  ],
+                  "properties": {
+                    "settings": {
+                      "$ref": "#/components/schemas/GenerationSettings"
+                    },
+                    "defaults": {
+                      "$ref": "#/components/schemas/GenerationSettings"
+                    },
+                    "maximums": {
+                      "$ref": "#/components/schemas/GenerationSettings"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Http400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Http401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Http403"
+          },
+          "409": {
+            "$ref": "#/components/responses/Http409"
+          },
+          "415": {
+            "$ref": "#/components/responses/Http415"
+          }
+        },
+        "description": "仅管理员可更新。后续领取的任务使用新值，恢复默认后使用启动配置。续改上下文不能小于源码容量。",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "required": [
+                      "settings"
+                    ],
+                    "additionalProperties": false,
+                    "properties": {
+                      "settings": {
+                        "$ref": "#/components/schemas/GenerationSettings"
+                      }
+                    }
+                  },
+                  {
+                    "type": "object",
+                    "required": [
+                      "reset"
+                    ],
+                    "additionalProperties": false,
+                    "properties": {
+                      "reset": {
+                        "const": true
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/trial/admin": {
       "get": {
         "operationId": "readAdminTrialState",
@@ -2837,6 +2981,12 @@
   },
   "components": {
     "securitySchemes": {
+      "AdminCookie": {
+        "type": "apiKey",
+        "in": "cookie",
+        "name": "root_admin"
+      },
+
       "SessionCookie": {
         "type": "apiKey",
         "in": "cookie",
@@ -3053,6 +3203,39 @@
       }
     },
     "schemas": {
+      "GenerationSettings": {
+        "type": "object",
+        "required": [
+          "sourceBytes",
+          "revisionContextBytes",
+          "outputTokens",
+          "timeoutSeconds"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "sourceBytes": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 8388608
+          },
+          "revisionContextBytes": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 16777216
+          },
+          "outputTokens": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 393216
+          },
+          "timeoutSeconds": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1800
+          }
+        }
+      },
+
       "ToolSource": {
         "type": "object",
         "required": ["toolId", "version", "applied", "files"],

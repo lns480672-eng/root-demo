@@ -11,13 +11,8 @@ import staged_program
 LAYOUTS = ("landing", "brand")
 FORMAT = "website-code-v1"
 ELEMENTS = staged_program.ELEMENTS | {"h1", "main", "nav"}
-MAX_STYLE_BYTES = 4 * 1024
 # A layered important rule takes precedence over unlayered generated styles.
 HIDDEN_STYLE = "@layer root-invariants { #root-website [hidden] { display: none !important; } }"
-UNSAFE_STYLE = re.compile(
-    r"<|\\|/\*|@(?!media\b)|\b(?:url|src|(?:-webkit-)?image-set)\s*\(",
-    re.IGNORECASE,
-)
 SYSTEM = f"""为已通过规格直接编写网站的 HTML、CSS 和 JavaScript。
 只返回 JSON 对象 {{"format":"{FORMAT}","markup":"HTML","style":"CSS","script":"JavaScript"}}。
 直接返回一个可解析的 JSON 对象。所有四个键都必填。不要使用工具调用、XML 或 Markdown。
@@ -35,7 +30,7 @@ HTML 自带的 details/summary 可直接展开。自定义按钮必须有实际�
 跨视图共用一组色彩、字阶、间距和控件样式，可在 :root 或 #root-website 上集中定义 CSS 变量。核对变量名和选择器，主要文字与按钮颜色用 var(--名称, 实际颜色) 提供回退值。只保留有信息或操作作用的元素。
 用响应式布局保证 390px 宽度下内容和主要操作可用。保持文字对比，给键盘 :focus-visible 样式。
 切换视图后把焦点移到新视图的标题，标题可设置 tabindex='-1'。
-每个视图先完成所需操作，控制内容及样式规模。CSS 尽量少于 1500 字符，HTML 尽量少于 3000 字符。"""
+每个视图完成对应需求与操作。"""
 
 
 def validate(value):
@@ -47,16 +42,12 @@ def validate(value):
 
 
 def validate_fragment(value):
-    fragment = staged_program.validate({"markup": value["markup"], "script": value["script"]}, elements=ELEMENTS)
+    fragment = staged_program.validate({key: value[key] for key in ("markup", "script", "style")},
+                                       elements=ELEMENTS, kind="website")
     # Browsers recognize an empty fragment and #top as links to the document start.
     for target in fragment.fragment_links:
         if target and target.lower() != "top" and unquote(target) not in fragment.ids | {"root-website"}:
             raise ValueError("bad_website_anchor_target")
-    style = value["style"]
-    if not isinstance(style, str) or len(style.encode()) > MAX_STYLE_BYTES or "\x00" in style:
-        raise ValueError("bad_website_style_size")
-    if UNSAFE_STYLE.search(style):
-        raise ValueError("bad_website_style_reference")
 
 
 STYLE_DELIMITERS = re.compile(r"""(?:"[^"\n\r\f]*"|'[^'\n\r\f]*')|[{};'"]""")

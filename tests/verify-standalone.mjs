@@ -33,6 +33,21 @@ export async function verifyStandalone(ctx) {
       assert.equal(await evaluate('location.href'), url);
       assert.equal(await evaluate('window.opener === null'), true);
       assert.equal(await evaluate('document.querySelector(".workspace-sidebar").checkVisibility()'), false);
+      // The tool fills the viewport below the workbench header.
+      const layout = await evaluate(`(() => {
+        const workspace = document.querySelector('#workspace');
+        const panel = workspace.querySelector('.elys-preview');
+        const preview = panel.getBoundingClientRect();
+        const frame = document.querySelector('#preview iframe').getBoundingClientRect();
+        return {left: preview.left, right: preview.right, frameLeft: frame.left,
+          frameRight: frame.right, frameTop:frame.top, frameBottom:frame.bottom,
+          mastheadBottom:document.querySelector(".elys-masthead").getBoundingClientRect().bottom,
+          height:innerHeight, width: document.documentElement.clientWidth,
+          display: getComputedStyle(workspace).display, columns: getComputedStyle(workspace).gridTemplateColumns};
+      })()`);
+      assert.ok(Math.abs(layout.frameLeft) <= 1 && Math.abs(layout.frameRight - layout.width) <= 1 &&
+        Math.abs(layout.frameTop - layout.mastheadBottom) <= 1 && Math.abs(layout.frameBottom - layout.height) <= 1,
+        '独立工具应铺满页头下方：' + JSON.stringify(layout));
       assert.equal(await evaluate('document.querySelector("#standalone-back").href'), base + '/');
       assert.equal(await evaluate('document.querySelector("#preview iframe").sandbox.contains("allow-same-origin")'), false);
       assert.equal(await evaluate('(() => { try { return Boolean(parent.document); } catch { return false; } })()', tool.context), false);

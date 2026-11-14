@@ -29,6 +29,11 @@ const tool = (name, description, parameters, handler) => ({
 });
 async function submit(files, decision) {
   if (JSON.stringify(decision).includes(key)) throw Error('invalid decision');
+  const bytes = [...files.values()].reduce((sum, content) => sum + Buffer.byteLength(content), 0);
+  if (bytes > request.maxSourceBytes && !['clarify', 'unsupported'].includes(decision.status)
+      && !['backfill', 'title', 'table_filter'].includes(decision.operation?.kind)) {
+    return 'HTML、JavaScript 和 CSS 合计超过源码容量。';
+  }
   send({kind:'candidate',files:Object.fromEntries(files),decision});
   return (await receive()).reason;
 }
@@ -51,12 +56,21 @@ const tools = [
     const changed = new Map(files);
     for (const [name, content] of Object.entries(changes)) {
       if (content === undefined) continue;
-      if (!files.has(name) || Buffer.byteLength(content) > 24576 || content.includes(key)) throw Error('invalid file');
+      if (!files.has(name) || content.includes(key)) throw Error('invalid file');
       changed.set(name,content);
     }
     return submit(changed, decision);
   }),
 ];
+if (request.tableRevision) {
+  tools.push(tool('propose_table_edit', '提交一个表格修改。title 填写新标题，column 填写筛选列的序号。二选一。', {
+    type:'object', properties:{title:string, column:{type:'integer',minimum:0}}, additionalProperties:false,
+  }, ({title,column}) => {
+    if ((title === undefined) === (column === undefined)) throw Error('select one table operation');
+    const operation = title === undefined ? {kind:'table_filter',column} : {kind:'title',label:title};
+    return submit(files, {operation});
+  }));
+}
 if (request.recordRevision) {
   tools.push(tool('propose_backfill', '为已有工具提出空值回填方案。仅生成提案，由宿主计算影响并在用户确认后执行。',
     schema({field:string,value:{anyOf:[string,{type:'integer'}]}}),
@@ -66,13 +80,14 @@ if (request.recordRevision) {
     ({field,type,markup,script}) => {
       const changed = new Map(files);
       for (const [name, content] of [['tool.html',markup],['tool.js',script]]) {
-        if (Buffer.byteLength(content) > 24576 || content.includes(key)) throw Error('invalid file');
+        if (content.includes(key)) throw Error('invalid file');
         changed.set(name,content);
       }
       return submit(changed, {operation:{kind:'change_type',field,type}});
     }));
 }
-const model = {...getModel('deepseek','deepseek-v4-flash'),id:'deepseek-flash',baseUrl:'https://api.deepseek.com'};
+const model = {...getModel('deepseek','deepseek-v4-flash'),id:'deepseek-flash',baseUrl:'https://api.deepseek.com',
+  contextWindow:1048576,maxTokens:393216};
 const agent = new Agent({
   initialState:{model,tools,thinkingLevel:'off',systemPrompt:request.system},
   toolExecution:'sequential',
@@ -80,7 +95,7 @@ const agent = new Agent({
   streamFn:async (model, context, options) => {
     send({kind:'dispatch'});
     if (!(await receive()).ok) throw Error('dispatch rejected');
-    const stream = streamSimple(model, context, {...options,toolChoice:'required',maxTokens:5200,maxRetries:0});
+    const stream = streamSimple(model, context, {...options,toolChoice:'required',maxTokens:request.maxOutputTokens,maxRetries:0});
     stream.result().then(message => send({
       kind:'receipt', status:['error','aborted','length'].includes(message.stopReason) ? 'provider_error' : 'ok',
       usage:{total_tokens:message.usage.totalTokens}, finish_reason:message.stopReason

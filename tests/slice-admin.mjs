@@ -130,7 +130,75 @@ export async function verifyAdmin({evaluate, click, pointerClick, type, until, c
   await until(async () => /正常/.test(await text('#model-status')));
   assert.match(await text('#audit-list'), /恢复模型调用/);
 
-  stage('AC-017 account management is a locked preview');
+  stage('generation settings frontend contract');
+  const liveSettings = process.env.ROOT_ADMIN_SETTINGS_HTTP === '1';
+  if (!liveSettings) {
+  await evaluate(`(() => {
+    const original = window.fetch;
+    const defaults = {sourceBytes:2457600, revisionContextBytes:4096000, outputTokens:393216, timeoutSeconds:300};
+    const maximums = {sourceBytes:5000000, revisionContextBytes:7000000, outputTokens:400000, timeoutSeconds:600};
+    let settings = {...defaults};
+    window.generationSettingsWrites = [];
+    window.restoreSettingsFetch = () => { window.fetch = original; };
+    window.fetch = async (path, options) => {
+      if (path !== '/api/admin/generation-settings') return original(path, options);
+      if (!options.headers['X-Root-Session']) return Response.json({code:'session_changed'}, {status:403});
+      if (options.method === 'POST') {
+        const body = JSON.parse(options.body);
+        window.generationSettingsWrites.push(body);
+        settings = body.reset ? {...defaults} : body.settings;
+      }
+      return Response.json({settings, defaults, maximums});
+    };
+  })()`);
+  }
+  const settingsFromServer = () => evaluate(`fetch('/api/admin/generation-settings', {
+    headers: {'X-Root-Session': identity.marker},
+  }).then(response => response.json())`);
+  await click('#generation-settings-nav');
+  await until(() => evaluate('!document.querySelector("#generation-settings-fields").disabled'));
+  assert.equal(await visible('#admin'), false);
+  assert.equal(await evaluate('document.querySelector("#setting-timeoutSeconds").valueAsNumber'), 300);
+  const limits = await settingsFromServer();
+  const maximumTimeout = limits.maximums.timeoutSeconds;
+  assert.equal(await evaluate('document.querySelector("#setting-timeoutSeconds").max'), String(maximumTimeout));
+  await evaluate('document.querySelector("#setting-revisionContextBytes").value = 1');
+  await click('#generation-settings-form [type=submit]');
+  assert.match(await text('#generation-settings-feedback'), /大于或等于/);
+  if (liveSettings) assert.deepEqual((await settingsFromServer()).settings, limits.settings);
+  else assert.deepEqual(await evaluate('window.generationSettingsWrites'), []);
+  await evaluate('document.querySelector("#setting-revisionContextBytes").value = 4096000; document.querySelector("#setting-timeoutSeconds").value = ' + (maximumTimeout + 1));
+  await click('#generation-settings-form [type=submit]');
+  assert.ok((await text('#generation-settings-feedback')).includes(maximumTimeout.toLocaleString('zh-CN')));
+  if (liveSettings) assert.deepEqual((await settingsFromServer()).settings, limits.settings);
+  else assert.deepEqual(await evaluate('window.generationSettingsWrites'), []);
+  await evaluate('document.querySelector("#setting-timeoutSeconds").value = 450');
+  await click('#generation-settings-form [type=submit]');
+  await until(async () => (await text('#generation-settings-feedback')).includes('已保存'));
+  if (liveSettings) {
+    assert.equal((await settingsFromServer()).settings.timeoutSeconds, 450);
+    await cdp('Page.reload', {ignoreCache:true});
+    await until(() => evaluate('!document.querySelector("#generation-settings-fields").disabled'));
+    assert.equal(await evaluate('document.querySelector("#setting-timeoutSeconds").valueAsNumber'), 450);
+  } else {
+    assert.equal(await evaluate('window.generationSettingsWrites[0].settings.timeoutSeconds'), 450);
+  }
+  await screenshot('admin-generation-settings');
+  await cdp('Emulation.setDeviceMetricsOverride', {width:390,height:844,deviceScaleFactor:1,mobile:true});
+  assert.equal(await evaluate('document.documentElement.scrollWidth <= innerWidth'), true);
+  await screenshot('admin-generation-settings-390');
+  await cdp('Emulation.setDeviceMetricsOverride', {width:1360,height:980,deviceScaleFactor:1,mobile:false});
+  await click('#generation-settings-reset');
+  await until(async () => (await text('#generation-settings-feedback')).includes('已恢复默认值'));
+  if (liveSettings) assert.deepEqual((await settingsFromServer()).settings, limits.defaults);
+  else assert.deepEqual(await evaluate('window.generationSettingsWrites[1]'), {reset:true});
+  assert.equal(await evaluate('document.querySelector("#setting-timeoutSeconds").valueAsNumber'), 300);
+  if (!liveSettings) await evaluate('window.restoreSettingsFetch()');
+
+  stage('AC-017 user management is a locked preview');
+  assert.match(await text('#security-nav'), /密码修改/);
+  assert.equal(await evaluate('document.querySelector(".admin-nav").lastElementChild.id'), 'account-nav');
+  assert.match(await text('#account-nav'), /用户管理.*暂未开放/);
   await click('#account-nav');
   await until(() => visible('#account-preview'));
   assert.match(await text('#account-preview'), /暂未开放/);
@@ -140,7 +208,7 @@ export async function verifyAdmin({evaluate, click, pointerClick, type, until, c
   assert.equal(await visible('#admin'), false);
   assert.equal(await visible('#invite-module'), false);
   assert.deepEqual(await evaluate(`[...document.querySelectorAll('#account-preview button')]
-    .map(button => [button.textContent, button.disabled])`), [['重置密码', true], ['删除账号', true]]);
+    .map(button => [button.textContent, button.disabled])`), [['删除账号', true]]);
   await evaluate(`(() => {
     const original = window.fetch;
     window.previewWrites = [];
@@ -149,8 +217,13 @@ export async function verifyAdmin({evaluate, click, pointerClick, type, until, c
       return original(path, options);
     };
   })()`);
-  await pointerClick('#account-preview button:first-child');
-  await pointerClick('#account-preview button:last-child');
+  for (const width of [1360, 390]) {
+    await cdp('Emulation.setDeviceMetricsOverride', {width,height:844,deviceScaleFactor:1,mobile:width===390});
+    assert.equal(await evaluate('document.documentElement.scrollWidth <= innerWidth'), true);
+    await screenshot('admin-user-management-' + width);
+  }
+  await cdp('Emulation.setDeviceMetricsOverride', {width:1360,height:980,deviceScaleFactor:1,mobile:false});
+  await pointerClick('#account-preview button');
   assert.deepEqual(await evaluate('window.previewWrites'), []);
   await screenshot('account-preview-desktop');
   await cdp('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
@@ -290,7 +363,7 @@ export async function verifyAdmin({evaluate, click, pointerClick, type, until, c
     id: 'TEST-017', result: 'passed', normalAccountDenied: true, noSampleState: true,
     generationFailures: [1, 2], analysisFailures: [0, 1], pauseResume: true,
     lostGrantResponseChargedOnce: true, idempotencySurvivesSessionChange: true, loadErrorDoesNotShowFakeData: true,
-    accountActionsLocked: true, accountPreviewReloaded: true, accountPreviewWrites: 0, responsiveWidths: [1360, 700, 390, 320],
+    generationSettingsContract: true, generationSettingsHttp: liveSettings, accountActionsLocked: true, accountPreviewReloaded: true, accountPreviewWrites: 0, responsiveWidths: [1360, 700, 390, 320],
   }, {
     id: 'TEST-019', result: 'passed', actualClipboard: true, manualCopyFallback: true,
     survivesResponseLoss: true, singleUse: true, ordinaryAccountDenied: true, ttlHours,

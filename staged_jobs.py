@@ -11,6 +11,7 @@ import tempfile
 import time
 import uuid
 
+from generation_settings import extend_lease
 from accounts import ApiError, TABLE_STORAGE_BYTES, TOOL_STORAGE_BYTES, pack_entries
 from runtime_verify import RuntimeVerificationError, check_script
 from staged_revision import REVISION_GUIDANCE
@@ -500,7 +501,7 @@ class StagedJobs:
     def record_code_spec(self, db, tool):
         source = self.published_source(db, tool["run_id"])
         if source is not None:
-            spec = self.blueprint.read_artifact(self.read(source, source["head"], "spec.json"))
+            spec = self.blueprint.read_spec(self.read(source, source["head"], "spec.json"))
             if staged_record_code.matches(spec):
                 return spec
         return None
@@ -601,14 +602,14 @@ class StagedJobs:
             is_revision = steps[0] == "revision-plan"
             steps = ("revision-plan", *stages) if is_revision else stages
             if not is_revision and not row["title"]:
-                spec = self.blueprint.read_artifact(content)
+                spec = self.blueprint.read_spec(content)
                 title = spec.get("title")
                 if isinstance(title, str):
                     generated_title = title.strip()[:40].rstrip() or None
         db.execute("""
             UPDATE staged_jobs SET next_stage=?,head=?,state=?,lease_until=?,updated_at=?,plan=?,failure=?,
                                    generated_title=? WHERE id=?
-        """, (next_stage, oid, state, self.clock() + self.lease_seconds if state == "running" else 0,
+        """, (next_stage, oid, state, self.clock() + extend_lease(self.lease_seconds) if state == "running" else 0,
               self.clock(), json.dumps(steps), failure, generated_title, row["id"]))
 
     def check_revision(self, db, row, stage, content, prior):
@@ -629,7 +630,7 @@ class StagedJobs:
             if self.blueprint.stage_plan(content) == self.blueprint.TABLE_PLAN:
                 raise ValueError("unexpected table specification")
             if row["category"] != "auto":
-                self.blueprint.validate_category(self.blueprint.read_artifact(content), row["category"])
+                self.blueprint.validate_category(self.blueprint.read_spec(content), row["category"])
 
     def recover(self, db, row):
         tip = self.tip(row)
@@ -652,6 +653,19 @@ class StagedJobs:
             raise ValueError("unexpected staged checkpoint")
         self.advance_row(db, row, tip, stage, content)
 
+    def resume_status(self, token, marker, identifier):
+        with self.store.connection(write=True) as db:
+            row = self.owned(db, token, marker, identifier)
+            if row["fence"] and self.view(row)["resumable"]:
+                self.recover(db, row)
+                recovered = self.row(db, identifier)
+                if recovered["head"] != row["head"] and recovered["state"] == "running":
+                    # A recovered stage is durable, but the next stage still needs a slot.
+                    db.execute("UPDATE staged_jobs SET state='queued',lease_until=0,issue=NULL WHERE id=?",
+                               (identifier,))
+                row = self.row(db, identifier)
+            return self.view(row, db)
+
     def claim(self, token, marker, identifier, *, resume=True):
         with self.store.connection(write=True) as db:
             row = self.owned(db, token, marker, identifier)
@@ -670,7 +684,7 @@ class StagedJobs:
                 self.git(row, "cat-file", "-e", row["head"] + "^{commit}")
             fence = row["fence"] + 1
             db.execute("UPDATE staged_jobs SET state='running',fence=?,lease_until=?,issue=NULL,failure=NULL,updated_at=? WHERE id=?",
-                       (fence, self.clock() + self.lease_seconds, self.clock(), identifier))
+                       (fence, self.clock() + extend_lease(self.lease_seconds), self.clock(), identifier))
             return fence
 
     def worker(self, db, identifier, fence, expected):
@@ -690,7 +704,7 @@ class StagedJobs:
             self.budget.reserve_generation(db, row["owner"], dispatch_id=dispatch_id)
             db.execute("INSERT INTO staged_dispatches VALUES (?,?,?,?)", (dispatch_id, identifier, index, fence))
             db.execute("UPDATE staged_jobs SET lease_until=? WHERE id=?",
-                       (self.clock() + self.lease_seconds, identifier))
+                       (self.clock() + extend_lease(self.lease_seconds), identifier))
 
     def checkpoint(self, identifier, fence, index, stage, content, prior):
         if stage != "revision-plan":
@@ -747,7 +761,7 @@ class StagedJobs:
         retryable = (
             stage == "implementation"
             and self.steps(row)[0] == "spec"
-            and staged_record_code.matches(self.blueprint.read_artifact(prior["spec.json"]))
+            and staged_record_code.matches(self.blueprint.read_spec(prior["spec.json"]))
         )
         patch_retry = stage == "revision-plan" and revision_provider is not None
         patch_feedback = None
@@ -794,7 +808,7 @@ class StagedJobs:
                 base = self.revision_context(identifier) if self.coding_provider and stage == "revision-plan" else None
                 if self.coding_provider and (
                     (stage == "implementation" and "revision-plan.json" not in prior)
-                    or (base and base["kind"] in ("program", "website", "record_code"))
+                    or (base and base["kind"] in ("program", "website", "record_code", "table"))
                 ):
                     content = self.generate_code(identifier, fence, index, stage, row["requirement"], prior, base)
                 elif stage == "assemble":
@@ -859,7 +873,23 @@ class StagedJobs:
             job = self.published_source(db, tool["run_id"])
             if job is not None and job["owner"] != user["id"]:
                 raise ApiError(404, "tool_unavailable", "此工具不可用。")
+            snapshot = None
+            if job is None and tool["table_tool"]:
+                snapshot = db.execute("""
+                    SELECT r.repo_id, g.commit_id FROM tool_git_repositories r
+                    JOIN tool_git_versions g USING (tool_id)
+                    WHERE r.tool_id=? AND g.version=?
+                """, (tool_id, version)).fetchone()
         files = []
+        if snapshot is not None:
+            try:
+                repo = self.root / (snapshot["repo_id"] + ".git")
+                html = self.git_at(repo, "show", snapshot["commit_id"] + ":app.html")
+                if html != (self.runs / tool["run_id"] / "app.html").read_bytes():
+                    raise ValueError("table source mismatch")
+                files = [{"path":"app.html", "text":html.decode()}]
+            except (ValueError, OSError, subprocess.SubprocessError):
+                raise ApiError(503, "tool_source_unavailable", "暂时无法读取此版本的代码，请重试。") from None
         if job is not None:
             try:
                 saved_digest = digest((self.runs / tool["run_id"] / "app.html").read_bytes())
@@ -933,7 +963,7 @@ class StagedJobs:
         files = self.files(row)
         decision = json.loads(files.get("revision-plan.json", b"{}"))
         operation = decision.get("operation", {})
-        if "implementation" in decision:
+        if "implementation" in decision or "style" in decision:
             plan["trialPreview"] = True
         if operation.get("kind") == "add_field" and not {"edits", "implementation"} & decision.keys():
             plan["fieldType"] = {"id":row["head"], "label":operation["label"], "type":operation["type"]}
@@ -1070,7 +1100,7 @@ class StagedJobs:
         limit = TABLE_STORAGE_BYTES if current and current["table_tool"] else TOOL_STORAGE_BYTES
         packed = pack_entries(data.get("entries"), limit=limit)
         if current is None:
-            spec = self.blueprint.read_artifact(self.read(row, identity["commit"], "spec.json"))
+            spec = self.blueprint.read_spec(self.read(row, identity["commit"], "spec.json"))
             if staged_record_code.matches(spec) and packed != "[]":
                 raise ApiError(409, "incompatible_data", "新台账或看板须从空记录开始。")
         if current and dict(json.loads(packed)) != dict(json.loads(current["entries"])):
@@ -1091,7 +1121,7 @@ class StagedJobs:
         if self.runtime_verifier is None:
             raise ApiError(503, "staged_verifier_unavailable", "运行检查暂不可用，请稍后重新检查预览。")
         try:
-            spec = self.blueprint.read_artifact(self.read(row, identity["commit"], "spec.json"))
+            spec = self.blueprint.read_spec(self.read(row, identity["commit"], "spec.json"))
             if not isinstance(spec, dict):
                 raise ValueError("invalid candidate specification")
         except (ValueError, OSError, RecursionError, subprocess.SubprocessError):

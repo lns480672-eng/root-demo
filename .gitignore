@@ -6,6 +6,7 @@
 !/DESIGN.md
 !/workbench-harness.yaml
 !/generate.py
+!/generation_settings.py
 !/staged_website.py
 !/staged_record_code.py
 !/runtime_verify.py

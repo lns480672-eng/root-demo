@@ -4,12 +4,12 @@ from html import escape
 from html.parser import HTMLParser
 import re
 
+from generation_settings import MAX_JSON_BYTES, MAXIMUMS
+
 
 PLAN = ("spec", "implementation", "assemble")
 NO_STORAGE_MARKER = "<!--root:storage=none-->"
-MAX_MARKUP_BYTES = 8 * 1024
-MAX_SCRIPT_BYTES = 12 * 1024
-MAX_ARTIFACT_BYTES = 24 * 1024
+MAX_ARTIFACT_BYTES = MAX_JSON_BYTES
 VOID_ELEMENTS = frozenset("br col hr input wbr".split())
 ELEMENTS = VOID_ELEMENTS | frozenset("""
 a abbr article aside b blockquote button canvas caption code colgroup dd details div dl dt em fieldset
@@ -28,6 +28,10 @@ ELEMENT_ATTRIBUTES = {
 }
 SAFE_ATTRIBUTE = re.compile(r"(?:aria|data)-[a-z][a-z0-9_-]{0,59}\Z")
 SCRIPT_BOUNDARY = re.compile(r"</?script|<!--|-->", re.IGNORECASE)
+UNSAFE_STYLE = re.compile(
+    r"<|\\|/\*|@(?!media\b)|\b(?:url|src|(?:-webkit-)?image-set)\s*\(",
+    re.IGNORECASE,
+)
 
 
 class Fragment(HTMLParser):
@@ -84,13 +88,27 @@ class Fragment(HTMLParser):
     handle_comment = handle_decl
 
 
-def validate(value, *, elements=ELEMENTS):
-    if not isinstance(value, dict) or value.keys() != {"markup", "script"}:
+def validate_style(style, *, kind="program"):
+    if not isinstance(style, str) or len(style.encode()) > MAXIMUMS.sourceBytes or "\x00" in style:
+        raise ValueError(f"bad_{kind}_style_size")
+    if UNSAFE_STYLE.search(style):
+        raise ValueError(f"bad_{kind}_style_reference")
+
+
+def check_source_budget(value, limit):
+    if sum(len(value.get(field, "").encode()) for field in ("markup", "script", "style")) > limit:
+        raise ValueError("bad_program_size")
+
+
+def validate(value, *, elements=ELEMENTS, kind="program"):
+    if not isinstance(value, dict) or value.keys() not in ({"markup", "script"}, {"markup", "script", "style"}):
         raise ValueError("bad_program_shape")
+    style = value.get("style", "")
+    validate_style(style, kind=kind)
     markup, script = value["markup"], value["script"]
-    for text, limit in ((markup, MAX_MARKUP_BYTES), (script, MAX_SCRIPT_BYTES)):
-        if not isinstance(text, str) or not text.strip() or "\x00" in text or len(text.encode()) > limit:
-            raise ValueError("bad_program_size")
+    if any(not isinstance(text, str) or not text.strip() or "\x00" in text for text in (markup, script)):
+        raise ValueError("bad_program_size")
+    check_source_budget(value, MAXIMUMS.sourceBytes)
     if SCRIPT_BOUNDARY.search(script):
         raise ValueError("bad_program_script")
     parser = Fragment(elements)
@@ -107,6 +125,7 @@ def assemble(spec, implementation):
     markup, script = implementation["markup"], implementation["script"]
     alignment = ("#root-program{box-sizing:border-box;max-width:720px;margin-inline:auto}"
                  if spec.get("contentAlignment") == "center" else "")
+    style = implementation.get("style", "")
     storage = NO_STORAGE_MARKER if spec.get("storage") == "none" else ""
     return f'''<!doctype html>{storage}<html lang="zh-CN"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -123,7 +142,7 @@ button[type=submit],form button:not([type]){{background:#24499b;color:white;bord
 :focus-visible{{outline:2px solid #24499b;outline-offset:2px}}
 output{{font-weight:650;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}}
 table{{border-collapse:collapse}}th,td{{padding:6px 9px;text-align:left}}
-{alignment}</style></head><body><h1>{title}</h1><main id="root-program">{markup}
+{alignment}</style>{f"<style>{style}</style>" if style else ""}</head><body><h1>{title}</h1><main id="root-program">{markup}
 </main><script>
 (() => {{
   'use strict';

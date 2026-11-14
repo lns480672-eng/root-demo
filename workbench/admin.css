@@ -225,3 +225,19 @@
 .credential-form label { font-weight: 600; margin-top: 6px; }
 .credential-form input { width: 100%; min-width: 0; }
 .credential-form button { justify-self: start; }
+
+#generation-settings-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  padding: 0;
+  margin: 0;
+  min-inline-size: 0;
+  border: 0;
+}
+#generation-settings-fields legend { font-size: 18px; font-weight: 700; margin-block-end: 12px; }
+#generation-settings-fields input { display: block; width: 100%; margin-block: 4px; min-height: 44px; }
+#generation-settings-fields .actions { grid-column: 1 / -1; }
+@media (max-width: 620px) {
+  #generation-settings-fields { grid-template-columns: minmax(0, 1fr); }
+}

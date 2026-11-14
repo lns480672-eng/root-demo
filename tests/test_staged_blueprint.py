@@ -432,8 +432,8 @@ class StageProviderTests(unittest.TestCase):
         def exchange(payload, admit, *, wall_seconds):
             sent = json.loads(payload)
             self.assertEqual(sent["key"], secret)
-            self.assertEqual(wall_seconds, 45)
-            self.assertEqual(sent["wall_seconds"], 45)
+            self.assertEqual(wall_seconds, 300)
+            self.assertEqual(sent["wall_seconds"], 300)
             self.assertEqual(assistant_model.WALL_SECONDS, 30)
             self.assertEqual(sent["body"]["response_format"], {"type": "json_object"})
             data = json.loads(sent["body"]["messages"][1]["content"])
@@ -473,7 +473,7 @@ class StageProviderTests(unittest.TestCase):
                 self.assertIn('"kind":"program"', body["messages"][0]["content"])
                 return envelope(spec.decode())
             self.assertEqual(request["accepted_spec"], json.loads(spec))
-            self.assertEqual(body["max_tokens"], 3200)
+            self.assertEqual(body["max_tokens"], 393216)
             system = body["messages"][0]["content"]
             self.assertIn("、".join(sorted(blueprint.staged_program.ELEMENTS)), system)
             self.assertIn("、".join(sorted(blueprint.staged_program.ATTRIBUTES)), system)

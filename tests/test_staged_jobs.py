@@ -15,7 +15,7 @@ class Blueprint:
     STAGES = ("spec", "entry", "filters", "assemble")
 
     @staticmethod
-    def read_artifact(_content):
+    def read_spec(_content):
         return {}
 
     def stage_plan(self, spec):

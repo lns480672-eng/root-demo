@@ -83,6 +83,14 @@ def stages(stage, requirement, prior, key, admit, record, *, category="auto"):
         with patch.object(assistant_model, "_exchange", exchange):
             return staged_blueprint.provide(stage, requirement, prior, key, admit, record, record_code=True)
     admit()
+    if stage == "spec" and requirement.startswith("计算并发"):
+        label = requirement.removeprefix("计算并发")
+        (runs / ("entered-" + label)).touch()
+        deadline = time.monotonic() + 8
+        while not (runs / ("release-" + label)).exists() and time.monotonic() < deadline:
+            time.sleep(.01)
+        record({"stage":stage,"status":"ok","dispatched":True})
+        return json.dumps({"kind":"program","title":requirement,"goal":"计算两数和"}).encode()
     if requirement.startswith("超出"):
         record({"stage":stage,"status":"staged_unsupported","dispatched":True})
         raise ApiError(422, "staged_unsupported", "固定替身表示不支持")
@@ -471,6 +479,67 @@ class StagedReconnectHTTP(StagedHTTPFixture):
 
 
 class StagedHTTP(StagedHTTPFixture):
+    def test_two_accounts_run_and_third_waits_without_crossing_tools(self):
+        owners = [self.account("parallel-" + label) for label in ("a", "b", "c")]
+        labels = ("甲", "乙", "丙")
+        requests = [uuid4().hex for _ in labels]
+        before = self.request("/api/trial", auth=owners[0])[1]["generation"]
+
+        def release_all():
+            for label in labels:
+                (self.runs / ("release-" + label)).touch()
+
+        self.addCleanup(release_all)
+        task_ids = []
+        for owner, label, request_id in zip(owners, labels, requests):
+            status, body, _ = self.gen(owner, "计算并发" + label, request_id)
+            self.assertEqual(status, 202)
+            task_ids.append(body["task"]["id"])
+        deadline = time.monotonic() + 2
+        while not all((self.runs / ("entered-" + x)).exists() for x in labels[:2]) and time.monotonic() < deadline:
+            time.sleep(.02)
+        self.assertTrue(all((self.runs / ("entered-" + x)).exists() for x in labels[:2]),
+                        "两个账号应在释放任一任务前都进入模型阶段")
+        self.assertFalse((self.runs / "entered-丙").exists())
+        waiting = "/api/staged/" + task_ids[2]
+        self.assertEqual(self.request(waiting, auth=owners[2])[1]["task"]["state"], "queued")
+        queued_quota = self.request("/api/trial", auth=owners[2])[1]["generation"]
+        self.assertEqual((queued_quota["used"], queued_quota["totalUsed"] - before["totalUsed"]), (0, 2))
+        self.assertEqual(self.gen(owners[2], "计算并发丙", requests[2])[1]["task"]["id"], task_ids[2])
+        self.assertEqual(self.request(waiting + "/resume", {}, owners[0])[0], 404)
+        (self.runs / "release-甲").touch()
+        deadline = time.monotonic() + 3
+        while not (self.runs / "entered-丙").exists() and time.monotonic() < deadline:
+            time.sleep(.02)
+        self.assertTrue((self.runs / "entered-丙").exists(), "有空位后第三条任务应自动开始")
+        release_all()
+
+        tools, payloads = [], []
+        for owner, label, task_id in zip(owners, labels, task_ids):
+            self.wait_task(owner, task_id, "complete")
+            path = "/api/staged/" + task_id
+            status, candidate, _ = self.request(path + "/candidate", {}, owner)
+            self.assertEqual(status, 200)
+            payload = {**candidate["staged"], "toolId":candidate["id"], "entries":[["record", label]]}
+            self.assert_preview_verified(path, payload, owner)
+            status, tool, _ = self.request(path + "/publish", payload, owner)
+            self.assertEqual(status, 200, tool)
+            self.assertIn("计算并发" + label, tool["html"])
+            self.assertEqual((tool["id"], tool["html"], tool["entries"]),
+                             (candidate["id"], candidate["html"], [["record", label]]))
+            tools.append(tool["id"])
+            payloads.append(payload)
+        self.assertEqual(len(set(tools)), 3)
+        for index, owner in enumerate(owners):
+            other = (index + 1) % len(owners)
+            self.assertEqual(self.request("/api/staged/" + task_ids[other] + "/candidate", {}, owner)[0], 404)
+            self.assertEqual(self.request("/api/tools/" + tools[other], auth=owner)[0], 404)
+            self.assertEqual(self.request("/api/staged/" + task_ids[index] + "/publish", payloads[other], owner)[0], 409)
+            self.assertEqual(self.request("/api/staged/" + task_ids[index] + "/publish", payloads[index], owner)[0], 200)
+            self.assertEqual(self.request("/api/tools/" + tools[index], auth=owner)[1]["entries"], [["record", labels[index]]])
+            quota = self.request("/api/trial", auth=owner)[1]["generation"]
+            self.assertEqual((quota["used"], quota["totalUsed"] - before["totalUsed"]), (1, 6))
+
     def test_generation_history_filters_before_limit_and_revision_history_stays_with_owner_tool(self):
         owner_name, other_name = "history-owner", "history-outsider"
         owner, other = self.account(owner_name), self.account(other_name)
@@ -2101,9 +2170,59 @@ def agent_fixture(stage, requirement, prior, key, dispatch, *, base, timeout_sec
     code["markup"] += "<p>新版筛选</p>"
     return json.dumps({"status":"proposed","implementation":code}).encode()
 
-coding_agent.provide = agent_fixture
+original_agent_run = coding_agent.run
+def run_table_fixture(request, key, dispatch, validate, timeout):
+    if not request.get("tableRevision"):
+        return original_agent_run(request, key, dispatch, validate, timeout)
+    assert set(request["files"]) == {"tool.css"} and "私有记录" not in json.dumps(request, ensure_ascii=False)
+    dispatch()({"stage":"revision-plan", "status":"ok", "dispatched":True})
+    return validate({"decision":{}, "files":{"tool.css":"thead th { background: plum; }"}})
+
+def provide_fixture(*args, base=None, **kwargs):
+    if base and base["kind"] == "table":
+        return original_agent_provide(*args, base=base, **kwargs)
+    return agent_fixture(*args, base=base, **kwargs)
+
+original_agent_provide = coding_agent.provide
+coding_agent.run = run_table_fixture
+coding_agent.provide = provide_fixture
 workbench.serve("fixture-key", 0, runs, coding_agent_enabled=True,'''
     )
+
+    def test_agent_can_restyle_imported_table_without_changing_rows_or_controls(self):
+        owner = self.account("table-style-owner")
+        other = self.account("table-style-other")
+        table = {"source":"upload", "filename":"sample.csv",
+                 "columns":[{"name":"事项", "type":"text"}], "rows":[["私有记录"]]}
+        status, original, _ = self.request("/api/table/generate", {"table":table}, owner)
+        self.assertEqual(status, 200)
+        tool = "/api/tools/" + original["id"]
+        self.assertEqual(self.request(tool + "/commit", {"entries":original["entries"]}, owner)[0], 200)
+        status, response, _ = self.request(tool + "/revise", {"version":1, "requirement":"表头用浅紫色",
+            "requestId":uuid4().hex}, owner)
+        self.assertEqual(status, 202)
+        task = response["task"]["id"]
+        self.wait_task(owner, task, "complete")
+        path = "/api/staged/" + task
+        self.assertEqual(self.request(path + "/candidate", {}, other)[0], 404)
+        status, candidate, _ = self.request(path + "/candidate", {}, owner)
+        self.assertEqual(status, 200)
+        self.assertTrue(candidate["revisionPlan"]["trialPreview"])
+        self.assertIn("thead th { background: plum; }", candidate["html"])
+        self.assertIn('id="table-entry-form"', candidate["html"])
+        self.assertNotIn("私有记录", candidate["html"])
+        self.assertEqual(candidate["entries"], original["entries"])
+        self.assertEqual(self.request(tool, auth=owner)[1]["version"], 1)
+        proof = {**candidate["staged"], "toolId":original["id"], "runId":candidate["runId"],
+                 "revision":candidate["revision"], "entries":candidate["entries"],
+                 "confirmation":candidate["revisionPlan"]["confirmation"]}
+        self.assertEqual(self.request(path + "/publish", proof, owner)[0], 409)
+        self.confirm_revision(path, proof, owner)
+        self.assert_preview_verified(path, proof, owner)
+        status, saved, _ = self.request(path + "/publish", proof, owner)
+        self.assertEqual(status, 200, saved)
+        self.assertEqual((saved["id"], saved["version"], saved["entries"]),
+                         (original["id"], 2, original["entries"]))
 
     def test_revision_sources_are_bound_to_owner_tool_version_and_candidate(self):
         owner = self.account("source-owner")
@@ -2135,8 +2254,11 @@ workbench.serve("fixture-key", 0, runs, coding_agent_enabled=True,'''
         self.assertEqual(status, 200)
         legacy_path = "/api/tools/" + legacy["id"]
         self.assertEqual(self.request(legacy_path + "/commit", {"entries":legacy["entries"]}, owner)[0], 200)
-        self.assertEqual(self.request(legacy_path + "/source", {"version":1}, owner)[1],
-                         {"toolId":legacy["id"], "version":1, "applied":True, "files":[]})
+        self.assertEqual(self.request(legacy_path + "/source", {"version":1}, owner)[:2],
+                         (200, {"toolId":legacy["id"], "version":1, "applied":True,
+                                "files":[{"path":"app.html", "text":legacy["html"]}]}))
+        self.assertEqual(self.request(legacy_path + "/source", {"version":1}, other)[0], 404)
+        self.assertEqual(self.request(legacy_path + "/source", {"version":2}, owner)[0], 409)
 
         task = self.request(tool + "/revise", {"version":1, "requirement":"加筛选",
             "requestId":uuid4().hex}, owner)[1]["task"]["id"]

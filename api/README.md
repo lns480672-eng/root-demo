@@ -26,3 +26,5 @@ JSON 语法可用 `python3 -m json.tool api/openapi.json` 检查。规范通过�
 正式版使用 `POST /api/tools/{toolId}/source`，携带当前 `version`。已就绪的修改候选使用 `POST /api/staged/{taskId}/source`，携带候选响应中的 `toolId`、`runId`、`version`、`commit`、`sha256` 和 `nonce`。两个入口都验证工具所属账号。候选已经取消、失败或应用时，需重新读取当前已应用版本。
 
 响应返回 `toolId`、`version`、`applied` 和按项目相对路径排列的 `files`，每项含 `path` 和 `text`。没有保留生成制品的旧工具返回空列表。候选和正式版的代码均从对应的生成制品校验后读取。浏览器把文件按文本显示。
+
+直接导入表格的版本从该工具的 Git 快照读取 `app.html`，并与保存的运行制品核对。导入记录单独保存在工具数据中。

@@ -135,6 +135,37 @@ class AdminSetupHTTP(unittest.TestCase):
         self.assertEqual(self.request("/api/trial/admin", cookie=combined, marker=admin["marker"])[0], 401)
         self.assertEqual(self.request("/api/session", cookie=combined)[1]["user"], "ordinary-one")
 
+    def test_generation_settings_require_admin_and_persist_until_reset(self):
+        path = "/api/admin/generation-settings"
+        owner = {"username": "settings-owner", "password": self.password, "code": self.setup_code()}
+        _, identity, issued = self.request("/api/admin/setup", owner)
+        auth = {"cookie": issued.split(";", 1)[0], "marker": identity["marker"]}
+        self.assertEqual(self.request(path)[0], 401)
+        self.assertEqual(self.request(path, cookie=auth["cookie"])[0], 409)
+        status, before, _ = self.request(path, **auth)
+        self.assertEqual(status, 200)
+        self.assertEqual(before["settings"], before["defaults"])
+        self.assertEqual(before["settings"], {
+            "sourceBytes": 2457600, "revisionContextBytes": 4096000,
+            "outputTokens": 393216, "timeoutSeconds": 300,
+        })
+        changed = {**before["settings"], "sourceBytes": 3000000, "revisionContextBytes": 6000000,
+                   "outputTokens": 140000, "timeoutSeconds": 420}
+        self.assertEqual(self.request(path, {"settings": changed}, origin="http://other.test", **auth)[0], 403)
+        _, ordinary, issued = self.request("/api/register", {
+            "username": "settings-ordinary", "password": self.password, "invite": self.store.create_invite(),
+        })
+        self.assertEqual(self.request(path, {"settings": changed},
+                                      cookie=issued.split(";", 1)[0], marker=ordinary["marker"])[0], 401)
+        self.assertEqual(self.request(path, {"settings": {**changed, "outputTokens": 520000}}, **auth)[0], 400)
+        self.assertEqual(self.request(path, {"settings": {**changed, "revisionContextBytes": 10}}, **auth)[0], 400)
+        self.assertEqual(self.request(path, {"settings": changed}, **auth)[1]["settings"], changed)
+        from generation_settings import GenerationSettings, GenerationSettingsStore
+        reopened = GenerationSettingsStore(Store(self.runs / "workspace.sqlite3"), GenerationSettings())
+        with self.store.connection() as db:
+            self.assertEqual(reopened.response(db)["settings"], changed)
+        self.assertEqual(self.request(path, {"reset": True}, **auth)[1], before)
+
     def test_admin_and_workbench_share_failed_login_rate_limit(self):
         user = {"username": "owner-rate-test", "password": self.password}
         self.assertEqual(self.request("/api/admin/setup", {**user, "code": self.setup_code()})[0], 201)
