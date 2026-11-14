@@ -207,7 +207,6 @@ function render() {
   form.hidden = tableMode;
   byId('table-entry').setAttribute('aria-pressed', String(tableMode));
   byId('table-entry').disabled = byId('assistant-entry').disabled = blocked;
-  byId('guide-start').disabled = blocked || editing;
   renderStagedTasks(blocked, restriction);
 }
 
@@ -885,13 +884,6 @@ function openAssistant(destination) {
 
 byId('idea-entry').addEventListener('click', () => openAssistant());
 byId('assistant-entry').addEventListener('click', () => openAssistant());
-byId('guide-start').addEventListener('click', () => {
-  if (phase !== 'idle' || pendingPublication || stagedPendingId || editing) return;
-  byId('account').open = false;
-  beginComposition(false, requirement.value, byId('generation-category').value, false);
-  byId('new-tool').focus();
-  showCoachmark();
-});
 function versionRecord({ version, note, current, date, label, build }) {
   const row = document.createElement('li');
   const header = document.createElement('div');

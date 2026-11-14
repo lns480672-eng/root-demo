@@ -366,12 +366,6 @@ try {
     assert.equal(await evaluate('document.querySelector("#entry-coachmark").hidden'), true);
   }
 
-  async function openGuide() {
-    await click('#account-name');
-    await click('#guide-start');
-    await until(() => visible('#entry-coachmark'));
-  }
-
   async function assertCenteredNonWorkspaceShell(route) {
     assert.equal(await visible(route), true);
     assert.equal(await evaluate(`(() => {
@@ -432,7 +426,84 @@ try {
     await until(() => evaluate('document.title === "Reachable HTTP probe"'));
     assert.deepEqual(probeRequests, probeControls);
   }
-  if (profileFlow) {
+  if (process.argv.includes('--navigation-sorting')) {
+    stage = 'NAV-01/02 tool creation and draft save ordering';
+    await cdp('Page.navigate', {url:base});
+    await login(accountA, true);
+    const create = async title => {
+      const {status, body} = await appRequest('/api/generate', {requirement:title});
+      assert.equal(status, 200);
+      assert.equal((await appRequest('/api/tools/' + body.id + '/commit', {entries:[]})).status, 200);
+      return body.id;
+    };
+    const olderTool = await create('读书清单 甲');
+    const latestTool = await create('读书清单 乙');
+    const path = '/api/tools/' + olderTool;
+    const {body: revision} = await appRequest(path + '/revise', {requirement:'增加已读筛选', version:1});
+    assert.equal((await appRequest(path + '/publish', {
+      runId:revision.runId, revision:revision.revision, entries:[],
+    })).status, 200);
+
+    const draftsPath = '/api/requirement-drafts';
+    const draftA = 'c20c66ff-d32f-4f0b-a1c5-d3bb9dcda568';
+    const draftB = '8dc7ff42-9618-4ad2-8575-d8ad4573c26f';
+    const save = async (id, title) => {
+      const {status, body} = await appRequest(draftsPath + '/' + id, {title, text:title + '的需求正文', revision:0});
+      assert.equal(status, 200);
+      return body;
+    };
+    const a = await save(draftA, '草稿甲');
+    await delay(15);
+    const b = await save(draftB, '草稿乙');
+    assert.ok(b.updatedAt > a.updatedAt);
+    const readDraft = async id => (await appRequest(draftsPath + '/' + id)).body;
+    const getDraftOrder = async () => (await appRequest(draftsPath)).body.items.map(item => item.id);
+    const assertNav = async () => assert.equal(await evaluate('document.querySelector("#idea-entry").getAttribute("aria-current")'), 'page');
+    const reload = async () => {
+      const previousDocument = await evaluate('performance.timeOrigin');
+      await cdp('Page.reload');
+      await until(() => evaluate(`performance.timeOrigin !== ${previousDocument} && document.documentElement.dataset.ready === "true"`));
+    };
+    for (const width of [1440, 390]) {
+      await cdp('Emulation.setDeviceMetricsOverride', {width,height:844,deviceScaleFactor:1,mobile:width===390});
+      await reload();
+      await click('#library-entry');
+      await until(() => visible('#tool-list button[data-id="' + latestTool + '"]'));
+      assert.deepEqual(await evaluate('Array.from(document.querySelectorAll("#tool-list button"), item => item.dataset.id)'), [latestTool, olderTool]);
+      assert.deepEqual((await library()).items.map(item => [item.id,item.version]), [[latestTool,1],[olderTool,2]]);
+      await screenshot('tool-creation-order-' + width);
+      const revised = await selectHistory(olderTool);
+      assert.equal(await evaluate('Boolean(document.querySelector("#read-filter"))', revised.context), true);
+      await click('#idea-entry');
+      await until(() => visible('#assistant-idea-text'));
+      await assertNav();
+      await click('#assistant-drafts');
+      await until(() => visible('[data-draft-id="' + draftB + '"]'));
+      await assertNav();
+      const order = width === 1440 ? [draftB,draftA] : [draftA,draftB];
+      assert.deepEqual(await evaluate('Array.from(document.querySelectorAll("[data-draft-id]"), item => item.dataset.draftId)'), order);
+      await screenshot('draft-save-order-' + width);
+      await click('[data-draft-id="' + draftA + '"]');
+      await until(() => visible('#assistant-draft-editor'));
+      await assertNav();
+      await screenshot('draft-detail-' + width);
+      if (width === 1440) {
+        assert.deepEqual(await getDraftOrder(), order);
+        await type('#assistant-draft-editor', '补充验收条件');
+        await click('#assistant-drafts');
+        assert.deepEqual(await getDraftOrder(), order);
+        assert.equal((await readDraft(draftA)).updatedAt, a.updatedAt);
+        await until(() => visible('[data-draft-id="' + draftA + '"]'));
+        await click('[data-draft-id="' + draftA + '"]');
+        await until(() => visible('#assistant-draft-editor'));
+        await click('#assistant-save');
+        await until(async () => (await readDraft(draftA)).revision === 2);
+        assert.deepEqual(await getDraftOrder(), [draftA,draftB]);
+      }
+      assert.deepEqual(await readDraft(draftB), b);
+    }
+    evidence.tests.push({id:'NAV-01/02', orderSurvivesToolRevision:true, orderTracksDraftSave:true, otherDraftUnchanged:true});
+  } else if (profileFlow) {
     stage = 'AC-022 personal profile';
     const username = 'profile-' + 'a'.repeat(24);
     const displayName = '甲'.repeat(20) + ' 😀甲';
@@ -769,6 +840,9 @@ try {
     assert.deepEqual(await evaluate('Array.from(document.querySelectorAll(".workspace-navigation nav button"), button => button.textContent)'), navOrder);
     assert.equal(await visible('#requirement'), true);
     assert.equal(await visible('#entry-coachmark'), true);
+    await click('#account-name');
+    assert.equal(await evaluate('document.querySelector("#guide-start") === null'), true, '账号菜单已移除手动引导');
+    await click('#account-name');
     assert.equal(await visible('.elys-preview'), false);
     assert.equal(await evaluate('document.querySelector("#generate").textContent'), '开始');
     await screenshot('first-visit');
@@ -811,8 +885,6 @@ try {
       return nav.right <= prompt.left && getComputedStyle(document.querySelector('.mode-cards')).gridTemplateColumns.split(' ').length === 2;
     })()`), true);
     await screenshot('guide-narrow-reduced-motion');
-    await escapeCoachmark();
-    await openGuide();
     await type('#requirement', '引导关闭后保留输入');
     assert.equal(await evaluate('document.querySelector("#entry-coachmark").hidden'), true);
     assert.equal(await evaluate('document.querySelector("#requirement").value'), '引导关闭后保留输入');
@@ -834,9 +906,14 @@ try {
     await login(accountA);
     assert.equal(await visible('#entry-coachmark'), false);
     await logout();
+    await cdp('Emulation.setDeviceMetricsOverride', {width:390,height:844,deviceScaleFactor:1,mobile:true});
     await login(accountB, true);
     assert.equal(await visible('#entry-coachmark'), true);
+    await screenshot('guide-new-account-390');
     await escapeCoachmark();
+    await logout();
+    await login(accountB);
+    assert.equal(await visible('#entry-coachmark'), false);
     await sampleCoverage();
     socket = primary;
 
@@ -1110,8 +1187,8 @@ try {
   if (!live) {
     stage = 'release history navigation retains the current preview';
     const beforeUpdates = restored.loader;
+    await click('#new-tool');
     await evaluate('document.querySelector("#requirement").value = "返回后保留的草稿"');
-    await openGuide();
     assert.equal(await visible('#saved-tools'), false);
     await click('#account-name');
     await click('#updates-link');
@@ -1466,7 +1543,7 @@ try {
             : preview.left >= composer.right);
         })()`), true, '同屏显示的预览与编辑区分开布局');
         assert.equal(await evaluate('editing'), true);
-        assert.equal(await evaluate('document.querySelector("#guide-start").disabled'), true);
+        assert.equal(await visible('#guide-start'), false);
         await screenshot('revision-' + width);
         await click('#return-to-library');
         assert.equal(await visible('.elys-composer'), false);
