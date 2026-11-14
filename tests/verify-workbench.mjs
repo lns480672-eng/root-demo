@@ -13,6 +13,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 const live = process.argv.includes('--live');
 const standaloneCatalog = process.env.ROOT_STANDALONE_CATALOG;
 const stagedFlow = process.argv.includes('--staged-flow');
+const runningLayout = process.argv.includes('--running-layout');
 const completionFlow = process.argv.includes('--completion-flow');
 const ledgerTheme = stagedFlow && process.argv.includes('--ledger-theme');
 const demoSite = stagedFlow && process.argv.includes('--demo-site');
@@ -90,7 +91,7 @@ try {
     const server = launch('python3', [fixture, 'fixture-key', '0', join(root, 'runs'), probeUrl,
       ...(adminFlow ? ['--admin-flow'] : []), ...(entryFlow ? ['--entry-flow'] : []),
       ...(ledgerTheme ? ['--ledger-theme'] : []), ...(quotaFeedback ? ['--quota-feedback'] : []),
-      ...(demoSite ? ['--demo-site'] : []), ...(stagedHistory ? ['--staged-history'] : [])]);
+      ...(demoSite ? ['--demo-site'] : []), ...(runningLayout ? ['--running-layout'] : []), ...(stagedHistory ? ['--staged-history'] : [])]);
     const [line] = await Promise.race([once(server.stdout, 'data'), once(server, 'exit').then(() => [''])]);
     base = String(line).match(/http:\/\/127\.0\.0\.1:\d+/)?.[0];
     assert.ok(base, '工作台应启动并提供本机地址');
@@ -817,7 +818,8 @@ try {
     stage = demoSite ? 'CHG-046 website generation' : stagedHistory ? 'TEST-018-09 generation history' :
       quotaFeedback ? 'TEST-017-06 shared generation quota feedback' : ledgerTheme ? 'ROOT-REV-VIS-01 ledger theme' : reconnect ? 'AC-020 staged reconnect fallback' : tableJourney ? 'CHG-029 same imported tool journey' : registration ? 'staged workbench registration' : revision ? 'staged workbench revision' :
       calculator ? 'staged workbench calculator' : 'staged workbench board flow';
-    const verify = demoSite ? (await import('./verify-demo-site.mjs')).verifyDemoSite :
+    const verify = runningLayout ? (await import('./verify-staged-flow.mjs')).verifyRunningLayout :
+      demoSite ? (await import('./verify-demo-site.mjs')).verifyDemoSite :
       stagedHistory ? (await import('./verify-staged-flow.mjs')).verifyStagedHistory :
       quotaFeedback ? verifyStagedQuotaFeedback : ledgerTheme ? verifyLedgerTheme : reconnect ? verifyStagedReconnect : tableJourney ? verifyTableJourney : registration ? verifyStagedRegistration : revision ? verifyStagedRevision :
       calculator ? verifyStagedCalculator : verifyStagedFlow;
@@ -934,12 +936,23 @@ try {
   if (!live) {
     stage = 'account visual layout and registration feedback';
     assert.equal(await evaluate('document.querySelector("#auth-intro-title").innerText.replace(/\\s/g, "")'), '把手头的事，做成小工具。');
-    assert.equal(await evaluate('document.querySelector("#auth-intro > p").textContent'), '从一个想法、明确需求或已有表格开始。');
+    assert.equal(await evaluate('document.querySelector("#auth-intro > p").textContent'), '一句想法、一份需求，或一张已有表格。');
     assert.equal(await evaluate('document.querySelector("#auth-title").textContent'), '登录工作台');
-    assert.equal(await evaluate('document.querySelector(".auth-illustration")'), null);
+    assert.equal(await visible('.auth-illustration'), true);
+    assert.deepEqual(await evaluate(`(() => {
+      const auth = document.querySelector('#auth');
+      const studio = document.querySelector('#auth-intro');
+      const form = document.querySelector('#auth-form');
+      return {
+        width: auth.getBoundingClientRect().width,
+        studioColor: getComputedStyle(studio).backgroundColor,
+        studioLeft: studio.getBoundingClientRect().right <= form.getBoundingClientRect().left,
+        controlHeight: document.querySelector('#auth-submit').getBoundingClientRect().height,
+      };
+    })()`), { width: 1120, studioColor: 'rgb(35, 58, 118)', studioLeft: true, controlHeight: 44 });
     assert.equal(await visible('#auth-home'), true);
     assert.equal(await evaluate('document.querySelector("#auth-home").href'), 'http://[::1]:8788/');
-    assert.equal(await evaluate('document.querySelector(".auth-panel").getBoundingClientRect().width <= 430'), true);
+    assert.equal(await evaluate('document.querySelector("#auth-form").getBoundingClientRect().width <= 340'), true);
     await cdp('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
     await screenshot('account-login-390');
     await cdp('Emulation.setDeviceMetricsOverride', { width: 1360, height: 980, deviceScaleFactor: 1, mobile: false });
@@ -993,7 +1006,7 @@ try {
     await cdp('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
     await cdp('Emulation.setTouchEmulationEnabled', { enabled: true });
     assert.deepEqual(await evaluate(`({
-      illustration: Boolean(document.querySelector('.auth-illustration')),
+      illustration: document.querySelector('.auth-illustration').checkVisibility(),
       belowTitle: document.querySelector('#auth-form').getBoundingClientRect().top >
         document.querySelector('#auth-intro').getBoundingClientRect().bottom,
       overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
@@ -1044,6 +1057,13 @@ try {
     assert.deepEqual(await evaluate('Array.from(document.querySelectorAll(".workspace-navigation nav button"), button => button.textContent)'), navOrder);
     assert.equal(await visible('#requirement'), true);
     assert.equal(await visible('#entry-coachmark'), true);
+    assert.deepEqual(await evaluate(`[
+      document.body, document.querySelector('.elys-masthead'), document.querySelector('.workspace-sidebar'),
+      document.querySelector('#new-tool'), document.querySelector('#composer'), document.querySelector('#requirement'),
+    ].map(element => getComputedStyle(element).backgroundColor)`), [
+      'rgb(244, 246, 250)', 'rgb(255, 255, 255)', 'rgb(237, 241, 248)',
+      'rgb(226, 234, 248)', 'rgb(255, 255, 255)', 'rgb(244, 246, 250)',
+    ]);
     await click('#account-name');
     assert.equal(await evaluate('document.querySelector("#guide-start") === null'), true, '账号菜单已移除手动引导');
     await click('#account-name');
@@ -1420,7 +1440,10 @@ try {
   async function assertOldTool() {
     assert.equal(await evaluate('document.querySelector("#preview iframe[data-tool]").dataset.tool'), restored.id);
     assert.equal((await library()).latest, restored.id);
-    assert.equal(await visible('.elys-preview'), false, '新建时预览为空');
+    if (await visible('#error')) {
+      assert.equal(await visible('.elys-preview'), true, '生成失败时仍可操作上次工具');
+      assert.equal(await visible('#preview iframe[data-tool]'), true);
+    }
     assert.equal(await evaluate('document.querySelector("#workspace").dataset.mode'), 'compose');
     assert.equal(await evaluate('document.querySelector("#requirement").value'), requirements[1]);
     assert.match(await evaluate('document.querySelector("#list").innerText', restored.context), /星际旅行手记/);
@@ -1577,8 +1600,10 @@ try {
     if (!live) {
       stage = 'model failure retains editable old tool';
       await assertFailure(/模型输出不完整/);
-      restored = await openLatest();
-      await addOldRecord('失败后新增的书');
+      restored = await activeTool();
+      await type('#book', '失败后新增的书', restored.context);
+      await pointerClick('form button', restored.context);
+      await until(async () => JSON.stringify((await stored(restored.id)).entries).includes('失败后新增的书'));
       await screenshot('failure-with-old-tool');
 
       stage = 'reload after failure before candidate switch';
@@ -1836,6 +1861,11 @@ try {
       await generate('回归：不兼容数据');
       assert.match(await until(() => evaluate('document.querySelector("#error").textContent')), /无法.*已有数据/);
       await click('#preview-view');
+      const current = await activeTool();
+      assert.equal(current.id, restored.id);
+      assert.equal(current.loader, restored.loader);
+      assert.equal(await evaluate('document.querySelector("#preview iframe[data-tool]").inert'), false);
+      restored = current;
       await addOldRecord('修改失败后保存的书');
       assert.deepEqual((await appRequest(versionPath)).body, priorHistory);
       assert.equal((await activeTool()).loader, restored.loader);
@@ -1907,8 +1937,8 @@ try {
       await generate('回归：强制新建失败');
       await until(() => evaluate('document.querySelector("#error").textContent'));
       assert.equal((await library()).items.length, 2);
-      assert.equal(await visible('.elys-preview'), false);
-      tool = await openLatest();
+      assert.equal(await visible('.elys-preview'), true);
+      tool = await selectHistory(second.id);
       assert.equal(tool.id, second.id);
       await evaluate('document.querySelector("#boxes").value = ""', tool.context);
       await type('#boxes', '100', tool.context);
@@ -1995,7 +2025,9 @@ try {
           areas:width === 390 ? '"sidebar composer" "sidebar content"' : '"sidebar composer content"',
           navigation:true, progress:true, fits:true,
         });
-        assert.equal(await visible('.elys-preview'), false);
+        assert.equal(await visible('.elys-preview'), true);
+        assert.equal(await evaluate('document.querySelector("#preview-title").textContent'), '工具预览');
+        assert.equal(await visible('#preview iframe[data-tool]'), false);
         await screenshot('workspace-generation-' + width);
       }
     } finally {

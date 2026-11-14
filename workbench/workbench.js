@@ -49,6 +49,10 @@ let entryMode = 'direct';
 let draftTaskTitle = '';
 let trial = null;
 let trialRequest = 0;
+function isRunningStagedTask(task) {
+  return task?.state === 'queued' || task?.state === 'running';
+}
+
 const validStagedId = id => typeof id === 'string' && /^[a-f0-9]{32}$/.test(id);
 const stagedStepLabels = {
   'revision-plan': '理解修改', spec: '理解需求', implementation: '生成工具', entry: '设计录入和明细',
@@ -146,7 +150,15 @@ function render() {
   markNavigation(profileRoute() ? null : assistantOpen ? 'idea-entry' : browsing ? 'library-entry' : 'new-tool');
   for (const id of primaryNavigation) byId(id).disabled = blocked || (starting && id === 'library-entry');
   byId('new-tool-options').hidden = !atStart && !tableMode;
-  previewSection.hidden = !standalone && !browsing && !editing && !syncing && !stagedPendingId && (!showingResult || assistantOpen);
+  const composingNewTool = !assistantOpen && !editing && workspace.dataset.mode === 'compose';
+  const runningNewTool = composingNewTool && !tableMode && (phase === 'model' || isRunningStagedTask(stagedTask));
+  const failedNewTool = Boolean(failure) || stagedTask?.state === 'failed';
+  const showGenerationPreview = composingNewTool &&
+    (pending || Boolean(stagedActivity) || Boolean(stagedTask) || failedNewTool);
+  const awaitingNewPreview = showGenerationPreview && !syncing && !stagedPendingId &&
+    (!failedNewTool || !showingTool);
+  previewSection.hidden = !standalone && !browsing && !editing && !syncing && !stagedPendingId &&
+    !showingResult && !showGenerationPreview;
   const result = byId('generation-result');
   result.hidden = !showingResult || blocked || Boolean(failure);
   if (animateSavedResult && !result.hidden) {
@@ -170,18 +182,20 @@ function render() {
       labelTool(button, active.version);
     }
   }
-  byId('preview-title').textContent = currentTitle;
+  byId('preview-title').textContent = awaitingNewPreview ? '工具预览' : currentTitle;
   byId('composer-title').textContent = editing ? '修改对话' :
-    atStart || entryMode !== 'direct' ? '你想做什么工具？' : '生成工具';
+    atStart || entryMode !== 'direct' ? '你想做什么工具？'
+      : runningNewTool ? (stagedTask?.title || '新工具') : '生成工具';
   byId('requirement-label').textContent = editing ? '修改「' + currentTitle + '」' : '工具需求';
   requirement.placeholder = supplementIssue ? '补充这次修改的要求' : editing ? '例如：增加一个按负责人筛选。'
     : '描述你想做的工具、怎么用、需要保存哪些数据。';
   standaloneLink.hidden = standalone || blocked || !showingTool || showingResult || !browsing || editing;
   if (standaloneLink.hidden) standaloneLink.removeAttribute('href');
   else standaloneLink.href = standaloneBack.getAttribute('href') + '#tool/' + active.id;
-  byId('revise-tool').hidden = standalone || syncing || !showingTool || showingResult || editing;
+  byId('revise-tool').hidden = standalone || syncing || !showingTool || showingResult || editing || awaitingNewPreview;
   renderRevisionViews();
-  byId('publish-lock').hidden = standalone || syncing || !showingTool || showingResult;
+  if (awaitingNewPreview) preview.hidden = true;
+  byId('publish-lock').hidden = standalone || syncing || !showingTool || showingResult || showGenerationPreview;
   byId('revise-tool').disabled = blocked || !configured;
   const sync = byId('sync-tool');
   sync.hidden = !syncing;
@@ -221,18 +235,19 @@ function render() {
     else item.removeAttribute('aria-current');
   }
   const status = byId('preview-status');
-  status.toggleAttribute('data-usable', showingTool && !pausingEdits && !stagedEditsPaused);
+  status.toggleAttribute('data-usable', showingTool && !awaitingNewPreview && !pausingEdits && !stagedEditsPaused);
   status.textContent = standalone && !active ? (starting ? '正在打开工具…' : '工具不可用')
     : stagedEditsPaused ? '待核对保存 · 暂停编辑'
-    : pausingEdits ? '待同步 · 暂停编辑' : active
-    ? pending || failure || syncing ? '上次工具仍可用' : tableMode ? '上次工具 · 可用' : restored ? '已恢复' : '已就绪'
+    : pausingEdits ? '待同步 · 暂停编辑' : awaitingNewPreview ? (failedNewTool ? '生成未完成' : '等待预览') : active
+    ? pending || failedNewTool || syncing ? '上次工具仍可用' : tableMode ? '上次工具 · 可用' : restored ? '已恢复' : '已就绪'
     : syncing ? '新工具待同步' : pending ? '等待预览' : '待生成';
-  byId('empty').hidden = standalone || showingTool || syncing;
-  byId('empty-title').textContent = pending ? '等待预览' : '还没有生成工具';
-  byId('empty-copy').textContent = pending ? '工具准备好后，会在这里显示。' : '输入需求后，工具会在这里出现。';
+  byId('empty').hidden = standalone || syncing || (showingTool && !awaitingNewPreview);
+  byId('empty-title').textContent = awaitingNewPreview && !failedNewTool ? '正在准备预览' : '还没有生成工具';
+  byId('empty-copy').textContent = awaitingNewPreview && !failedNewTool
+    ? '生成完成后可在这里试用。' : '输入需求后，工具会在这里出现。';
   byId('table-panel').hidden = !tableMode;
   byId('table-panel').inert = syncing;
-  form.hidden = tableMode || showingResult;
+  form.hidden = tableMode || showingResult || runningNewTool;
   byId('table-entry').setAttribute('aria-pressed', String(tableMode));
   byId('table-entry').disabled = byId('assistant-entry').disabled = blocked;
   renderStagedTasks(blocked, restriction);
@@ -321,7 +336,15 @@ function isActiveStagedTask(task) {
   return ['queued', 'running', 'interrupted', 'complete', 'clarifying'].includes(task?.state);
 }
 
+function rememberRunningGeneration(id) {
+  if (!session) return;
+  const key = 'root:staged-running:' + session.marker;
+  if (id) sessionStorage.setItem(key, id);
+  else sessionStorage.removeItem(key);
+}
+
 function clearStagedSelection() {
+  rememberRunningGeneration(null);
   closeRepairTrial();
   closeRevisionInspection();
   supplementIssue = null;
@@ -590,7 +613,9 @@ function renderStagedTasks(blocked, restriction) {
       const button = document.createElement('button');
       button.type = 'button';
       button.dataset.taskId = item.id;
-      button.textContent = (stagedStatus(item, restriction) || '待确认') + ' · ' + (item.title || item.requirement).slice(0, 70);
+      const caption = item.title || item.requirement.slice(0, 70);
+      button.textContent = isRunningStagedTask(item) ? caption
+        : (stagedStatus(item, restriction) || '待确认') + ' · ' + caption;
       row.append(button);
       return row;
     }));
@@ -609,8 +634,8 @@ function renderStagedTasks(blocked, restriction) {
   byId('staged-refresh').disabled = phase !== 'idle';
   byId('staged-detail').hidden = !task && !stagedPendingId && !stagedActivity && !stagedMessage;
   const original = byId('staged-original');
-  original.hidden = !task?.title;
-  const originalText = task?.title ? task.requirement : '';
+  const originalText = task?.requirement || (!editing && phase === 'model' ? requirement.value.trim() : '');
+  original.hidden = !originalText;
   if (original.lastElementChild.textContent !== originalText) {
     original.open = false;
     original.lastElementChild.textContent = originalText;
@@ -764,7 +789,13 @@ byId('staged-task-list').addEventListener('click', async event => {
   if (!await restoreStagedRequirement(task, event.target)) return;
   rememberStagedTask(task);
   selectedStagedId = id;
-  if (['queued', 'running'].includes(task.state)) stagedAutoId = id;
+  if (isRunningStagedTask(task)) {
+    stagedAutoId = id;
+    if (!task.baseToolId) {
+      compose(true);
+      rememberRunningGeneration(id);
+    }
+  }
   render();
 });
 
@@ -2350,6 +2381,7 @@ form.addEventListener('submit', async event => {
       rememberStagedTask(tool.task);
       selectedStagedId = stagedAutoId = tool.task.id;
       foregroundGeneration = editing ? null : tool.task.id;
+      if (!editing && isRunningStagedTask(tool.task)) rememberRunningGeneration(tool.task.id);
       stagedMessage = '';
       if (tool.task.state === 'published') {
         rememberStagedPublication(tool.task.id);
@@ -2459,6 +2491,7 @@ function authMode(next) {
   registering = next;
   byId('auth-title').textContent = next ? '凭邀请码注册' : '登录工作台';
   byId('auth-submit').textContent = next ? '注册并进入' : '登录';
+  byId('auth-help').textContent = next ? '填写邀请码，创建你的工作台账号。' : '登录后继续使用你保存的工具。';
   byId('auth-mode').textContent = next ? '已有账号？登录' : '凭邀请码注册';
   byId('invite-field').hidden = !next;
   byId('invite').required = next;
@@ -2636,6 +2669,19 @@ async function start(registration = null) {
       }
     }
     if (stagedEnabled) await refreshStagedTasks();
+    if (stagedEnabled && networkIsolated && configured && !stagedPendingId && !pendingPublication &&
+        location.pathname !== '/updates' && !profileRoute()) {
+      const runningId = sessionStorage.getItem('root:staged-running:' + session.marker);
+      const task = stagedTasks.find(item => item.id === runningId && !item.baseToolId && isRunningStagedTask(item));
+      if (task) {
+        beginComposition(false, task.requirement, task.category, false, task.title);
+        compose(true);
+        selectedStagedId = stagedAutoId = task.id;
+        rememberRunningGeneration(task.id);
+      } else {
+        rememberRunningGeneration(null);
+      }
+    }
     if (registration && location.pathname !== '/updates' && !profileRoute()) {
       showCoachmark();
     }

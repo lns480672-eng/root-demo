@@ -317,6 +317,51 @@ export async function verifyStagedRegistration(ctx) {
   await screenshot('staged-registration-restored');
 }
 
+export async function verifyRunningLayout(ctx) {
+  const { cdp, evaluate, until, base, click, visible, appRequest, login, generate, accountA, evidence, screenshot } = ctx;
+  const input = '做一份简单读书清单，新增书名并保存。用于核对生成中的任务进度。';
+  await cdp('Emulation.setDeviceMetricsOverride', {width:1440,height:900,deviceScaleFactor:1,mobile:false});
+  await cdp('Page.navigate', {url:base});
+  await login(accountA, true);
+  await generate(input);
+  const task = await until(() => findStagedTask(appRequest, input));
+  const taskButton = '#staged-task-list button[data-task-id="' + task.id + '"]';
+  const assertRunningLayout = async path => {
+    for (const width of [1440, 390]) {
+      await cdp('Emulation.setDeviceMetricsOverride', {width,height:844,deviceScaleFactor:1,mobile:width===390});
+      const layout = await evaluate(`(() => {
+        const composer = document.querySelector('.elys-composer');
+        const preview = document.querySelector('.elys-preview');
+        const progress = document.querySelector('#staged-steps li[aria-current=step]');
+        return {
+          mode: document.querySelector('#workspace').dataset.mode,
+          sidebarFits: ${width} === 390 || (composer.clientWidth >= 260 && composer.clientWidth <= 360),
+          previewVisible: preview.checkVisibility(),
+          original: document.querySelector('#staged-original p').textContent,
+          task: document.querySelector('#staged-task-list [aria-current=true]')?.dataset.taskId,
+          step: progress?.checkVisibility(),
+          fullForm: document.querySelector('#composer').checkVisibility(),
+        };
+      })()`);
+      assert.deepEqual(layout, {mode:'compose',sidebarFits:true,previewVisible:true,original:input,
+        task:task.id,step:true,fullForm:false}, path + ' ' + width + 'px');
+      await screenshot('running-' + path + '-' + width);
+    }
+  };
+  await until(() => visible('#staged-steps li[aria-current=step]'));
+  await assertRunningLayout('submit');
+  await click('#new-tool');
+  assert.equal(await visible('#requirement'), true);
+  await click(taskButton);
+  await assertRunningLayout('reopen');
+  const navigation = await evaluate('performance.timeOrigin');
+  await cdp('Page.reload');
+  await until(() => evaluate(`performance.timeOrigin !== ${navigation} && document.documentElement.dataset.ready === 'true'`));
+  await assertRunningLayout('reload');
+  assert.equal((await appRequest('/api/staged')).body.tasks.filter(item => item.requirement === input).length, 1);
+  evidence.tests.push({id:'BLUE-02',task:task.id,paths:['submit','reopen','reload'],viewports:[1440,390]});
+}
+
 export async function verifyStagedReconnect(ctx) {
   const { cdp, evaluate, until, base, click, visible, appRequest, login, generate,
     activeTool, accountA, evidence, screenshot } = ctx;
@@ -359,7 +404,8 @@ export async function verifyStagedReconnect(ctx) {
   assert.equal(await evaluate('window.fixtureSubmissionBounded'), true, '提交已受理但无响应时，页面必须结束等待');
   await until(() => visible('#error'));
   assert.match(await evaluate('document.querySelector("#error").textContent'), /连接.*保留.*重试/);
-  assert.equal(await visible('.elys-preview'), false);
+  assert.equal(await visible('#preview iframe[data-tool]'), true, '连接失败时保留可操作的上次工具');
+  assert.equal(await evaluate('document.querySelector("#preview iframe[data-tool]").inert'), false);
   assert.equal(await evaluate('document.querySelector("#preview iframe[data-tool]").dataset.tool'), old.id);
   assert.equal(await evaluate('document.querySelector("#requirement").value'), nextInput);
   await screenshot('submit-timeout-narrow');
@@ -653,6 +699,24 @@ export async function verifyStagedRevision(ctx) {
   const before = await trial();
   await click('#revise-tool');
   assert.equal(await visible('#preview-view svg'), true, '修改页默认显示带眼睛图标的预览入口');
+  for (const width of [1440, 390]) {
+    await cdp('Emulation.setDeviceMetricsOverride', {width,height:844,deviceScaleFactor:1,mobile:width===390});
+    assert.deepEqual(await evaluate(`(() => {
+      const dialog = document.querySelector('.elys-composer');
+      const preview = document.querySelector('.elys-preview');
+      const left = dialog.getBoundingClientRect();
+      const right = preview.getBoundingClientRect();
+      return {
+        theme: getComputedStyle(dialog).backgroundColor,
+        viewsFit: document.querySelector('#revision-views').scrollWidth ===
+          document.querySelector('#revision-views').clientWidth,
+        layout: ${width} === 390 ? right.top >= left.bottom && left.left === right.left : right.left >= left.right,
+        horizontalOverflow: document.documentElement.scrollWidth > innerWidth,
+      };
+    })()`), {theme:'rgb(237, 241, 248)',viewsFit:true,layout:true,horizontalOverflow:false});
+    await screenshot('revision-layout-' + width);
+  }
+  await cdp('Emulation.setDeviceMetricsOverride', {width:1440,height:980,deviceScaleFactor:1,mobile:false});
   await click('#source-view');
   await until(() => visible('#source-files'));
   assert.match(await evaluate('document.querySelector("#source-code").textContent'), /添加/);

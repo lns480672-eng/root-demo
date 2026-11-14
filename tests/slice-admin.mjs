@@ -6,12 +6,18 @@ export async function verifyAdmin({evaluate, click, pointerClick, type, until, c
   const member = 'qa-trial-member';
   const adminPath = '/api/trial/admin';
   const text = selector => evaluate('document.querySelector(' + JSON.stringify(selector) + ').textContent');
+  const style = (selector, property) => evaluate(
+    `getComputedStyle(document.querySelector(${JSON.stringify(selector)}))[${JSON.stringify(property)}]`);
   const open = async () => {
     if (!await visible('#admin-entry')) await click('#account-name');
     await until(() => visible('#admin-entry'));
     await click('#admin-entry');
     await until(async () => await visible('#backend') || await visible('#admin-login-form'));
     if (await visible('#admin-login-form')) {
+      assert.equal(await style('#admin-login-submit', 'backgroundColor'), 'rgb(35, 58, 118)');
+      assert.equal(await style('#admin-username', 'borderColor'), 'rgb(175, 190, 212)');
+      assert.equal(await style('.login-panel', 'borderTopColor'), 'rgb(35, 58, 118)');
+      await screenshot('admin-login');
       await type('#admin-username', admin);
       await type('#admin-password', 'root-browser-test-only!');
       await click('#admin-login-submit');
@@ -66,10 +72,15 @@ export async function verifyAdmin({evaluate, click, pointerClick, type, until, c
   assert.match(await text('#analysis-failure'), /0%.*0 失败 \/ 1 已结束/);
   assert.match(await text('#analysis-total'), /1.*次/);
   assert.match(await text('#account-list'), /需求梳理 · 今日.*1 条/s);
+  assert.equal(await style('.admin-nav', 'backgroundColor'), 'rgb(237, 241, 248)');
+  assert.equal(await style('.admin-nav [aria-current="page"]', 'backgroundColor'), 'rgb(226, 234, 248)');
   await screenshot('admin-desktop');
   for (const width of [700, 390, 320]) {
     await cdp('Emulation.setDeviceMetricsOverride', { width, height: 844, deviceScaleFactor: 1, mobile: true });
     assert.equal(await evaluate('document.documentElement.scrollWidth <= innerWidth'), true);
+    assert.equal(await evaluate(`
+      document.querySelector('.admin-nav').getBoundingClientRect().right
+      <= document.querySelector('.admin-content').getBoundingClientRect().left`), true);
     await screenshot('admin-' + width);
   }
   await cdp('Emulation.setDeviceMetricsOverride', { width: 1360, height: 980, deviceScaleFactor: 1, mobile: false });
@@ -176,7 +187,12 @@ export async function verifyAdmin({evaluate, click, pointerClick, type, until, c
   await click('#invite-nav');
   await until(() => visible('#invite-module'));
   assert.match(await text('#invite-policy'), /72 小时.*一次/);
+  const ttlHours = 72;
   await screenshot('invite-module-empty');
+  await cdp('Emulation.setDeviceMetricsOverride', {width: 390, height: 844, deviceScaleFactor: 1, mobile: true});
+  assert.equal(await evaluate('document.documentElement.scrollWidth <= innerWidth'), true);
+  await screenshot('invite-module-390');
+  await cdp('Emulation.setDeviceMetricsOverride', {width: 1360, height: 980, deviceScaleFactor: 1, mobile: false});
   const issuedCount = () => evaluate(`fetch('/api/trial/admin', {headers: {'X-Root-Session': identity.marker}})
     .then(response => response.json()).then(state => state.audit.filter(row => row.action === 'issue_invite').length)`);
   const issuedBefore = await issuedCount();
@@ -211,7 +227,8 @@ export async function verifyAdmin({evaluate, click, pointerClick, type, until, c
   await click('#invite-generate');
   await until(() => visible('#invite-result'));
   const expiry = await evaluate('Date.parse(document.querySelector("#invite-expires").dateTime)');
-  assert.ok(expiry - now >= 259199000 && expiry - now < 259210000);
+  const ttlMs = ttlHours * 60 * 60 * 1000;
+  assert.ok(expiry - now >= ttlMs - 1000 && expiry - now < ttlMs + 10000);
   await evaluate('document.querySelector("#issued-code").style.visibility = "hidden"');
   await screenshot('invite-expiration');
   await evaluate('document.querySelector("#issued-code").style.removeProperty("visibility")');
@@ -276,6 +293,6 @@ export async function verifyAdmin({evaluate, click, pointerClick, type, until, c
     accountActionsLocked: true, accountPreviewReloaded: true, accountPreviewWrites: 0, responsiveWidths: [1360, 700, 390, 320],
   }, {
     id: 'TEST-019', result: 'passed', actualClipboard: true, manualCopyFallback: true,
-    survivesResponseLoss: true, singleUse: true, ordinaryAccountDenied: true, ttlHours: 24,
+    survivesResponseLoss: true, singleUse: true, ordinaryAccountDenied: true, ttlHours,
   }];
 }

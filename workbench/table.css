@@ -24,7 +24,7 @@
   margin-block: .75rem;
   padding: .75rem;
   border: 1px solid var(--elys-line);
-  border-radius: 10px;
+  border-radius: 12px;
   background: var(--elys-white);
 }
 
@@ -37,7 +37,7 @@
   margin: 0 0 .75rem;
   padding: .65rem;
   border: 1px solid var(--elys-line);
-  border-radius: 10px;
+  border-radius: 12px;
 }
 
 #table-fields legend { padding-inline: .25rem; font-weight: 650; }
@@ -75,7 +75,7 @@
   max-inline-size: 100%;
   overflow-x: auto;
   border: 1px solid var(--elys-line);
-  border-radius: 10px;
+  border-radius: 12px;
   background: var(--elys-white);
 }
 

@@ -82,17 +82,20 @@ get('password-form').addEventListener('submit', async event => {
   if (submit.disabled) return;
   const newPassword = get('new-password').value;
   if (newPassword !== get('new-password-again').value) {
+    feedback.dataset.error = 'true';
     feedback.textContent = '两次输入的新密码不一致。';
     get('new-password-again').focus();
     return;
   }
   submit.disabled = true;
+  delete feedback.dataset.error;
   feedback.textContent = '正在保存新密码…';
   try {
     await request('/api/admin/password', { currentPassword: get('current-password').value, newPassword });
     event.target.reset();
     location.reload();
   } catch (error) {
+    feedback.dataset.error = 'true';
     feedback.textContent = error.knownRejection ? error.message
       : '暂时无法确认修改结果。请重新打开后台，用新密码登录核对。';
   } finally {

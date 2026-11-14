@@ -150,12 +150,15 @@ export async function verifyTableJourney({
 
   const beforeRestore = (await appRequest('/api/trial')).body.generation;
   const beforeRestoreLoader = tool.loader;
+  await click('#revise-tool');
+  assert.equal(await visible('#tool-history'), true, '版本历史位于修改页右栏');
   await click('#tool-history');
   await until(() => visible('#tool-version-panel button[data-restore-version="1"]'));
   await click('#tool-version-panel button[data-restore-version="1"]');
   await until(() => visible('#restore-version-dialog'));
   await click('#restore-version-confirm');
   await until(async () => (await version()) === 4);
+  if (await visible('#preview-view')) await click('#preview-view');
   tool = await until(async () => {
     const current = await activeTool().catch(() => null);
     return current?.id === id && current.loader !== beforeRestoreLoader && current;
