@@ -329,7 +329,7 @@ function selectedStagedTask() {
 }
 
 function isRunningStagedTask(task) {
-  return task.state === 'queued' || task.state === 'running';
+  return task?.state === 'queued' || task?.state === 'running';
 }
 
 function isActiveStagedTask(task) {
