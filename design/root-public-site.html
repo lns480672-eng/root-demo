@@ -8,8 +8,8 @@
 <title>ROOT 官网</title>
 <meta name="description" content="从一个想法、明确需求或已有表格开始，用 ROOT 做自己的清单、看板和计算器。">
 <style>
-  :root { color-scheme: light dark; background: light-dark(#fff,#181818); }
-  body { margin: 0; padding-block: clamp(8px,1.5vw,16px); }
+  :root { color-scheme: light; background: #fff; }
+  body { margin: 0; }
   a { color: inherit; }
   .cursor-interaction { cursor: pointer; }
 </style>
@@ -111,6 +111,82 @@
       #root-public-review .header-entry { grid-area: 1 / 2; }
     }
     @media(pointer:coarse) { #root-public-review button, #root-public-review .link-button { min-height:44px; } }
+    #root-public-review { color-scheme: light; --ink:#19233f; --muted:#4b5770; --paper:#fff; --mist:#f5f7fc; --wash:#e7edfc; --line:#dce3ef; --blue:#314b92; --action:#314b92; --on-action:#fff; }
+    #root-public-review .intro { color:#f6f8ff; background:#233a76; }
+    #root-public-review .intro header { background:#2b4380; border:1px solid #5670aa; }
+    #root-public-review .intro :is(.header-nav a,.lead,.trial-note) { color:#e0e8ff; }
+    #root-public-review .intro .dot { background:#acbfff; }
+    #root-public-review .intro .hero > div:first-child .kicker { color:#c6d5ff; }
+    #root-public-review .intro .link-button { color:#f6f8ff;background:transparent;border-color:#9aadd4; }
+    #root-public-review .intro .primary { background:#f6f8ff;color:#233a76;border-color:#f6f8ff; }
+    #root-public-review .glimpse { color:var(--ink); background:#f8faff;border-color:#bcccf0;box-shadow:0 16px 42px #0c153738; }
+    #root-public-review .glimpse .row { border-color:#d8e1f5; }
+    #root-public-review .faq summary { align-content:center; }
+    #root-public-review .intro { background: radial-gradient(ellipse at 91% 18%, #314b89, transparent 70%), #233a76; }
+    #root-public-review .intro .header-nav a { text-decoration: none; text-underline-offset: 5px; }
+    #root-public-review .intro .header-nav a:hover { text-decoration: underline; }
+    #root-public-review .glimpse { width: min(100%, 650px); justify-self: end; transform: rotate(-1deg); padding: 0 24px 18px; }
+    #root-public-review .glimpse-bar { min-height: 42px; display: flex; align-items: center; gap: 8px; margin: 0 -24px 18px; padding: 0 16px; background: #eaf0fb; border-radius: 16px 16px 0 0; border-bottom: 1px solid #d9e2f4; color: #2e4679; font-size: 12px; font-weight: 650; }
+    #root-public-review .glimpse-mark { width: 8px; height: 8px; border-radius: 2px; background: #496bb3; }
+    #root-public-review .glimpse-version { margin-left:auto; color:#4b5973; }
+    #root-public-review .glimpse .state { background:#edf0f6; color:#42516e; border-radius:4px; padding:2px 6px; }
+    #root-public-review .glimpse .state[data-status="doing"] { background:#e3ebfa; color:#2b4681; }
+    #root-public-review .glimpse .state[data-status="done"] { background:#e3f0ea; color:#275c49; }
+    @media(max-width:760px) { #root-public-review .glimpse { justify-self:start; transform:none; } }
+
+    /* Chapter surfaces share the hero palette while keeping the existing content grid. */
+    #root-public-review .chapter { background:#fcfdff; }
+    #root-public-review .chapter-soft { background:#eff3fa; }
+    #root-public-review .chapter .kicker { font-size:12px; letter-spacing:.045em; }
+    #root-public-review .chapter h2 { text-wrap:balance; max-width:20em; }
+    #root-public-review .chapter .lead { font-weight:400; line-height:1.7; }
+    #root-public-review .chapter .frame { border-color:#d6e0f0; box-shadow:0 7px 22px #243a6810; }
+    #root-public-review :is(.story-shell,.versions-shell,.faq) { margin:0; padding:0; overflow:hidden; }
+    #root-public-review .chapter-bar { display:flex; align-items:center; gap:8px; padding:12px 18px; background:#eaf1fc; color:#243e77; border-bottom:1px solid #d6e0f0; font-size:13px; font-weight:650; }
+    #root-public-review .chapter-bar::before { content:""; inline-size:7px; block-size:7px; background:#4c70b4; border-radius:2px; flex:none; }
+    #root-public-review .chapter .story { list-style:none; padding:1px 18px 6px; margin:0; }
+    #root-public-review .story li { padding:14px 0; }
+    #root-public-review .story .draft { background:#edf3ff; border-radius:8px; border:0; margin:5px -6px 8px; padding:12px; }
+    #root-public-review .chapter .example-text { padding:14px 18px; border-radius:8px; border-left:3px solid #718dc5; background:#f1f5fc; box-shadow:none; }
+    #root-public-review .pipeline > .frame { align-self:stretch; }
+    #root-public-review .pipeline .between { color:#4b5770; font-size:14px; }
+    #root-public-review .sample-table :is(th,td) { padding-block:9px; }
+    #root-public-review .pipeline .result { background:#f6f9ff; border-color:#b5c8e8; }
+    #root-public-review .pipeline .result [data-filter] { min-height:44px; color:#294685; background:#fff; }
+    #root-public-review .pipeline .result [data-filter][aria-pressed="true"] { background:#e2ebfb; border-color:#9fb5df; }
+    #root-public-review .result .state { padding:2px 6px; border-radius:4px; background:#edf0f6; color:#42516e; }
+    #root-public-review .result .state[data-status="进行中"] { background:#e3ebfa; color:#2b4681; }
+    #root-public-review .result input:checked + span { color:#456150; }
+    #root-public-review .result .row:has(input:checked) .state { background:#e3f0ea; color:#275c49; }
+    #root-public-review .result .count { padding-top:8px; font-variant-numeric:tabular-nums; }
+    #root-public-review .story .version { display:inline-block; padding:1px 6px; border-radius:4px; background:#e5ecfa; }
+    #root-public-review .workspace-entry { background:#fff; color:#19233f; border-color:#dce3ef; }
+    #root-public-review .workspace-entry .primary { background:#233a76; border-color:#233a76; color:#fff; }
+    #root-public-review .workspace-entry .trial-note { color:#4b5770; }
+    #root-public-review .roadmap-note { border:1px solid #d6e0f0; border-radius:10px; background:#f9fbff; padding:14px 16px; }
+    #root-public-review .faq h3 { margin:0; }
+    #root-public-review .faq details { padding:0 16px; border-color:#e1e8f3; }
+    #root-public-review .faq summary { min-height:44px; padding:10px 0; color:#243e77; }
+    #root-public-review .faq details[open] { background:#f4f7fd; padding-bottom:12px; }
+    #root-public-review .faq details p { margin-top:5px; }
+    #root-public-review .site-footer { background:#fff; border-color:#dce3ef; color:#19233f; }
+    #root-public-review .site-footer nav a { color:#4b5770; text-underline-offset:4px; display:inline-flex; align-items:center; min-height:44px; }
+    #root-public-review .site-footer nav a:hover { color:#233a76; }
+    #root-public-review .site-footer .dot { background:#4563aa; }
+    #root-public-review :focus-visible { outline:2px solid #4266aa; outline-offset:3px; }
+    #root-public-review .intro :focus-visible { outline-color:#b8ceff; }
+    @media(max-width:520px) {
+      #root-public-review .chapter :is(.story-shell,.versions-shell,.faq) { border-radius:12px; }
+      #root-public-review .chapter .story { padding-inline:12px; }
+      #root-public-review .chapter-bar { padding-inline:12px; }
+    }
+    #root-public-review :is(#root-site-assistant,#root-site-tools,#root-site-about) { background:#f7f9fc; border-color:#dce5f3; }
+    #root-public-review #root-site-example { background:#eaf1fc; border-color:#d5e0f3; }
+    #root-public-review #root-site-example .source { background:#fff; }
+    #root-public-review #root-site-example .source th { background:#f0f3f8; color:#394963; }
+    #root-public-review #root-site-example .result { background:#f9fbff; border-color:#a8bce0; }
+    #root-public-review #root-site-example .result h3 { color:#233a76; }
+    #root-public-review #root-site-example .result [data-filter] { color:#233a76; border-color:#91a7ce; }
   </style>
   <div class="page">
     <div class="intro" id="root-site-top">
@@ -128,29 +204,30 @@
         <p class="trial-note">用示例数据直接体验，无需账号。</p>
       </div>
       <div class="frame glimpse" aria-label="生成结果示意">
-        <p class="kicker">生成结果示意</p>
+        <div class="glimpse-bar"><span class="glimpse-mark" aria-hidden="true"></span><span>工具预览</span><span class="glimpse-version">示例</span></div>
         <h2>交付跟进板</h2>
-        <div class="row"><span>确认演示范围</span><span class="state">待完成</span></div>
-        <div class="row"><span>准备样例数据</span><span class="state">进行中</span></div>
-        <div class="row"><span>复核体验入口</span><span class="state">已完成</span></div>
+        <div class="row"><span>确认演示范围</span><span class="state" data-status="waiting">待完成</span></div>
+        <div class="row"><span>准备样例数据</span><span class="state" data-status="doing">进行中</span></div>
+        <div class="row"><span>复核体验入口</span><span class="state" data-status="done">已完成</span></div>
         <p class="count">还有 2 项未完成</p>
       </div>
     </section>
     </div>
     <section class="chapter chapter-soft feature" id="root-site-assistant" aria-labelledby="root-assistant-title">
       <div>
-        <p class="kicker">01 / 需求助手</p>
+        <p class="kicker">需求助手</p>
         <h2 id="root-assistant-title">想法还不清楚？先把需求理顺。</h2>
         <p class="lead">说说你遇到的问题。助手给出可选方向，追问会影响工具用法的细节，再整理成可编辑的需求稿。可以先存草稿，想好了再生成。</p>
       </div>
-      <ol class="frame feature-example story" aria-label="需求助手示意">
+      <div class="frame story-shell"><div class="chapter-bar">需求梳理示例</div>
+      <ol class="story" aria-label="需求助手示意">
         <li><h3>你遇到的问题</h3><p>「团队的交付事项总要到群里问进度。」</p></li>
         <li><h3>选方向，回答一个关键问题</h3><p>在「交付跟进板」和「个人提醒清单」里选看板。助手问要先看哪类事项，你选「本周到期」。</p></li>
-        <li><h3>拿到一份可改的需求稿</h3><p>「做一个交付跟进板，记录事项、负责人、截止日和状态，默认看本周到期，可勾选完成。」</p></li>
-      </ol>
+        <li class="draft"><h3>拿到一份可改的需求稿</h3><p>「做一个交付跟进板，记录事项、负责人、截止日和状态，默认看本周到期，可勾选完成。」</p></li>
+      </ol></div>
     </section>
     <section class="chapter" id="root-site-example" aria-labelledby="root-example-title">
-      <p class="kicker">02 / 直接开发</p>
+      <p class="kicker">直接开发</p>
       <h2 id="root-example-title">需求想清楚了，就直接做。</h2>
       <p class="lead">描述你想要的工具，或导入手头已有的表格。用文字可以从零开始，用表格可以带上原有记录。</p>
       <div class="frame example-text">
@@ -159,12 +236,12 @@
       </div>
       <figure class="pipeline" aria-label="同三条交付事项从表格变成可操作的看板">
         <figcaption class="between">用表格做交付跟进板 · 确认字段后生成，保留 3 条原记录</figcaption>
-        <div class="frame source"><p class="kicker">01 / 导入表格</p><strong>交付跟进表</strong>
+        <div class="frame source"><p class="kicker">原始表格</p><strong>交付跟进表</strong>
           <table class="sample-table" aria-label="导入前的四列三条记录"><thead><tr><th scope="col">事项</th><th scope="col">负责人</th><th scope="col">截止日</th><th scope="col">状态</th></tr></thead><tbody>
             <tr><td>确认演示范围</td><td>小林</td><td>11/08</td><td>待完成</td></tr><tr><td>准备样例数据</td><td>小周</td><td>11/10</td><td>进行中</td></tr><tr><td>复核体验入口</td><td>小陈</td><td>11/09</td><td>已完成</td></tr>
           </tbody></table>
         </div>
-        <div class="frame result" id="root-site-trial"><p class="kicker">02 / 试用工具</p>
+        <div class="frame result" id="root-site-trial"><p class="kicker">试用工具</p>
           <div class="output-head"><h3>交付跟进板</h3><button type="button" class="cursor-interaction" data-filter aria-pressed="false">只看未完成</button></div>
           <div class="row" data-item><label><input type="checkbox">确认演示范围</label><span class="state" data-status="待完成">待完成</span></div>
           <div class="row" data-item><label><input type="checkbox">准备样例数据</label><span class="state" data-status="进行中">进行中</span></div>
@@ -175,12 +252,12 @@
     </section>
     <section class="chapter chapter-soft feature" id="root-site-tools" aria-labelledby="root-tools-title">
       <div>
-        <p class="kicker">03 / 我的工具</p>
+        <p class="kicker">我的工具</p>
         <h2 id="root-tools-title">做完的小工具，下次接着用。</h2>
         <p class="lead">在「我的工具」找回已保存的工具和记录。用着发现少了一个功能，可以描述想改的地方，再查看工具的版本历史。</p>
       </div>
-      <div class="frame feature-example">
-        <p class="kicker">继续修改示意</p>
+      <div class="frame versions-shell">
+        <div class="chapter-bar">工具版本历史示例</div>
         <ul class="story">
           <li><h3>交付跟进板</h3><p>已保存 3 条交付事项</p></li>
           <li><h3><span class="version">v2</span> · 加了「本周到期」筛选</h3><p>保留原有记录，继续跟进。</p></li>
@@ -190,7 +267,7 @@
     </section>
     <section class="chapter workspace-entry" aria-labelledby="root-site-start">
       <h2 id="root-site-start">有件事想做成工具？</h2>
-      <a class="link-button primary cursor-interaction" href="http://127.0.0.1:8774/" target="_blank" rel="noopener">用自己的需求试试 →</a>
+      <a class="link-button primary cursor-interaction" href="http://127.0.0.1:8774/" target="_blank" rel="noopener">用自己的需求试试</a>
       <p class="trial-note">生成自己的工具需登录工作台。受邀评审可在工作台选择「凭邀请码注册」，邀请码由项目方发放。</p>
     </section>
     <section class="chapter chapter-soft feature" id="root-site-about" aria-labelledby="root-about-title">
@@ -204,8 +281,8 @@
           <p>后续会逐步开放页面组合和更灵活的生成能力。预计 11 月底更新进度。</p>
         </aside>
       </div>
-      <div class="faq" id="root-site-faq">
-        <h3>常见问题</h3>
+      <div class="frame faq" id="root-site-faq">
+        <h3 class="chapter-bar">常见问题</h3>
         <details><summary class="cursor-interaction">试用需要账号吗？</summary><p>点击「试用示例」即可在本页操作交付跟进板，无需登录。用自己的需求或表格生成工具时，需要登录工作台。</p></details>
         <details><summary class="cursor-interaction">邀请码从哪里获取？</summary><p>请向邀请你体验 ROOT 的项目方获取邀请码。收到后，点击「进入工作台」，选择「凭邀请码注册」并填入邀请码。新码自生成起 72 小时有效。此前发放的邀请码以原到期时间为准。每码可成功注册一次。过期或已使用时，请向邀请人索取新码。</p></details>
         <details>

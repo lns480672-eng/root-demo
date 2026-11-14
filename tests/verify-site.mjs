@@ -246,6 +246,29 @@ try {
         ['需求助手', '直接开发', '我的工具'].every(name => document.body.textContent.includes(name))];
     })()`);
     assert.deepEqual(layout, [workbench + '/', workbench + '/', true, true, true]);
+    const palette = await evaluate(`(() => {
+      const style = selector => {
+        const element = document.querySelector(selector);
+        return element ? getComputedStyle(element) : {};
+      };
+      return [
+        style('.intro').backgroundColor,
+        style('.hero .primary').backgroundColor,
+        style('.hero .link-button:not(.primary)').backgroundColor,
+        style('#root-site-example').backgroundColor,
+        style('.chapter-bar').backgroundColor,
+        style('.result h3').color,
+        style('[data-filter]').color,
+        style('#root-site-assistant').backgroundColor,
+        style('.workspace-entry').backgroundColor,
+        style('.site-footer').backgroundColor,
+      ];
+    })()`);
+    assert.deepEqual(palette, [
+      'rgb(35, 58, 118)', 'rgb(246, 248, 255)', 'rgba(0, 0, 0, 0)',
+      'rgb(234, 241, 252)', 'rgb(234, 241, 252)', 'rgb(35, 58, 118)', 'rgb(35, 58, 118)',
+      'rgb(247, 249, 252)', 'rgb(255, 255, 255)', 'rgb(255, 255, 255)',
+    ], `${width} px 的官网应使用已确认的 B 修订版配色`);
     const geometry = await evaluate(`(() => {
       const bounds = selector => document.querySelector(selector).getBoundingClientRect();
       const bands = [...document.querySelectorAll('.page, .intro, .chapter, .site-footer')];
@@ -306,6 +329,7 @@ try {
     assert.ok(invitation?.visible, '官网应能展开查看邀请码来源和注册指引');
     assert.match(invitation.text, /向邀请你体验 ROOT 的项目方获取邀请码/);
     assert.match(invitation.text, /凭邀请码注册/);
+    assert.match(invitation.text, /新码自生成起 72 小时有效.*此前发放的邀请码以原到期时间为准/);
 
     const capabilities = await evaluate(`(() => {
       const faq = document.querySelector('#root-site-faq');
