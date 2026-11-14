@@ -25,6 +25,7 @@ export async function verifyAssistant({
     await type(selector, value);
   };
   const waitStatus = message => until(async () => (await text('#assistant-status')).includes(message));
+  const name = '#assistant-draft-name';
   const initial = await activeTool();
   const initialLibrary = await library();
   const trial = async () => (await appRequest('/api/trial')).body;
@@ -42,6 +43,7 @@ export async function verifyAssistant({
   await click('#new-tool');
   await click('#idea-entry');
   await until(() => visible(idea));
+  assert.equal(await visible(name), false);
   assert.match(await text('#assistant-panel'), /本地模拟分析/);
   assert.match(await text('#assistant-panel'), /一条需求首次生成可编辑草稿时扣 1 次/);
   await checkBalance(0, 0);
@@ -142,6 +144,7 @@ export async function verifyAssistant({
   await cdp('Page.reload', {ignoreCache: true});
   await until(() => evaluate(`performance.timeOrigin !== ${navigation} &&
     document.documentElement.dataset.ready === 'true'`));
+  await click('#library-entry');
   const reopenedTool = await activeTool();
   assert.equal(reopenedTool.id, initial.id);
   if (!(await visible('#idea-entry'))) await click('#new-tool');
@@ -177,9 +180,16 @@ export async function verifyAssistant({
   const firstList = await appRequest(draftsPath);
   assert.equal(firstList.status, 200);
   assert.equal(firstList.body.items.length, 1);
-  const {id, revision} = firstList.body.items[0];
+  const {id} = firstList.body.items[0];
+  assert.equal(await evaluate('document.querySelector("#idea-entry").getAttribute("aria-current")'), 'page');
+  assert.notEqual(await input(name), '');
+  await setInput(name, '借具需求短名');
+  await click('#assistant-save');
+  await waitStatus('已保存');
+  assert.equal((await appRequest(draftsPath + '/' + id)).body.title, '借具需求短名');
   const remote = '另一个会话更新后的草稿，可以查看最新记录。';
-  const competing = await appRequest(draftsPath + '/' + id, {text: remote, revision});
+  const currentRevision = (await appRequest(draftsPath + '/' + id)).body.revision;
+  const competing = await appRequest(draftsPath + '/' + id, {text: remote, revision: currentRevision});
   assert.equal(competing.status, 200);
   const edited = '保留当前编辑，做一个可搜索的工作室借具清单。';
   await setInput(draft, edited);
@@ -205,7 +215,7 @@ export async function verifyAssistant({
   assert.equal(await evaluate('window.assistantGenerated'), 0);
   await checkBalance(2, 7);
   assert.deepEqual(await library(), initialLibrary);
-  assert.equal((await activeTool()).loader, reopenedTool.loader);
+  assert.equal(await evaluate('document.querySelector("#preview iframe[data-tool]").dataset.tool'), reopenedTool.id);
 
   stage('explicitly saving the compared edit updates only the reviewed revision');
   await click('#idea-entry');
@@ -224,6 +234,7 @@ export async function verifyAssistant({
   await click(`#assistant-draft-list [data-draft-id="${id}"]`);
   await until(() => visible(draft));
   assert.equal(await input(draft), edited);
+  assert.equal(await input(name), '借具需求短名');
   const revised = '重新登录后编辑，可以按借具名筛选并保存。';
   await setInput(draft, revised);
   await click('#assistant-save');
@@ -239,6 +250,7 @@ export async function verifyAssistant({
   await logout();
   await login(accountA);
   assert.equal((await appRequest(draftsPath + '/' + id)).body.text, revised);
+  await click("#library-entry");
   assert.equal((await activeTool()).id, initial.id);
   return {id: 'TEST-012/013', result: 'passed',
     lateResponseIgnored: true, clearAndAmbiguousPaths: true, twoDirections: true,

@@ -138,6 +138,10 @@ class Store:
                     ON requirement_drafts(owner, updated_at DESC, id);
             """)
 
+        with self.connection(write=True) as db:
+            if "title" not in {row["name"] for row in db.execute("PRAGMA table_info(requirement_drafts)")}:
+                db.execute("ALTER TABLE requirement_drafts ADD COLUMN title TEXT")
+
     @contextmanager
     def connection(self, write=False):
         with closing(sqlite3.connect(self.path, timeout=5)) as db, db:
@@ -330,12 +334,12 @@ class Store:
         with self.connection() as db:
             user = self.session(db, token, marker)
             rows = db.execute("""
-                SELECT id, text, revision, updated_at AS updatedAt FROM requirement_drafts
+                SELECT id, title, revision, updated_at AS updatedAt FROM requirement_drafts
                 WHERE owner=? ORDER BY updated_at DESC, id
             """, (user["id"],))
             return {"items": [
                 {"id": row["id"], "revision": row["revision"], "updatedAt": row["updatedAt"],
-                 "title": row["text"].strip().splitlines()[0][:70]}
+                 "title": row["title"] or "未命名需求"}
                 for row in rows
             ]}
 
@@ -344,7 +348,7 @@ class Store:
         with self.connection(write=change is not None) as db:
             user = self.session(db, token, marker)
             row = db.execute("""
-                SELECT id, owner, text, revision, updated_at AS updatedAt
+                SELECT id, owner, text, title, revision, updated_at AS updatedAt
                 FROM requirement_drafts WHERE id=?
             """, (identifier,)).fetchone()
             if row is not None and row["owner"] != user["id"]:
@@ -352,12 +356,18 @@ class Store:
             if change is None:
                 if row is None:
                     raise unavailable
-                return {field: row[field] for field in ("id", "text", "revision", "updatedAt")}
+                return {field: row[field] for field in ("id", "text", "title", "revision", "updatedAt")}
             value, revision = change.get("text"), change.get("revision")
             if not isinstance(value, str) or not value.strip() or len(value) > 2000:
                 raise ApiError(400, "invalid_draft_text", "请输入 1–2000 字的需求草稿。")
             if type(revision) is not int or revision < 0:
                 raise ApiError(400, "invalid_draft_revision", "草稿修订号无效。")
+            title = row["title"] if row is not None else None
+            if "title" in change:
+                title = change["title"]
+                if not isinstance(title, str) or len(title.strip()) > 40 or any(c in title.strip() for c in "\r\n"):
+                    raise ApiError(400, "invalid_draft_title", "需求名称最多 40 字，请使用单行名称。")
+                title = title.strip() or None
             updated = int(time.time() * 1000)
             if row is None:
                 if revision != 0:
@@ -365,16 +375,16 @@ class Store:
                 count = db.execute("SELECT count(*) FROM requirement_drafts WHERE owner=?", (user["id"],)).fetchone()[0]
                 if count >= 100:
                     raise ApiError(409, "draft_limit", "每个账号最多保存 100 份需求草稿。已有草稿仍可编辑。")
-                db.execute("INSERT INTO requirement_drafts VALUES (?,?,?,?,?)",
-                           (identifier, user["id"], value, 1, updated))
-            elif revision + 1 == row["revision"] and value == row["text"]:
+                db.execute("INSERT INTO requirement_drafts (id, owner, text, revision, updated_at, title) VALUES (?,?,?,?,?,?)",
+                           (identifier, user["id"], value, 1, updated, title))
+            elif revision + 1 == row["revision"] and value == row["text"] and title == row["title"]:
                 updated = row["updatedAt"]
             else:
                 if revision != row["revision"]:
                     raise ApiError(409, "draft_conflict", "草稿已在别处更新。本次编辑仍保留，请核对后再保存。")
-                db.execute("UPDATE requirement_drafts SET text=?,revision=?,updated_at=? WHERE id=? AND owner=?",
-                           (value, revision + 1, updated, identifier, user["id"]))
-            return {"id": identifier, "text": value, "revision": revision + 1, "updatedAt": updated}
+                db.execute("UPDATE requirement_drafts SET text=?,title=?,revision=?,updated_at=? WHERE id=? AND owner=?",
+                           (value, title, revision + 1, updated, identifier, user["id"]))
+            return {"id": identifier, "text": value, "title": title, "revision": revision + 1, "updatedAt": updated}
 
     def list_tools(self, token, marker):
         with self.connection() as db:

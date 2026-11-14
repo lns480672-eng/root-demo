@@ -102,6 +102,8 @@ class TrialBudget:
             self.admins = {(row["id"], row["username"]) for row in db.execute("SELECT id, username FROM accounts")
                            if row["username"] in names}
         with store.connection(write=True) as db:
+            if "title" not in {row["name"] for row in db.execute("PRAGMA table_info(analysis_draft_offers)")}:
+                db.execute("ALTER TABLE analysis_draft_offers ADD COLUMN title TEXT")
             db.execute("DELETE FROM analysis_draft_offers WHERE expires<=?", (self.clock(),))
             if "invite_digest" not in {row["name"] for row in db.execute("PRAGMA table_info(trial_audit)")}:
                 db.execute("ALTER TABLE trial_audit ADD COLUMN invite_digest TEXT REFERENCES invites(digest) ON DELETE SET NULL")
@@ -236,13 +238,13 @@ class TrialBudget:
         if round_row["completed_day"] is None and self.account_rows(db, day, account_id).fetchone()["analysis_used"] >= self.analysis_limit:
             raise ApiError(429, "analysis_account_limit", "今日可梳理的需求条数已用完。输入和草稿仍可编辑。")
 
-    def offer_analysis_draft(self, token, marker, round_id, request_id, text):
+    def offer_analysis_draft(self, token, marker, round_id, request_id, text, title=None):
         with self.store.connection(write=True) as db:
             user = self.store.session(db, token, marker)
             now = self.clock()
             db.execute("DELETE FROM analysis_draft_offers WHERE expires<=?", (now,))
-            db.execute("INSERT INTO analysis_draft_offers VALUES (?, ?, ?, ?, ?, ?)",
-                       (user["id"], request_id, round_id, digest(token), text, now + DRAFT_OFFER_SECONDS))
+            db.execute("INSERT INTO analysis_draft_offers (account,id,round_id,session_digest,text,expires,title) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                       (user["id"], request_id, round_id, digest(token), text, now + DRAFT_OFFER_SECONDS, title))
 
     def claim_analysis_draft(self, token, marker, offer_id):
         """Return an offered draft and charge its round at most once, in one write transaction."""
@@ -250,7 +252,7 @@ class TrialBudget:
             account_id = self.store.session(db, token, marker)["id"]
             now = self.clock()
             offer = db.execute("""
-                SELECT round_id, text FROM analysis_draft_offers
+                SELECT round_id, text, title FROM analysis_draft_offers
                 WHERE account=? AND id=? AND session_digest=? AND expires>?
             """, (account_id, offer_id, digest(token), now)).fetchone()
             if offer is None:
@@ -262,7 +264,7 @@ class TrialBudget:
             db.execute("""
                 UPDATE analysis_rounds SET completed_day=? WHERE account=? AND id=? AND completed_day IS NULL
             """, (day, account_id, round_id))
-            return {"kind": "draft", "text": offer["text"]}
+            return {"kind": "draft", "text": offer["text"], **({"title": offer["title"]} if offer["title"] else {})}
 
     def record_generation_success(self, db, account_id, run_id):
         """Charge personal quota in the same write transaction as a real-model publication."""

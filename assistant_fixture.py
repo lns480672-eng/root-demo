@@ -53,7 +53,7 @@ def analyze(data):
         concrete = any(word in idea for word in ("可以", "支持", "能够", "用来"))
         specifies_data = any(word in idea for word in ("保存", "保留", "刷新", "不需要存"))
         if concrete and specifies_data:
-            return {"kind": "draft", "text": idea}
+            return {"kind": "draft", "title": "需求草稿", "text": idea}
         return {"kind": "directions", "understanding": idea, "directions": choices}
     direction = data.get("direction")
     if direction not in choices:
@@ -67,7 +67,7 @@ def analyze(data):
         not isinstance(answers, list) or len(answers) != 1 or answers[0] not in options
     ):
         raise invalid
-    return {"kind": "draft", "text": (
+    return {"kind": "draft", "title": title, "text": (
         f"做一个{title}。\n原始问题：{idea}\n主要用途：{description}\n"
         f"操作偏好：{answers[0]}。\n有记录的操作需保存，重新打开后能找回。"
     )}

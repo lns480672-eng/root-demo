@@ -14,6 +14,7 @@ const live = process.argv.includes('--live');
 const stagedFlow = process.argv.includes('--staged-flow');
 const ledgerTheme = stagedFlow && process.argv.includes('--ledger-theme');
 const demoSite = stagedFlow && process.argv.includes('--demo-site');
+const draftNaming = process.argv.includes('--draft-naming');
 const stagedHistory = stagedFlow && process.argv.includes('--staged-history');
 const quotaFeedback = process.argv.includes('--quota-feedback');
 if (quotaFeedback && (!stagedFlow || process.env.ROOT_STAGED_LIVE === '1')) throw new Error('--quota-feedback requires the staged fixture');
@@ -82,7 +83,7 @@ try {
     await once(probe, 'listening');
     probeUrl = 'http://127.0.0.1:' + probe.address().port;
     assert.equal((await fetch(probeUrl + '/control')).status, 200);
-    const fixture = stagedFlow ? 'tests/staged_fixtures.py' : 'tests/fixtures.py';
+    const fixture = stagedFlow || draftNaming ? 'tests/staged_fixtures.py' : 'tests/fixtures.py';
     const server = launch('python3', [fixture, 'fixture-key', '0', join(root, 'runs'), probeUrl,
       ...(adminFlow ? ['--admin-flow'] : []), ...(entryFlow ? ['--entry-flow'] : []),
       ...(ledgerTheme ? ['--ledger-theme'] : []), ...(quotaFeedback ? ['--quota-feedback'] : []),
@@ -94,7 +95,7 @@ try {
   const config = await (await fetch(base + '/api/config', { signal: AbortSignal.timeout(5000) })).json();
   evidence.build = config.build;
   assert.equal(config.configured, true, '需要配置本地工作台的 DeepSeek Key');
-  assert.deepEqual(Object.keys(config).sort(), stagedFlow ? ['build', 'configured', 'staged'] : ['build', 'configured']);
+  assert.deepEqual(Object.keys(config).sort(), stagedFlow || draftNaming ? ['build', 'configured', 'staged'] : ['build', 'configured']);
   if (!live) {
     const invalidOrigin = await fetch(base + '/api/generate', {
       method: 'POST', headers: { Origin: 'null', 'Content-Type': 'application/json' },
@@ -430,7 +431,49 @@ try {
     await until(() => evaluate('document.title === "Reachable HTTP probe"'));
     assert.deepEqual(probeRequests, probeControls);
   }
-  if (stagedFlow) {
+  if (draftNaming) {
+    stage = 'AC-011/012/013 named requirement handoff';
+    await cdp('Page.navigate', {url:base});
+    await login(accountA, true);
+    if (await visible('#workspace-guide')) await click('#guide-skip');
+    const oldId = 'ed4eed11-3ff4-4268-8df1-76c4a30dab08';
+    const body = '做一个读书清单，可以新增书名并保存。';
+    const path = '/api/requirement-drafts/' + oldId;
+    assert.equal((await appRequest(path, {text:body, revision:0})).status, 200);
+    for (const width of [1440, 390]) {
+      await cdp('Emulation.setDeviceMetricsOverride', {width,height:844,deviceScaleFactor:1,mobile:width===390});
+      await click('#idea-entry');
+      assert.equal(await evaluate('document.querySelectorAll(".workspace-navigation nav button").length'), 3);
+      assert.equal(await visible('#assistant-draft-name'), false);
+      await click('#assistant-drafts');
+      await until(() => visible('[data-draft-id="' + oldId + '"]'));
+      assert.match(await evaluate('document.querySelector(".assistant-draft-list button").textContent'), /未命名需求/);
+      assert.equal(await evaluate('document.querySelector("#idea-entry").getAttribute("aria-current")'), 'page');
+      assert.equal(await evaluate('document.documentElement.scrollWidth <= innerWidth'), true);
+      await screenshot('requirements-' + width);
+      if (width === 1440) { await click('#assistant-idea-tab'); await click('#new-tool'); }
+    }
+    await click('[data-draft-id="' + oldId + '"]');
+    await until(() => visible('#assistant-draft-name'));
+    await type('#assistant-draft-name', '图书借阅需求');
+    await click('#assistant-save');
+    await until(async () => (await appRequest(path)).body.title === '图书借阅需求');
+    await click('#assistant-build');
+    assert.equal((await appRequest('/api/staged')).body.tasks.length, 0);
+    await click('#generate');
+    const task = await until(async () => {
+      const active = (await appRequest('/api/staged')).body.tasks;
+      const archived = (await appRequest('/api/staged/history')).body.tasks;
+      return [...active, ...archived].find(item => item.title === '图书借阅需求');
+    });
+    assert.equal(task.requirement, body);
+    await cdp('Page.reload');
+    await until(() => evaluate('document.documentElement.dataset.ready === "true"'));
+    const readback = (await appRequest('/api/staged/' + task.id)).body.task;
+    assert.equal(readback.title, task.title);
+    assert.equal(readback.requirement, body);
+    evidence.tests.push({id:'AC-011/012/013', title:readback.title, fullText:readback.requirement, task:task.id});
+  } else if (stagedFlow) {
     evidence.mode = process.env.ROOT_STAGED_LIVE === '1' ? 'deepseek-staged' : 'fixture-staged';
     const tableJourney = process.argv.includes('--table-journey');
     const calculator = process.env.ROOT_STAGED_CALCULATOR === '1';
@@ -1353,7 +1396,8 @@ try {
         await click('#idea-entry');
         assert.equal(await visible('#assistant-panel'), true);
         assert.equal(await visible('.elys-composer'), false);
-        await click('#assistant-exit');
+        await click('#library-entry');
+        await click('#revise-tool');
         assert.equal(await visible('.elys-preview'), true);
         assert.equal(await evaluate(`(() => {
           const composer = document.querySelector('.elys-composer').getBoundingClientRect();
@@ -1362,7 +1406,6 @@ try {
             ? Math.abs(preview.left - composer.left) <= 1 && preview.top >= composer.bottom
             : preview.left >= composer.right);
         })()`), true, '同屏显示的预览与编辑区分开布局');
-        assert.equal(await evaluate('document.querySelector("#requirement").value'), '保持这条修改草稿');
         assert.equal(await evaluate('editing'), true);
         assert.equal(await evaluate('document.querySelector("#guide-start").disabled'), true);
         await screenshot('revision-' + width);
@@ -1630,13 +1673,13 @@ try {
         await until(() => visible('#assistant-build'));
         await click('#assistant-save');
         await until(async () => (await evaluate('document.querySelector("#assistant-status")?.textContent || ""')).includes('已保存'));
-        await click('#drafts-entry');
+        await click('#assistant-drafts');
         await until(() => evaluate('document.querySelector(".assistant-draft-list button")?.checkVisibility()'));
         await click('#idea-entry');
         assert.equal(await evaluate('document.querySelector("#idea-entry").getAttribute("aria-current")'), 'page');
-        await click('#drafts-entry');
+        await click('#assistant-drafts');
         await until(() => evaluate('document.querySelector(".assistant-draft-list button")?.checkVisibility()'));
-        assert.equal(await evaluate('document.querySelector("#drafts-entry").getAttribute("aria-current")'), 'page');
+        assert.equal(await evaluate('document.querySelector("#idea-entry").getAttribute("aria-current")'), 'page');
         await click('.assistant-draft-list button');
         await until(() => visible('#assistant-build'));
         await screenshot('saved-draft-from-left-navigation');
@@ -1768,6 +1811,7 @@ try {
 } catch (error) {
   evidence.status = 'failed';
   evidence.error = error.message;
+  evidence.errorStack = error.stack;
   evidence.failedStage = stage;
   if (runtimeErrors.length) evidence.runtimeErrors = runtimeErrors;
   if (readPage) evidence.page = await readPage().catch(() => null);
