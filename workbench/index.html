@@ -73,8 +73,7 @@
         <div class="workspace-navigation">
           <nav aria-label="工作台栏目">
             <button id="new-tool" type="button">新建工具</button>
-            <button id="idea-entry" type="button">需求助手</button>
-            <button id="drafts-entry" type="button">我的需求</button>
+            <button id="idea-entry" type="button">需求</button>
             <button id="library-entry" type="button" aria-controls="saved-tools" aria-expanded="false">我的工具</button>
           </nav>
         </div>
@@ -154,6 +153,7 @@
           </nav>
           <section id="staged-panel" class="staged-panel" aria-labelledby="staged-title" hidden>
             <h3 id="staged-title">生成任务</h3>
+            <details id="staged-original" hidden><summary>查看完整需求</summary><p></p></details>
             <p id="staged-list-status" class="auth-muted" role="status"></p>
             <ul id="staged-task-list" aria-label="尚可查看的生成任务"></ul>
             <div id="staged-detail" class="staged-detail" hidden>

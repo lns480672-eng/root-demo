@@ -30,7 +30,8 @@ SYSTEM_HEADER = """你是 ROOT 工具需求助手。只用简体中文返回一�
 """
 DRAFT_SHAPE = """草稿用简明中文写清目标、主要操作、数据和保存行为，最多 600 字。
 草稿对象只包含 kind 和 text，text 是一个字符串。
-{"kind":"draft","text":"做一个读书清单，可以添加书名、标记已读，刷新后仍能找回。"}
+同时给出便于找回的单行短名 title，最多 40 字。
+{"kind":"draft","title":"读书清单","text":"做一个读书清单，可以添加书名、标记已读，刷新后仍能找回。"}
 """
 ANSWERS_SYSTEM = SYSTEM_HEADER + """用原始想法、已选方向和选中的答案整理一份可编辑草稿。
 只使用选中的答案，未选中的选项不代表用户要求。不继续追问。
@@ -106,8 +107,14 @@ def _analysis_result(value, step):
     if kind not in STAGES[step]:
         raise _ValidationError("unexpected result")
     if kind == "draft":
-        _shape(value, ("kind", "text"))
-        return {"kind": kind, "text": _text(value["text"], 2000)}
+        _shape(value, ("kind", "text", "title") if "title" in value else ("kind", "text"))
+        result = {"kind": kind, "text": _text(value["text"], 2000)}
+        if "title" in value:
+            title = _text(value["title"], 40)
+            if "\n" in title or "\r" in title:
+                raise _ValidationError("invalid draft title")
+            result["title"] = title
+        return result
     if kind == "directions":
         _shape(value, ("kind", "understanding", "directions"))
         directions = [_direction(item) for item in _list(value["directions"], 2, 3)]

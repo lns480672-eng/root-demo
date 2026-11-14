@@ -24,7 +24,7 @@
 .assistant-actions { margin-block-start: 12px; }
 .assistant-nav { margin-block-start: 14px; }
 #assistant-panel label { display: block; margin-block-end: 5px; font-weight: 650; }
-#assistant-panel textarea, #assistant-panel select {
+#assistant-panel textarea, #assistant-panel select, #assistant-draft-name {
   width: 100%;
   min-width: 0;
   font: inherit;
@@ -59,3 +59,6 @@
   border: 1px solid var(--elys-line);
   border-radius: 10px;
 }
+
+#assistant-draft-name { margin-block-end: 12px; }
+.assistant-nav button[aria-current="page"] { background: var(--elys-wash); font-weight: 650; }

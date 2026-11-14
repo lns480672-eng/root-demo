@@ -104,6 +104,8 @@ class StagedJobs:
                 db.execute("ALTER TABLE staged_jobs ADD COLUMN repo_id TEXT")
             if "category" not in columns:
                 db.execute("ALTER TABLE staged_jobs ADD COLUMN category TEXT NOT NULL DEFAULT 'auto'")
+            if "title" not in columns:
+                db.execute("ALTER TABLE staged_jobs ADD COLUMN title TEXT")
             candidate_columns = {row["name"] for row in db.execute("PRAGMA table_info(staged_candidates)")}
             if "runtime_proof" not in candidate_columns:
                 db.execute("ALTER TABLE staged_candidates ADD COLUMN runtime_proof TEXT")
@@ -154,6 +156,8 @@ class StagedJobs:
                   "issue":row["issue"], "reason":row["failure"],
                   "resumable":state in ("queued", "failed", "interrupted")
                   and row["failure"] != "staged_runtime_failed"}
+        if row["title"]:
+            result["title"] = row["title"]
         guidance = REVISION_GUIDANCE.get(row["failure"])
         if state == "unsupported" and guidance:
             result["guidance"] = guidance
@@ -226,12 +230,16 @@ class StagedJobs:
             """, (owner["id"], identifier)).fetchall()
             return [self.view(row, db) for row in reversed(rows)]
 
-    def create(self, token, marker, requirement, request_id, *, tool_id=None, version=None, category="auto"):
+    def create(self, token, marker, requirement, request_id, *, tool_id=None, version=None, category="auto", title=None):
         if (not isinstance(request_id, str) or not IDENTIFIER.fullmatch(request_id)
                 or not isinstance(requirement, str) or not 0 < len(requirement.strip()) <= 2000):
             raise ApiError(400, "staged_input", "生成请求编号或需求无效。")
         if category != "auto" and (tool_id or category not in self.blueprint.CATEGORIES):
             raise ApiError(400, "staged_category", "请选择有效的新建类别。已有工具的修改沿用原类别。")
+        if title is not None:
+            if tool_id or not isinstance(title, str) or not 0 < len(title.strip()) <= 40 or any(c in title.strip() for c in "\r\n"):
+                raise ApiError(400, "invalid_draft_title", "需求名称须为 1–40 字的单行名称。")
+            title = title.strip()
         requirement = requirement.strip()
         with self.store.connection(write=True) as db:
             owner = self.store.session(db, token, marker)["id"]
@@ -239,7 +247,7 @@ class StagedJobs:
                                   (owner, request_id)).fetchone()
             if existing is not None:
                 revision = self.revision_record(db, existing["id"])
-                if (existing["requirement"] != requirement or existing["category"] != category or bool(revision) != bool(tool_id)
+                if (existing["requirement"] != requirement or existing["category"] != category or existing["title"] != title or bool(revision) != bool(tool_id)
                         or (revision and (revision["tool_id"], revision["base_version"]) != (tool_id, version))):
                     raise ApiError(409, "staged_request_changed", "同一请求编号的需求或版本不能变更。")
                 return self.view(existing, db)
@@ -252,10 +260,10 @@ class StagedJobs:
                 repo_id, head, source_digest, context = self.revision_source(db, row)
             steps = json.dumps(["revision-plan"]) if tool_id else None
             db.execute("""
-                INSERT INTO staged_jobs(id,owner,request_id,requirement,head,expires,updated_at,repo_id,category,plan)
-                VALUES (?,?,?,?,?,?,?,?,?,?)
+                INSERT INTO staged_jobs(id,owner,request_id,requirement,head,expires,updated_at,repo_id,category,plan,title)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?)
             """, (identifier, owner, request_id, requirement, head,
-                  self.clock() + self.retain_seconds, self.clock(), repo_id, category, steps))
+                  self.clock() + self.retain_seconds, self.clock(), repo_id, category, steps, title))
             if tool_id:
                 db.execute("INSERT INTO staged_revisions VALUES (?,?,?,?,?)",
                            (identifier, tool_id, version, source_digest, encoded(context).decode()))

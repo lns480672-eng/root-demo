@@ -122,6 +122,19 @@ class AccountHTTP(unittest.TestCase):
                 marker = upgraded.session(db, token)["marker"]
             self.assertEqual(upgraded.profile(token, marker),
                              {"username": "profile-legacy", "nickname": "profile-legacy"})
+    def test_requirement_short_name_is_versioned_with_the_body(self):
+        self.assertEqual(self.register("draft-name-owner", self.store.create_invite())[0], 201)
+        cookie, marker = self.login("draft-name-owner")
+        path = "/api/requirement-drafts/" + str(uuid4())
+        def save(**data):
+            return self.request(path, data, cookie, marker)
+        self.assertEqual(save(text="原草稿", revision=0)[0], 200)
+        listing = self.request("/api/requirement-drafts", cookie=cookie, marker=marker)[1]
+        self.assertEqual(listing["items"][0]["title"], "未命名需求")
+        self.assertEqual(save(text="原草稿", title="  简历记录  ", revision=1)[1]["title"], "简历记录")
+        self.assertEqual(save(text="原草稿", title="另一名称", revision=1)[0], 409)
+        self.assertEqual(save(text="原草稿", revision=2)[1]["title"], "简历记录")
+        self.assertEqual(save(text="原草稿", title="x" * 41, revision=3)[0], 400)
 
     def test_trial_quotas_pause_and_admin_authorization(self):
         self.assertEqual(self.register("trial-user", self.store.create_invite())[0], 201)
