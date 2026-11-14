@@ -1451,6 +1451,38 @@ if (fields.result.textContent !== '40.00') process.exit(1);
         self.assertNotIn("新增可空", " ".join(candidate["revisionPlan"]["changes"]))
         self.assertEqual(self.request(tool, auth=owner)[1]["version"], 1)
 
+    def test_revision_submission_rejects_other_active_task_for_same_account(self):
+        owner = self.account("revision-admission")
+        created = self.gen(owner, "计算两数之和")[1]["task"]["id"]
+        self.wait_task(owner, created, "complete")
+        path = "/api/staged/" + created
+        original = self.request(path + "/candidate", {}, owner)[1]
+        data = {**original["staged"], "toolId": original["id"], "entries": []}
+        self.assert_preview_verified(path, data, owner)
+        self.assertEqual(self.request(path + "/publish", data, owner)[0], 200)
+        revision_path = "/api/tools/" + original["id"] + "/revise"
+        blocked = {"version": 1, "requirement": "输出说明改成两数之和", "requestId": uuid4().hex}
+        with self.store.connection(write=True) as db:
+            other = uuid4().hex
+            db.execute("""
+                INSERT INTO staged_jobs (id, owner, request_id, requirement, head, expires, state, lease_until)
+                SELECT ?, owner, ?, requirement, head, expires, 'running', ?
+                FROM staged_jobs WHERE id=?
+            """, (other, uuid4().hex, time.time() + 60, created))
+        before = self.request("/api/trial", auth=owner)[1]["generation"]
+        status, error, _ = self.request(revision_path, blocked, owner)
+        self.assertEqual((status, error.get("code")), (409, "staged_busy"))
+        self.assertEqual(self.request("/api/trial", auth=owner)[1]["generation"], before)
+        with self.store.connection(write=True) as db:
+            self.assertEqual(db.execute("SELECT count(*) FROM staged_jobs WHERE request_id=?",
+                                        (blocked["requestId"],)).fetchone()[0], 0)
+            db.execute("UPDATE staged_jobs SET lease_until=? WHERE id=?", (time.time() - 1, other))
+        queued, task, _ = self.request(revision_path, blocked, owner)
+        self.assertEqual(queued, 202)
+        replay, duplicate, _ = self.request(revision_path, blocked, owner)
+        self.assertEqual(replay, 202)
+        self.assertEqual(duplicate["task"]["id"], task["task"]["id"])
+
     def test_revision_resume_recovers_fixed_plan_without_dispatching_twice(self):
         owner = self.account("resume-revision-plan")
         created = self.gen(owner, "计算两数之和")[1]["task"]["id"]
@@ -1583,8 +1615,8 @@ if (fields.result.textContent !== '40.0') process.exit(1);
         self.assertEqual(result["task"]["baseToolId"], candidate["id"])
         self.assertEqual(result["task"]["baseVersion"], 1)
         second_data = {**data, "requestId":uuid4().hex}
-        competing = self.request(tool + "/revise", second_data, owner)[1]["task"]["id"]
         self.wait_task(owner, revision, "complete")
+        competing = self.request(tool + "/revise", second_data, owner)[1]["task"]["id"]
         self.wait_task(owner, competing, "complete")
         rev_path = "/api/staged/" + revision
         revised = self.request(rev_path + "/candidate", {}, owner)[1]

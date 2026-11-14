@@ -944,7 +944,7 @@
           "工具"
         ],
         "summary": "发起现有工具的统一修订任务",
-        "description": "按原工具 ID、当前版本、需求和 requestId 发起修订，返回同一生成任务协议。相同账号、工具、版本、需求和请求标识重放返回同一任务；复用标识时变更绑定内容返回 409 staged_request_changed。生成期间旧版仍可打开与写入。候选就绪后通过 /api/staged/{taskId}/candidate 读回最新存储快照，再提交分阶段发布。不支持安全修订的旧版源码返回 422 staged_revision_source。关闭编排的本地测试对照可返回传统 200 预览候选。",
+        "description": "按原工具 ID、当前版本、需求和 requestId 发起修订，返回同一生成任务协议。相同账号、工具、版本、需求和请求标识重放返回同一任务；复用标识时变更绑定内容返回 409 staged_request_changed。账号下有已排队或仍持有执行权的生成或修改时，新修改请求返回 409 staged_busy，且不创建任务。生成期间旧版仍可打开与写入。候选就绪后通过 /api/staged/{taskId}/candidate 读回最新存储快照，再提交分阶段发布。不支持安全修订的旧版源码返回 422 staged_revision_source。关闭编排的本地测试对照可返回传统 200 预览候选。",
         "responses": {
           "202": {
             "description": "接受统一修订任务。",
