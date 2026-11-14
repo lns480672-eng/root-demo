@@ -242,20 +242,30 @@ try {
   }
 
   async function pointerClick(selector, context) {
-    if (context) await evaluate('document.querySelector("#preview iframe[data-tool]").scrollIntoView({block:"nearest",inline:"nearest"})');
-    const button = await evaluate(`(() => {
+    const frameSelector = '#preview iframe[data-tool]';
+    if (context) await evaluate(`document.querySelector('${frameSelector}').scrollIntoView({block:'nearest',inline:'nearest',behavior:'instant'})`);
+    const button = await evaluate(`(async () => {
       const target = document.querySelector(${JSON.stringify(selector)});
-      target.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+      target.scrollIntoView({block:'nearest',inline:'nearest',behavior:'instant'});
+      // Let Chromium publish the child frame's scroll position for input hit testing.
+      await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
       const rect = target.getBoundingClientRect();
-      return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 };
+      const point = {x:rect.x + rect.width / 2, y:rect.y + rect.height / 2};
+      const hit = document.elementFromPoint(point.x, point.y);
+      return target.contains(hit) ? point : null;
     })()`, context);
-    const frame = context ? await evaluate(`(() => {
-      const rect = document.querySelector('#preview iframe[data-tool]').getBoundingClientRect();
-      return { x: rect.x, y: rect.y };
-    })()`) : { x: 0, y: 0 };
-    const point = { x: frame.x + button.x, y: frame.y + button.y, button: 'left', clickCount: 1 };
-    await cdp('Input.dispatchMouseEvent', { ...point, type: 'mousePressed', buttons: 1 });
-    await cdp('Input.dispatchMouseEvent', { ...point, type: 'mouseReleased', buttons: 0 });
+    assert.ok(button, `Pointer target is obscured: ${selector}`);
+    const point = context ? await evaluate(`(() => {
+      const iframe = document.querySelector('${frameSelector}');
+      const rect = iframe.getBoundingClientRect();
+      const x = rect.x + iframe.clientLeft + ${button.x};
+      const y = rect.y + iframe.clientTop + ${button.y};
+      return document.elementFromPoint(x, y) === iframe ? {x, y} : null;
+    })()`) : button;
+    assert.ok(point, `Preview frame is obscured for: ${selector}`);
+    const event = {...point, button:'left', clickCount:1};
+    await cdp('Input.dispatchMouseEvent', {...event, type:'mousePressed', buttons:1});
+    await cdp('Input.dispatchMouseEvent', {...event, type:'mouseReleased', buttons:0});
   }
 
   async function screenshot(name) {
