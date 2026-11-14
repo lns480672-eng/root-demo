@@ -50,7 +50,7 @@ STATIC = {
     "/workbench.js": ("workbench.js", "text/javascript; charset=utf-8"),
 }
 TOOL_PATH = re.compile(r"/api/tools/(run-[a-z0-9_]{8})")
-TOOL_ACTION = re.compile(r"/api/tools/(run-[a-z0-9_]{8})/(commit|open|data|records|publish|revise|restore|resolve-publish|resolve-commit)")
+TOOL_ACTION = re.compile(r"/api/tools/(run-[a-z0-9_]{8})/(commit|open|data|records|publish|revise|restore|resolve-publish|resolve-commit|source)")
 TOOL_VERSIONS = re.compile(r"/api/tools/(run-[a-z0-9_]{8})/versions")
 TOOL_REVISION_TASKS = re.compile(r"/api/tools/(run-[a-z0-9_]{8})/revision-tasks")
 DRAFTS = "/api/requirement-drafts"
@@ -64,7 +64,7 @@ TRIAL_ADMIN = "/api/trial/admin"
 STAGED = "/api/staged"
 STAGED_HISTORY = STAGED + "/history"
 STAGED_TASK = re.compile(STAGED + r"/([a-f0-9]{32})")
-STAGED_ACTION = re.compile(STAGED + r"/([a-f0-9]{32})/(resume|answer-revision|repair-revision|candidate|confirm-revision|cancel-revision|verify-preview|publish|resolve-publish)")
+STAGED_ACTION = re.compile(STAGED + r"/([a-f0-9]{32})/(resume|answer-revision|repair-revision|candidate|confirm-revision|cancel-revision|verify-preview|publish|resolve-publish|source)")
 ADMIN_INVITES = "/api/admin/invites"
 ADMIN_SETUP = "/api/admin/setup"
 ADMIN_PASSWORD = "/api/admin/password"
@@ -534,6 +534,8 @@ def serve(key, port, runs=generate.RUNS, *, generation_limits=(5, 30), analysis_
                     self.send_json(202, {"task":start_staged(token, marker, match[1], resume=False)})
                 elif match[2] == "candidate":
                     self.send_json(200, staged.candidate(token, marker, match[1]))
+                elif match[2] == "source":
+                    self.send_json(200, staged.candidate_source(token, marker, match[1], data))
                 elif match[2] == "confirm-revision":
                     staged.confirm_revision(token, marker, match[1], data)
                     self.send_json(200, {"confirmed":True})
@@ -568,6 +570,9 @@ def serve(key, port, runs=generate.RUNS, *, generation_limits=(5, 30), analysis_
                                          "storageLimit": TABLE_STORAGE_BYTES})
                 return
             if match := TOOL_ACTION.fullmatch(self.path):
+                if match[2] == "source":
+                    self.send_json(200, history.current_source(token, self.marker(), match[1], data.get("version")))
+                    return
                 if match[2] == "revise":
                     self.handle_generation(data, match[1])
                 elif match[2] == "records":

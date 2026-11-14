@@ -450,6 +450,69 @@
         ]
       }
     },
+    "/api/tools/{toolId}/source": {
+      "post": {
+        "operationId": "readAppliedToolSource",
+        "tags": ["工具"],
+        "summary": "读取当前已应用版本的生成文件",
+        "description": "仅工具所有者可读取。版本必须与当前已应用版一致。没有保留生成制品的旧工具返回空文件列表。",
+        "parameters": [
+          {"$ref": "#/components/parameters/Origin"},
+          {"$ref": "#/components/parameters/ToolId"}
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {"application/json": {"schema": {
+            "type": "object",
+            "required": ["version"],
+            "properties": {"version": {"type": "integer", "minimum": 1}}
+          }}}
+        },
+        "responses": {
+          "200": {"$ref": "#/components/responses/ToolSourceResponse"},
+          "401": {"$ref": "#/components/responses/Http401"},
+          "403": {"$ref": "#/components/responses/Http403"},
+          "404": {"$ref": "#/components/responses/Http404"},
+          "409": {"$ref": "#/components/responses/Http409"},
+          "503": {"$ref": "#/components/responses/Http503"}
+        }
+      }
+    },
+    "/api/staged/{taskId}/source": {
+      "post": {
+        "operationId": "readCandidateToolSource",
+        "tags": ["生成任务"],
+        "summary": "读取当前修改候选的生成文件",
+        "description": "仅工具所有者可读取。任务、工具、候选运行标识、版本、提交、摘要及 nonce 必须对应同一尚未应用候选。",
+        "parameters": [
+          {"$ref": "#/components/parameters/Origin"},
+          {"$ref": "#/components/parameters/TaskId"}
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {"application/json": {"schema": {
+            "type": "object",
+            "required": ["toolId", "runId", "version", "commit", "sha256", "nonce"],
+            "properties": {
+              "toolId": {"type": "string", "pattern": "^run-[a-z0-9_]{8}$"},
+              "runId": {"type": "string", "pattern": "^run-[a-z0-9_]{8}$"},
+              "version": {"type": "integer", "minimum": 2},
+              "commit": {"type": "string", "pattern": "^[a-f0-9]{40}$"},
+              "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+              "nonce": {"type": "string", "pattern": "^[a-f0-9]{32}$"}
+            }
+          }}}
+        },
+        "responses": {
+          "200": {"$ref": "#/components/responses/ToolSourceResponse"},
+          "401": {"$ref": "#/components/responses/Http401"},
+          "403": {"$ref": "#/components/responses/Http403"},
+          "404": {"$ref": "#/components/responses/Http404"},
+          "409": {"$ref": "#/components/responses/Http409"},
+          "503": {"$ref": "#/components/responses/Http503"}
+        }
+      }
+    },
     "/api/tools/{toolId}/versions": {
       "get": {
         "operationId": "listToolVersions",
@@ -2836,6 +2899,10 @@
       }
     },
     "responses": {
+      "ToolSourceResponse": {
+        "description": "对应工具版本的生成文件，以只读文本返回。",
+        "content": {"application/json": {"schema": {"$ref":"#/components/schemas/ToolSource"}}}
+      },
       "OwnProfile": {
         "description": "当前账号资料。没有自定义昵称时，昵称为登录名。",
         "content": {"application/json": {"schema": {
@@ -2986,6 +3053,20 @@
       }
     },
     "schemas": {
+      "ToolSource": {
+        "type": "object",
+        "required": ["toolId", "version", "applied", "files"],
+        "properties": {
+          "toolId": {"type": "string", "pattern": "^run-[a-z0-9_]{8}$"},
+          "version": {"type": "integer", "minimum": 1},
+          "applied": {"type": "boolean"},
+          "files": {"type": "array", "items": {
+            "type": "object",
+            "required": ["path", "text"],
+            "properties": {"path": {"type": "string"}, "text": {"type": "string"}}
+          }}
+        }
+      },
       "Error": {
         "type": "object",
         "properties": {

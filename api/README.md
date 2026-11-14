@@ -20,3 +20,9 @@ JSON 语法可用 `python3 -m json.tool api/openapi.json` 检查。规范通过�
 ## 工具版本与 Git 提交
 
 `GET /api/tools/{toolId}/versions` 在每条已生效版本返回完整的 Git `commit`。工作台为每个工具绑定一个私有仓库，分阶段任务的过程提交不会出现在工具版本列表。直接导表在首次保存时记录代码快照。恢复会用旧版代码在同一仓库追加一个提交，并继续保留 SQLite 中的当前业务记录。
+
+## 修改页只读代码
+
+正式版使用 `POST /api/tools/{toolId}/source`，携带当前 `version`。已就绪的修改候选使用 `POST /api/staged/{taskId}/source`，携带候选响应中的 `toolId`、`runId`、`version`、`commit`、`sha256` 和 `nonce`。两个入口都验证工具所属账号。候选已经取消、失败或应用时，需重新读取当前已应用版本。
+
+响应返回 `toolId`、`version`、`applied` 和按项目相对路径排列的 `files`，每项含 `path` 和 `text`。没有保留生成制品的旧工具返回空列表。候选和正式版的代码均从对应的生成制品校验后读取。浏览器把文件按文本显示。
