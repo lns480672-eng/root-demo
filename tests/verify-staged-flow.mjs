@@ -968,7 +968,7 @@ with sqlite3.connect(sys.argv[1]) as db:
   assert.equal(await evaluate('document.querySelector("#requirement").value'), failedRequirement);
   assert.equal(await visible('#staged-resume'), false);
   assert.equal((await balance()).used, oldBalance.used);
-  assert.equal(await visible('.elys-preview'), false);
+  assert.equal(await visible('.elys-preview'), true);
   assert.equal(await evaluate('document.querySelector("#preview iframe[data-tool]").dataset.tool'), old.id);
   assert.equal((await appRequest('/api/tools')).body.items.length, 1);
   fixtureSql(`
