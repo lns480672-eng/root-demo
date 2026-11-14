@@ -236,7 +236,7 @@ button:enabled { cursor: pointer; }
   margin-block-start: 16px;
 }
 .preview-frames iframe[hidden] { display: none; }
-.preview-frames iframe:not([data-tool], [data-repair-trial]) {
+.preview-frames iframe:not([data-tool], [data-repair-trial], [data-revision-inspection]) {
   position: absolute;
   inset: 0;
   visibility: hidden;
@@ -628,15 +628,38 @@ body:has(#auth:not([hidden])) { padding: 0; }
   font-weight: 650;
 }
 .elys-product #revise-tool:hover:not(:disabled) { background: #e3e9fa; }
-#revision-versions { margin-block: 10px; }
-.elys-product #tool-history {
+.revision-views { display: flex; flex: 1 0 100%; flex-wrap: wrap; gap: 4px; }
+.elys-product .revision-views button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   min-height: 44px;
-  padding-inline: 0;
-  background: transparent;
+  padding-inline: 8px;
   border-color: transparent;
-  color: #314b92;
-  text-align: start;
+  border-radius: 6px;
+  background: transparent;
+  color: #505970;
 }
+.elys-product .revision-views button[aria-pressed="true"] { background: #e5ebfa; color: #314b92; }
+.revision-views svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.7; }
+.revision-candidate-badge { color: #354e85; font-size: 13px; }
+#source-panel, #tool-version-panel { min-width: 0; padding-block: 10px; }
+#source-files { max-width: 100%; }
+#source-text {
+  overflow: auto;
+  max-height: min(440px, 55dvh);
+  padding: 12px;
+  border: 1px solid var(--elys-line);
+  border-radius: 8px;
+  background: #f0f2fa;
+  font: 13px/1.6 ui-monospace, monospace;
+}
+.revision-author { color: #46577c; font-size: 12px; font-weight: 650; }
+.revision-avatar {
+  display: inline-grid; place-items: center; width: 18px; height: 18px; margin-inline-end: 4px;
+  border-radius: 5px; background: #e5ebfa; color: #314b92;
+}
+.revision-message[data-role="user"] { text-align: end; }
 #tool-version-panel {
   margin: 0;
   padding: 0;

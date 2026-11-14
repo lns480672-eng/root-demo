@@ -51,6 +51,8 @@ def history_program(stage, requirement, admit, record):
 
 
 def staged(stage, requirement, prior, key, admit, record, *, category="auto"):
+    if live:
+        return staged_blueprint.provide(stage, requirement, prior, key, admit, record, category=category)
     if requirement.startswith("做一份简单读书清单"):
         admit()
         content = {"kind":"program","title":"旧清单","goal":"录入并保存书名"} if stage == "spec" else {
@@ -88,8 +90,6 @@ render();
             content = {**modules["spec"], "kind":"ledger", "title":"独立验收看板", "modules":[]} if stage == "spec" else modules[stage]
         record({"stage":stage, "status":"ok", "dispatched":True})
         return json.dumps(content, ensure_ascii=False).encode()
-    if live:
-        return staged_blueprint.provide(stage, requirement, prior, key, admit, record, category=category)
     if history_check:
         return history_program(stage, requirement, admit, record)
     if not theme_check and stage == "entry" and not requirement.startswith("做一个公益活动雨具归还登记"):
@@ -161,6 +161,8 @@ def revise(stage, requirement, prior, key, admit, record, *, base):
         elif tool_actions_check and base["kind"] == "program" and requirement.startswith("验收改按钮："):
             before, after = requirement.removeprefix("验收改按钮：").split(" → ", 1)
             content = {"status":"proposed","edits":[{"part":"markup","before":f">{before}<","after":f">{after}<"}]}
+        elif base["kind"] == "program" and requirement == "把按钮文案从加入书单改为待取消":
+            content = {"status":"proposed","edits":[{"part":"markup","before":">加入书单<","after":">待取消<"}]}
         elif base["kind"] == "program" and "不存在" not in requirement and "加入书单" in requirement:
             content = {"status":"proposed","edits":[{"part":"markup","before":">添加<","after":">加入书单<"}]}
         elif base["kind"] == "table" and requirement.startswith("增加一个"):

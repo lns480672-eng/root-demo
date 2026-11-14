@@ -497,7 +497,8 @@ export async function verifyLedgerTheme(ctx) {
     assert.match(await evaluate('document.querySelector("#revision-plan-changes").textContent'), /公司名称.*雇主/);
     await screenshot('field-rename-cancel-plan');
     await click('#revision-cancel');
-    await until(async () => !await visible('#revision-confirm') && !await visible('#requirement'));
+    await until(async () => !await visible('#revision-confirm') && await visible('#requirement'));
+    await click('#return-to-library');
     assert.equal((await versions()).current, 2);
     assert.deepEqual((await stored(old.id)).entries, before.entries);
     assert.equal((await balance()).used, beforeLocal.used);
@@ -627,32 +628,63 @@ export async function verifyStagedRevision(ctx) {
   await cdp('Page.navigate', {url:base});
   await login(accountA, true);
   if (await visible('#workspace-guide')) await click('#guide-skip');
-  await generate('做一份简单读书清单，新增书名并保存。按钮 id=add 且文案是添加，书名输入 id=book，书单 id=list。');
-  const old = await activeTool();
+  if (process.env.ROOT_STAGED_LIVE === '1') {
+    await evaluate(`document.querySelector('#generation-category').value = 'program'`);
+  }
+  await generate('做一份简单读书清单，新增书名并保存。只生成一个简单的清单程序，使用 localStorage 的 books 保存书名。请务必使用 id=add 且初始文案是添加的按钮，id=book 的书名输入，id=list 的书单。');
+  let old = await activeTool();
   const toolPath = '/api/tools/' + old.id;
   const currentVersion = async () => (await appRequest(toolPath + '/versions')).body.current;
   const trial = async () => (await appRequest('/api/trial')).body.generation;
   async function add(title, context = old.context) {
     await evaluate('document.querySelector("#book").value=""', context);
-    await type('#book', title, context);
+    await evaluate('document.querySelector("#book").value=' + JSON.stringify(title), context);
     await click('#add', context);
     await until(async () => JSON.stringify((await stored(old.id)).entries).includes(title))
       .catch(error => { throw new Error('旧工具添加后未保存：' + title, {cause:error}); });
   }
   await add('甲 旧版已有');
+  assert.equal((await appRequest('/api/profile', {nickname:'验收昵称'})).status, 200);
+  await cdp('Page.reload');
+  await until(() => evaluate('document.documentElement.dataset.ready === "true"'));
+  await click('#library-entry');
+  await until(() => visible('#revise-tool'));
+  old = await activeTool();
   const before = await trial();
   await click('#revise-tool');
+  assert.equal(await visible('#preview-view svg'), true, '修改页默认显示带眼睛图标的预览入口');
+  await click('#source-view');
+  await until(() => visible('#source-files'));
+  assert.match(await evaluate('document.querySelector("#source-code").textContent'), /添加/);
+  assert.equal(await evaluate('document.querySelector("#source-code").children.length'), 0);
+  await click('#preview-view');
   await generate(change);
   await until(() => visible('#revision-confirm'));
   assert.equal(await visible('.elys-preview'), true);
-  await add('甲二 确认面板打开时写入');
   assert.equal(await currentVersion(), 1);
-  assert.equal(await evaluate('document.querySelector("#add").textContent', old.context), '添加');
+  assert.equal(await evaluate('document.querySelector("#tool-revision-log [data-role=user] .revision-author").textContent'), '验收昵称');
+  assert.match(await evaluate('document.querySelector("#revision-plan-tool .revision-author").textContent'), /小 R/);
+  assert.equal(await visible('#candidate-badge'), true);
+  const inspected = await activeTool('', '#preview iframe[data-revision-inspection]');
+  assert.equal(await evaluate('document.querySelector("#add").textContent', inspected.context), '加入书单');
+  assert.equal(await evaluate('document.querySelector("[data-revision-inspection]").inert'), true);
+  await click('#source-view');
+  await until(() => evaluate('document.querySelector("#source-code").textContent.includes("加入书单")'));
+  assert.match(await evaluate('document.querySelector("#source-status").textContent'), /尚未应用/);
+  assert.deepEqual(await evaluate('Array.from(document.querySelector("#source-files").options, o => o.textContent)'),
+    ['app.html', 'implementation.json', 'spec.json']);
+  await evaluate('document.querySelector("#source-files").value="1"; document.querySelector("#source-files").dispatchEvent(new Event("change"));');
+  assert.match(await evaluate('document.querySelector("#source-code").textContent'), /加入书单/);
+  await screenshot('revision-source-pending');
+  await click('#tool-history');
+  await until(() => evaluate('document.querySelectorAll("#tool-version-list li").length === 1'));
+  assert.equal(await visible('#requirement'), true);
+  await click('#preview-view');
   await screenshot('program-plan-before-concurrent-write');
   await anotherBrowser('staged-revision-second', async () => {
     await cdp('Emulation.setDeviceMetricsOverride', {width:1360,height:980,deviceScaleFactor:1,mobile:false});
-  await cdp('Page.navigate', {url:base});
-    await login(accountA);
+    await cdp('Page.navigate', {url:base});
+    await login(accountA, false, '验收昵称');
     if (await visible('.elys-composer')) await click('#library-entry');
     const other = await activeTool();
     assert.equal(other.id, old.id);
@@ -676,8 +708,12 @@ export async function verifyStagedRevision(ctx) {
   assert.equal(await currentVersion(), 2);
   assert.equal(await evaluate('document.querySelector("#add").textContent', revised.context), '加入书单');
   const text = await evaluate('document.querySelector("#list").textContent', revised.context);
-  assert.match(text, /甲 旧版已有.*甲二 确认面板打开时写入.*乙 方案展示后写入/s);
-  await add('丙 修改后继续新增', revised.context);
+  assert.match(text, /甲 旧版已有.*乙 方案展示后写入/s);
+  await click('#source-view');
+  await until(() => evaluate('document.querySelector("#source-status").textContent === "当前 v2"'));
+  assert.match(await evaluate('document.querySelector("#source-code").textContent'), /加入书单/);
+  await click('#preview-view');
+  await add('丙 修改后继续新增', (await activeTool()).context);
   assert.equal((await trial()).used, before.used + 1);
   await cdp('Page.reload');
   await until(() => evaluate('document.documentElement.dataset.ready === "true"'));
@@ -690,9 +726,21 @@ export async function verifyStagedRevision(ctx) {
   await click('#tool-history');
   await until(() => evaluate('document.querySelectorAll("#tool-version-list li").length === 2'));
   assert.deepEqual(await evaluate('Array.from(document.querySelectorAll("#tool-version-list strong"), item => item.textContent)'), ['v2 · 当前', 'v1']);
-  await click('#tool-history');
+  await click('#preview-view');
   assert.equal(await visible('#staged-history'), false);
   if (process.env.ROOT_STAGED_LIVE !== '1') {
+    await generate('把按钮文案从加入书单改为待取消');
+    await until(() => visible('#revision-confirm'));
+    await click('#source-view');
+    await until(() => evaluate('document.querySelector("#source-code").textContent.includes("待取消")'));
+    await click('#revision-cancel');
+    await until(() => evaluate('document.querySelector("#source-status").textContent === "当前 v2"'));
+    assert.match(await evaluate('document.querySelector("#source-code").textContent'), /加入书单/);
+    assert.equal(await evaluate('document.querySelector("#candidate-badge").dataset.candidate'), 'false');
+    assert.match(await evaluate('document.querySelector("#tool-revision-log [data-role=system]").textContent'), /系统提示/);
+    assert.equal(await currentVersion(), 2);
+    await screenshot('revision-source-cancelled');
+    await click('#preview-view');
     const failedChange = '把按钮文案改为收藏，模拟补丁失配';
     await generate(failedChange);
     const failed = await until(async () => {

@@ -1967,6 +1967,68 @@ coding_agent.provide = agent_fixture
 workbench.serve("fixture-key", 0, runs, coding_agent_enabled=True,'''
     )
 
+    def test_revision_sources_are_bound_to_owner_tool_version_and_candidate(self):
+        owner = self.account("source-owner")
+        other = self.account("source-other")
+        first = self.gen(owner, "代码台账 Agent")[1]["task"]["id"]
+        self.wait_task(owner, first, "complete")
+        path = "/api/staged/" + first
+        created = self.request(path + "/candidate", {}, owner)[1]
+        proof = {**created["staged"], "toolId":created["id"], "entries":[]}
+        self.assert_preview_verified(path, proof, owner)
+        self.assertEqual(self.request(path + "/publish", proof, owner)[0], 200)
+        tool = "/api/tools/" + created["id"]
+        status, current, _ = self.request(tool + "/source", {"version":1}, owner)
+        self.assertEqual(status, 200)
+        self.assertEqual((current["toolId"], current["version"], current["applied"]),
+                         (created["id"], 1, True))
+        paths = {item["path"]:item["text"] for item in current["files"]}
+        self.assertEqual(set(paths), {"app.html", "implementation.json", "spec.json"})
+        self.assertEqual(paths["app.html"], created["html"])
+        self.assertEqual(self.request(tool + "/source", {"version":2}, owner)[0], 409)
+        self.assertEqual(self.request(tool + "/source", {"version":1}, other)[0], 404)
+        self.assertEqual(self.request(tool + "/source", {"version":1})[0], 401)
+
+        status, legacy, _ = self.request("/api/table/inspect", {
+            "source": "upload", "filename": "旧工具.csv", "csv": "名称,数量\n原记录,2\n",
+        }, owner)
+        self.assertEqual(status, 200)
+        status, legacy, _ = self.request("/api/table/generate", {"table": legacy}, owner)
+        self.assertEqual(status, 200)
+        legacy_path = "/api/tools/" + legacy["id"]
+        self.assertEqual(self.request(legacy_path + "/commit", {"entries":legacy["entries"]}, owner)[0], 200)
+        self.assertEqual(self.request(legacy_path + "/source", {"version":1}, owner)[1],
+                         {"toolId":legacy["id"], "version":1, "applied":True, "files":[]})
+
+        task = self.request(tool + "/revise", {"version":1, "requirement":"加筛选",
+            "requestId":uuid4().hex}, owner)[1]["task"]["id"]
+        self.wait_task(owner, task, "complete")
+        path = "/api/staged/" + task
+        pending = self.request(path + "/candidate", {}, owner)[1]
+        proof = {**pending["staged"], "toolId":pending["id"], "runId":pending["runId"],
+                 "version":pending["version"]}
+        status, proposed, _ = self.request(path + "/source", proof, owner)
+        self.assertEqual(status, 200)
+        self.assertEqual((proposed["toolId"], proposed["version"], proposed["applied"]),
+                         (created["id"], 2, False))
+        pending_files = {item["path"]:item["text"] for item in proposed["files"]}
+        self.assertEqual(pending_files["app.html"], pending["html"])
+        self.assertIn("新版筛选", pending_files["implementation.json"])
+        self.assertNotIn("revision-plan.json", pending_files)
+        self.assertEqual(self.request(path + "/source", proof, other)[0], 404)
+        self.assertEqual(self.request(path + "/source", {**proof, "toolId":"run-ffffffff"}, owner)[0], 409)
+        self.assertEqual(self.request(path + "/source", {**proof, "version":1}, owner)[0], 409)
+        self.assertEqual(self.request(path + "/source", {**proof, "commit":"f" * 40}, owner)[0], 409)
+        self.assertEqual(self.request(path + "/source", {**proof, "runId":legacy["id"]}, owner)[0], 409)
+        self.assertEqual(self.request(path + "/source", {**proof, "nonce":"f" * 32}, owner)[0], 409)
+        self.assertEqual(self.request(tool + "/source", {"version":1}, owner)[1], current)
+        self.assertEqual(self.request(path + "/cancel-revision", {"nonce":proof["nonce"]}, owner)[0], 200)
+        self.assertEqual(self.request(path + "/source", proof, owner)[0], 409)
+        self.assertEqual(self.request(tool + "/source", {"version":1}, owner)[1], current)
+        self.assertEqual(self.request("/api/logout", {}, owner)[0], 200)
+        self.assertEqual(self.request(tool + "/source", {"version":1}, owner)[0], 401)
+        self.assertEqual(self.request(path + "/source", proof, owner)[0], 401)
+
     def test_agent_preview_has_no_publish_authority_and_preserves_records(self):
         owner = self.account("agent-http-owner")
         task = self.gen(owner, "代码台账 Agent")[1]["task"]["id"]
