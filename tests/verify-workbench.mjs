@@ -706,7 +706,7 @@ try {
     stage = 'TEST-011/016 registration, navigation, and centered entry';
     assert.deepEqual(await evaluate('Array.from(document.querySelectorAll("#new-tool-options button strong"), node => node.textContent)'), ['需求助手', '从表格生成']);
     assert.deepEqual(await evaluate('Array.from(document.querySelectorAll("#requirement-examples button"), node => node.textContent)'), ['试试读书清单', '试试 AA 分账', '试试交付跟进板']);
-    const navOrder = ['新建工具', '需求助手', '我的需求', '我的工具'];
+    const navOrder = ['新建工具', '需求', '我的工具'];
     assert.deepEqual(await evaluate('Array.from(document.querySelectorAll(".workspace-navigation nav button"), button => button.textContent)'), navOrder);
     assert.equal(await visible('#requirement'), true);
     assert.equal(await visible('#entry-coachmark'), true);
