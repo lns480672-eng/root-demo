@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ROOT 设计评审</title>
+<style>
+  :root { color-scheme: light; color: #20212a; background: #f0f1fa; font: 15px/1.55 system-ui, "PingFang SC", sans-serif; }
+  * { box-sizing: border-box; }
+  body { margin: 0; }
+  main { max-width: 970px; margin: auto; padding: clamp(22px,5vw,68px); }
+  .brand { font-size: 23px; font-weight: 850; letter-spacing: -.05em; }
+  .brand::after { content: ""; display: inline-block; width: 8px; height: 8px; margin-left: 8px; border-radius: 2px; background: #6883d0; vertical-align: 3px; }
+  h1 { font: 750 clamp(32px,6vw,54px)/1.16 "Songti SC","Noto Serif SC",serif; margin: 18px 0 10px; }
+  h2 { font-size: 18px; margin: 28px 0 10px; }
+  p { margin: 0; color: #565969; }
+  ul { margin: 0; padding: 0; list-style: none; background: #fafafe; border: 1px solid #dfe1e9; border-radius: 14px; }
+  li + li { border-top: 1px solid #e3e5ef; }
+  a { display: block; padding: 12px 15px; color: #314b92; text-decoration: none; font-weight: 650; }
+  a:hover { text-decoration: underline; }
+  a:focus-visible { outline: 2px solid #4563aa; outline-offset: -3px; }
+  a span { display: block; color: #565969; font-size: 14px; font-weight: 400; }
+
+</style>
+<link rel="stylesheet" href="root-visual-v4.css">
+</head>
+<body class="root-visual">
+<main>
+  <div class="brand">ROOT</div>
+  <h1>ROOT 整站设计稿</h1>
+  <p>工作台采用品牌蓝 A。表单和工具使用演示数据。</p>
+  <h2>官网与账号</h2>
+  <ul>
+    <li><a href="root-site-palette-review.html">官网配色 A/B 对比<span>切换同一页面的两种配色，保留当前阅读位置。</span></a></li>
+    <li><a href="root-public-site-review.html?v=11">官网全页<span>从首屏看到核心功能、试玩、关于我们和 FAQ。</span></a></li>
+    <li><a href="root-sign-in-review.html">登录工作台</a></li>
+    <li><a href="root-sign-in-review.html#register">邀请码注册</a></li>
+    <li><a href="root-new-tool-review.html#registered">注册后首次进入<span>体验指向输入框的一次性引导。</span></a></li>
+  </ul>
+  <h2>新建、需求与生成</h2>
+  <ul>
+    <li><a href="root-new-tool-review.html">新建工具 · 初始<span>居中输入，或用示例填入一条需求。</span></a></li>
+    <li><a href="root-workbench-entry.html?section=idea">梳理新需求<span>从想法、追问到可编辑的需求稿。</span></a></li>
+    <li><a href="root-workbench-entry.html?section=drafts">我的需求<span>找回草稿、改名或带入新建。</span></a></li>
+    <li><a href="root-workbench-entry.html?section=table">从表格生成<span>试用示例表格，确认字段和记录。</span></a></li>
+    <li><a href="root-new-tool-review.html#running">生成中</a></li>
+    <li><a href="root-new-tool-review.html#ready">成功 · 已保存<span>原位预览，打开同一工具。</span></a></li>
+    <li><a href="root-new-tool-review.html#failed">失败 · 旧工具仍可用<span>右侧读书清单可添加记录，左侧可重试或编辑需求。</span></a></li>
+    <li><a href="root-workbench-connection.html">断线、恢复与核对保存</a></li>
+    <li><a href="root-tool-experience-review.html#generation">单页与多页网站生成示例</a></li>
+  </ul>
+  <h2>使用与修改工具</h2>
+  <ul>
+    <li><a href="root-new-tool-review.html#my-tools">我的工具</a></li>
+    <li><a href="root-owner-feedback-review.html#tool">工具使用页</a></li>
+    <li><a href="root-owner-feedback-review.html#standalone">独立打开工具</a></li>
+    <li><a href="root-owner-feedback-review.html?v=brand-a#revision">修改工具 · 左侧对话，右侧预览<span>直接进入 AA 分账的修改页，右侧可切换预览、代码和版本历史。</span></a></li>
+    <li><a href="root-owner-feedback-review.html#tool-history">长版本历史示例</a></li>
+    <li><a href="root-revision-clarification.html#confirmation">修改前确认</a></li>
+    <li><a href="root-revision-clarification.html#recovery">修改失败与恢复</a></li>
+    <li><a href="root-record-save-review.html">记录保存中、成功和失败</a></li>
+  </ul>
+  <h2>账号与管理后台</h2>
+  <ul>
+    <li><a href="root-owner-feedback-review.html#profile">个人中心</a></li>
+    <li><a href="root-owner-feedback-review.html#updates">工作台更新记录</a></li>
+    <li><a href="root-admin-login.html">管理员登录</a></li>
+    <li><a href="root-admin-security-review.html#setup">首次设置管理员</a></li>
+    <li><a href="root-admin-security-review.html#password">管理员修改密码</a></li>
+    <li><a href="root-trial-admin.html#manage">用量与额度</a></li>
+    <li><a href="root-trial-admin.html#invites">邀请码管理</a></li>
+    <li><a href="root-trial-admin.html#accounts">锁定的账号管理</a></li>
+    <li><a href="root-trial-admin.html#access-denied">无后台权限</a></li>
+  </ul>
+  <h2>视觉参考</h2>
+  <ul>
+    <li><a href="root-wide-layout-review.html?view=after&amp;v=11">官网宽度对照</a></li>
+    <li><a href="root-tool-experience-review.html">生成网站视觉参考</a></li>
+  </ul>
+</main>
+</body>
+</html>

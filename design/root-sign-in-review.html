@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ROOT · 登录与注册</title>
+<link rel="stylesheet" href="root-visual-v4.css">
+<link rel="stylesheet" href="design-demos/workbench/workbench-directions.css">
+<link rel="stylesheet" href="root-brand-blue.css">
+</head>
+<body class="root-visual brand-auth">
+<div id="app">
+<div class="auth">
+<header class="auth-header"><strong class="mark">ROOT<i aria-hidden="true"></i></strong><a href="root-public-site-review.html?v=11">返回官网</a></header>
+<main class="auth-body">
+  <aside class="brand-panel">
+    <div class="brand-copy"><h1>把手头的事，<br>做成小工具。</h1><p>一句想法、一份需求，或一张已有表格。</p></div>
+    <div class="art" aria-hidden="true">
+      <div class="art-window">
+        <div class="art-head"><span></span><span></span><span></span></div>
+        <div class="art-body"><div class="art-rail"></div><div class="art-task">
+          <strong>读书清单</strong><div><span>设计中的设计</span><small>已读</small></div><div><span>编辑部的故事</span><small>待读</small></div>
+        </div></div>
+      </div>
+    </div>
+  </aside>
+  <div class="credentials">
+  <form id="credentials">
+    <h2 id="form-title">登录工作台</h2>
+    <p class="auth-help" id="auth-help">登录后继续使用你保存的工具。</p>
+    <div id="invite-field" hidden>
+      <label for="invite">邀请码</label><input id="invite" placeholder="输入邀请码" autocomplete="off" aria-describedby="invite-error">
+      <p id="invite-error" class="error" role="alert"></p>
+    </div>
+    <label for="username">用户名</label><input id="username" placeholder="输入用户名" required autocomplete="username" pattern="[A-Za-z0-9_\-]{3,32}" title="3–32 位字母、数字、连字符或下划线">
+    <label for="password">密码</label><input id="password" placeholder="输入密码" type="password" required autocomplete="current-password">
+    <button type="submit" id="submit" class="primary auth-submit">登录</button>
+    <p class="auth-switch"><span id="switch-label">第一次使用？</span> <a href="#register" id="switch">凭邀请码注册</a></p>
+    <button class="text auth-fixture" type="button" id="fill">填入演示资料</button>
+  </form>
+  </div>
+</main>
+</div>
+</div>
+<script>
+const byId = id => document.getElementById(id);
+const invite = byId('invite');
+const password = byId('password');
+function isRegistering() { return location.hash === '#register'; }
+function render() {
+  const registering = isRegistering();
+  byId('form-title').textContent = registering ? '凭邀请码注册' : '登录工作台';
+  byId('invite-field').hidden = !registering;
+  invite.required = registering;
+  password.minLength = registering ? 12 : 1;
+  password.maxLength = 128;
+  byId('submit').textContent = registering ? '注册并进入' : '登录';
+  password.autocomplete = registering ? 'new-password' : 'current-password';
+  byId('auth-help').textContent = registering ? '填写邀请码，创建你的工作台账号。' : '登录后继续使用你保存的工具。';
+  byId('switch-label').textContent = registering ? '已有账号？' : '第一次使用？';
+  byId('switch').textContent = registering ? '登录' : '凭邀请码注册';
+  byId('switch').href = registering ? '#login' : '#register';
+  byId('invite-error').textContent = '';
+  invite.removeAttribute('aria-invalid');
+}
+window.addEventListener('hashchange', render);
+invite.addEventListener('input', () => { byId('invite-error').textContent = ''; invite.removeAttribute('aria-invalid'); });
+byId('fill').onclick = event => {
+  event.preventDefault();
+  if (isRegistering()) invite.value = 'ROOT-DEMO';
+  byId('username').value = 'root-demo';
+  password.value = 'root-review-demo';
+  byId('invite-error').textContent = '';
+  invite.removeAttribute('aria-invalid');
+};
+byId('credentials').onsubmit = event => {
+  event.preventDefault();
+  if (isRegistering() && invite.value.trim() !== 'ROOT-DEMO') {
+    byId('invite-error').textContent = '邀请码无效或已过期，请核对后重试。';
+    invite.setAttribute('aria-invalid', 'true');
+    invite.focus();
+    return;
+  }
+  location.href = isRegistering() ? 'root-new-tool-review.html#registered' : 'root-new-tool-review.html';
+};
+render();
+</script>
+</body>
+</html>

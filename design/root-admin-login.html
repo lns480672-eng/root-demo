@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; form-action 'none'; base-uri 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self' 'unsafe-inline'; script-src 'unsafe-inline'; form-action 'none'; base-uri 'none'">
 <title>管理员登录 · ROOT</title>
 <style>
   :root {
@@ -96,13 +96,20 @@
   .notice { color: var(--warn); }
   .preview { margin: 18px auto; max-width: 520px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
   .preview select { width: auto; }
+
+  :root { --bg:#f4f6fc; --ink:#19233f; --line:#dde3ef; --blue:#314b92; --soft:#f4f6fc; }
+  .primary { background:#314b92;border-color:#314b92; }
+  .primary:hover { background:#263b76;border-color:#263b76; }
+
 </style>
+<link rel="stylesheet" href="root-visual-v4.css">
+<link rel="stylesheet" href="root-brand-blue.css">
 </head>
-<body>
+<body class="root-visual brand-blue root-admin-login">
 <div class="shell">
   <header class="masthead">
     <div class="identity"><span class="wordmark">ROOT</span><span class="mark" aria-hidden="true"></span><span class="role-tag">管理后台</span></div>
-    <a class="workbench-link" href="#workbench">返回工作台</a>
+    <a class="workbench-link" href="root-new-tool-review.html">返回工作台</a>
   </header>
   <main class="panel credential-panel" aria-labelledby="login-title">
     <div class="intro">
@@ -127,6 +134,9 @@
       <option value="loading">正在登录</option>
     </select>
     <span>本地设计稿，请勿输入真实密码。</span>
+    <a href="root-trial-admin.html#manage">进入后台演示</a>
+    <a href="root-admin-security-review.html#setup">首次设置</a>
+    <a href="root-admin-security-review.html#password">修改密码</a>
   </div>
 </div>
 <script>

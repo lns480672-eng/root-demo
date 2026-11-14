@@ -4,12 +4,24 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="referrer" content="no-referrer">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval' blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com https://persistent.oaistatic.com/plugins/visualize/; style-src 'unsafe-inline' blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com https://persistent.oaistatic.com/plugins/visualize/charts/; img-src blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; font-src blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; media-src blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; worker-src blob:; connect-src blob: data:; frame-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval' blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com https://persistent.oaistatic.com/plugins/visualize/; style-src 'self' 'unsafe-inline' blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com https://persistent.oaistatic.com/plugins/visualize/charts/; img-src blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; font-src blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; media-src blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; worker-src blob:; connect-src blob: data:; frame-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
 <title>Root Version History</title>
 <style>:root{color-scheme:light dark;background:light-dark(rgb(255 255 255), rgb(24 24 24))}html,body{margin:0}body{box-sizing:border-box;padding:1rem;background:inherit}iframe{display:block;width:100%;height:calc(100vh - 2rem);margin:0 auto;border:0}</style>
 
+<link rel="stylesheet" href="root-workbench-nav.css">
+<link rel="stylesheet" href="root-visual-v4.css">
+<link rel="stylesheet" href="root-brand-blue.css">
 </head>
-<body>
+<body class="root-visual brand-blue root-version-history" style="padding:0">
+<div class="root-shell">
+  <aside class="root-sidebar">
+    <nav class="root-nav" aria-label="工作台导航">
+      <a href="root-new-tool-review.html" data-nav="new">新建工具</a>
+      <a href="root-workbench-entry.html?section=idea" data-nav="idea">需求助手</a>
+      <a href="root-workbench-entry.html?section=drafts" data-nav="drafts">我的需求</a>
+      <a href="root-new-tool-review.html#my-tools" data-nav="tools" aria-current="page">我的工具</a>
+    </nav>
+  </aside>
 <iframe id="codex-visualization" sandbox="allow-scripts" referrerpolicy="no-referrer" title="Root Version History" data-srcdoc="&lt;!doctype html&gt;
 &lt;html lang=&quot;en&quot; data-visualize-standalone&gt;
 &lt;head&gt;
@@ -2522,6 +2534,7 @@ html&gt;body{padding:0}&lt;/style&gt;
 &lt;/body&gt;
 &lt;/html&gt;
 "></iframe>
+</div>
 
 <script>(() => {
   const frame = document.getElementById("codex-visualization");
@@ -2797,7 +2810,7 @@ html&gt;body{padding:0}&lt;/style&gt;
       // Ignore missing or invalid cache entries and measure the live frame.
     }
   }
-  frame.srcdoc = frameHtml;
+  frame.srcdoc = frameHtml.replace('</head>', '<style>html,body{background:#f3f5fa!important;color:#18253f} :focus-visible{outline-color:#345baf} #root-elys-workbench{--elys-ink:#18253f;--elys-line:#d9e2f0;--elys-blue:#294685} .elys-masthead,.elys-preview{border-color:#d9e2f0!important;box-shadow:none!important}</style></head>');
   delete frame.dataset.srcdoc;
 })();
 </script>

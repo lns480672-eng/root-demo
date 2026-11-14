@@ -1,0 +1,589 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'self' 'unsafe-inline'; form-action 'none'; base-uri 'none'">
+<title>用量与额度 · ROOT</title>
+<style>
+  :root {
+    color-scheme: light;
+    --bg: #f1f2f8;
+    --paper: #fff;
+    --soft: #f7f8fc;
+    --ink: #1b1c22;
+    --muted: #50566a;
+    --line: #dce0eb;
+    --blue: #35558f;
+    --wash: #eef2fb;
+    --good: #245c47;
+    --good-bg: #e8f3ed;
+    --warn: #7d4427;
+    --warn-bg: #fbefe4;
+    font: 15px/1.55 -apple-system, BlinkMacSystemFont, "PingFang SC", system-ui, sans-serif;
+    color: var(--ink);
+    background: var(--bg);
+  }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  body { margin: 0; }
+  h1, h2, h3, p, dl, dd { margin: 0; }
+  button, input, select { font: inherit; }
+  button, select { min-height: 44px; }
+  button {
+    border: 1px solid var(--line);
+    border-radius: 100px;
+    background: var(--paper);
+    color: var(--ink);
+    padding: 8px 16px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  button:hover { border-color: var(--blue); background: var(--soft); }
+  button:disabled { color: var(--muted); background: var(--soft); cursor: default; }
+  button:disabled:hover { border-color: var(--line); }
+  .primary { background: var(--ink); color: white; border-color: var(--ink); }
+  .primary:hover { background: #323946; color: white; }
+  a { color: var(--blue); text-underline-offset: 3px; }
+  :focus-visible { outline: 3px solid #6b8ed3; outline-offset: 3px; }
+  .shell { max-width: 1160px; width: calc(100% - 2 * clamp(14px, 4vw, 60px)); margin: 22px auto 40px; }
+  .masthead {
+    min-height: 66px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px 24px;
+    flex-wrap: wrap;
+    padding: 8px 14px 8px 24px;
+    border: 1px solid var(--line);
+    border-radius: 18px;
+    background: var(--paper);
+  }
+  .identity, .preview-role, .actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .preview-role { justify-content: flex-end; margin-bottom: 12px; }
+  .wordmark { font-weight: 750; letter-spacing: .22em; }
+  .mark { width: 8px; height: 8px; background: #7590cc; border-radius: 2px; }
+  .role-tag { border-left: 1px solid var(--line); padding-left: 10px; color: var(--muted); font-size: 13px; }
+  .preview-role label { color: var(--muted); font-size: 13px; }
+  .workbench-link {
+    display: inline-flex;
+    align-items: center;
+    min-height: 44px;
+    padding: 8px 16px;
+    border: 1px solid var(--line);
+    border-radius: 100px;
+    color: var(--ink);
+    font-weight: 600;
+    text-decoration: none;
+  }
+  .workbench-link:hover { border-color: var(--blue); background: var(--soft); }
+  select, input {
+    color: var(--ink);
+    background: var(--paper);
+    border: 1px solid #aeb9d0;
+    border-radius: 10px;
+    padding: 8px 11px;
+    min-height: 44px;
+  }
+  .intro { padding: 0 0 20px; }
+  .intro h1, .workbench-view h1 { font: 650 clamp(30px, 4vw, 42px)/1.14 "Songti SC", STSong, serif; letter-spacing: -.035em; }
+  .intro p, .workbench-view p { color: var(--muted); margin-top: 9px; }
+  .admin-layout { display: grid; grid-template-columns: 194px minmax(0, 1fr); margin-top: 14px; }
+  .admin-nav { padding: 21px 14px; background: var(--soft); border-right: 1px solid var(--line); border-radius: 20px 0 0 20px; }
+  .nav-title { padding: 0 10px 9px; color: var(--muted); font-size: 13px; }
+  .admin-nav a {
+    display: flex; align-items: center; justify-content: space-between; gap: 7px;
+    min-height: 44px; padding: 8px 10px; margin: 4px 0; border-radius: 9px;
+    color: var(--ink); font-weight: 600; text-decoration: none;
+  }
+  .admin-nav a:hover { background: #e8ecf7; }
+  .admin-nav a[aria-current="page"] { color: var(--blue); background: #e5ebf9; }
+  .admin-content { min-width: 0; padding: clamp(16px, 2.6vw, 32px); }
+  .admin-section { padding: 21px 0; border-top: 1px solid var(--line); }
+  .admin-section:last-child { padding-bottom: 0; }
+  .account-example { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 10px 20px; padding: 14px 0 0; border-top: 1px solid var(--line); }
+  .account-example .meta { display: block; margin-bottom: 3px; }
+  .invite-code { display: grid; gap: 5px; margin-top: 14px; max-width: 420px; }
+  .invite-code input { width: 100%; font-family: ui-monospace, monospace; }
+  .invite-actions { margin-top: 12px; }
+  .locked-label { padding: 2px 7px; border: 1px solid var(--line); border-radius: 6px; background: var(--paper); color: var(--muted); font-size: 12px; font-weight: 500; white-space: nowrap; }
+  .panel { background: var(--paper); border: 1px solid var(--line); border-radius: 21px; min-width: 0; }
+  h2 { font-size: 21px; letter-spacing: -.025em; }
+  .section-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px 20px; flex-wrap: wrap; }
+  .section-head p { margin-top: 4px; }
+  .muted { color: var(--muted); }
+  .meta { font-size: 13px; }
+  .status {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    border-radius: 100px;
+    color: var(--good);
+    background: var(--good-bg);
+    padding: 5px 10px;
+    white-space: nowrap;
+    font-weight: 650;
+    font-size: 13px;
+  }
+  .status::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+  .status[data-paused="true"] { color: var(--warn); background: var(--warn-bg); }
+  .metrics { display: grid; grid-template-columns: 1fr 1fr; margin: 20px 0 0; border: 1px solid var(--line); border-radius: 16px; background: var(--soft); }
+  .meter { padding: clamp(13px, 2.4vw, 24px); min-width: 0; }
+  .meter + .meter { border-left: 1px solid var(--line); }
+  .meter h3 { font-size: 15px; }
+  .meter-amount { font-size: 36px; font-weight: 650; letter-spacing: -.055em; font-variant-numeric: tabular-nums; line-height: 1.2; margin: 8px 0 11px; }
+  .meter-amount span { font-size: 16px; font-weight: 500; color: var(--muted); letter-spacing: 0; }
+  progress { display: block; width: 100%; height: 8px; border: 0; border-radius: 8px; background: #e1e6f2; color: var(--blue); }
+  progress::-webkit-progress-bar { border-radius: 8px; background: #e1e6f2; }
+  progress::-webkit-progress-value { border-radius: 8px; background: #6585c0; }
+  progress::-moz-progress-bar { border-radius: 8px; background: #6585c0; }
+  .meter-remaining { margin-top: 9px; }
+  .failure-stat {
+    display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px;
+    margin-top: 12px; padding-top: 9px; border-top: 1px solid var(--line);
+    color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums;
+  }
+  .failure-stat strong { color: var(--ink); font-size: 16px; }
+  .rate-help { margin-top: 5px; }
+  .rate-help summary {
+    display: flex; align-items: center; gap: 7px; width: fit-content; min-height: 44px;
+    color: var(--blue); font-size: 14px; cursor: pointer;
+  }
+  .rate-help summary::-webkit-details-marker { display: none; }
+  .help-mark {
+    display: inline-grid; place-items: center; width: 18px; height: 18px;
+    border: 1px solid currentColor; border-radius: 50%; font-size: 12px; font-weight: 650;
+  }
+  .rate-help-copy { padding: 12px 14px; border: 1px solid var(--line); border-radius: 10px; background: var(--soft); }
+  .rate-help-copy p + p { margin-top: 6px; }
+  .rate-help + .metrics { margin-top: 6px; }
+  .policy { margin-top: 15px; color: var(--muted); }
+  .notice { margin-top: 12px; color: var(--good); font-weight: 600; }
+  .notice:empty { display: none; }
+  .accounts { margin-top: 16px; }
+  .account-labels, .account-summary {
+    display: grid;
+    grid-template-columns: minmax(115px,1.05fr) minmax(145px,1fr) minmax(145px,1fr) auto;
+    gap: 12px 18px;
+    align-items: center;
+  }
+  .account-labels { color: var(--muted); font-size: 13px; padding: 0 0 7px; }
+  .account { border-top: 1px solid var(--line); padding: 13px 0; }
+  .account:last-child { padding-bottom: 0; }
+  .account h3 { font-size: 15px; overflow-wrap: anywhere; }
+  .balance { font-variant-numeric: tabular-nums; }
+  .balance strong { font-weight: 650; }
+  .balance div { display: flex; gap: 4px 12px; flex-wrap: wrap; }
+  .balance dt { color: var(--muted); }
+  .balance dt::after { content: " "; }
+  .balance dd { margin: 0 3px 0 -9px; }
+  .mobile-label { display: none; font-size: 12px; color: var(--muted); }
+  .top-up { padding: 13px; margin-top: 11px; border-radius: 13px; background: var(--wash); }
+  .top-up label { font-weight: 600; }
+  .top-up input { width: 105px; }
+  .top-up .meta { margin-top: 5px; }
+  .error { color: #9a2933; font-weight: 600; margin-top: 6px; }
+  .error:empty { display: none; }
+  .audit-list { list-style: none; margin: 14px 0 0; padding: 0; }
+  .audit-list li { display: grid; grid-template-columns: 160px 100px minmax(0,1fr); gap: 7px 18px; padding: 12px 0; border-top: 1px solid var(--line); }
+  .audit-list time { color: var(--muted); font-variant-numeric: tabular-nums; }
+  .audit-list .audit-action { overflow-wrap: anywhere; }
+  .workbench-view { margin-top: 25px; padding: clamp(24px, 6vw, 64px); }
+  .workbench-view .role-tag { border: 0; padding: 0; margin: 0 0 8px; }
+  dialog {
+    width: min(440px, calc(100% - 32px));
+    border: 1px solid var(--line);
+    border-radius: 19px;
+    color: var(--ink);
+    background: var(--paper);
+    padding: 24px;
+  }
+  dialog::backdrop { background: #1c223a65; }
+  dialog p { color: var(--muted); margin: 9px 0 19px; }
+  dialog .actions { justify-content: flex-end; }
+  @media (max-width: 860px) {
+    .admin-layout { grid-template-columns: 108px minmax(0, 1fr); }
+    .admin-nav { padding: 8px 5px; font-size: 14px; }
+    .admin-nav a { flex-wrap: wrap; gap: 3px; padding-inline: 6px; margin: 0; }
+    .nav-title { display: none; }
+  }
+  @media (max-width: 660px) {
+    :root { font-size: 16px; }
+    .shell { margin-top: 12px; }
+    .masthead { padding: 10px 12px; border-radius: 19px; }
+    .account-labels { display: none; }
+    .account-summary { grid-template-columns: 1fr; gap: 8px; justify-items: start; }
+    .account-summary h3 { grid-column: 1; }
+    .mobile-label { display: block; }
+    .audit-list li { grid-template-columns: 1fr; gap: 3px; }
+    .meter-amount { font-size: 31px; }
+    .metrics { grid-template-columns: 1fr; }
+    .meter + .meter { border-left: 0; border-top: 1px solid var(--line); }
+  }
+
+  :root { --bg:#f4f6fc; --ink:#19233f; --line:#dde3ef; --blue:#314b92; --soft:#f4f6fc; }
+  .primary { background:#314b92;border-color:#314b92; }
+  .primary:hover { background:#263b76;border-color:#263b76; }
+
+</style>
+<link rel="stylesheet" href="root-visual-v4.css">
+<link rel="stylesheet" href="root-brand-blue.css">
+</head>
+<body class="root-visual brand-blue root-trial-admin">
+<div class="shell">
+  <aside class="preview-role" aria-label="原型预览控制">
+    <label for="role">原型预览身份</label>
+    <select id="role">
+      <option value="admin">管理员</option>
+      <option value="member">普通账号</option>
+    </select>
+  </aside>
+  <header class="masthead">
+    <div class="identity"><span class="wordmark">ROOT</span><span class="mark" aria-hidden="true"></span><span class="role-tag" id="area-label">管理后台</span></div>
+    <a id="admin-entry" class="workbench-link" href="#backend" hidden>管理后台</a>
+    <a id="back-to-workbench" class="workbench-link" href="#workbench" hidden>返回工作台</a>
+  </header>
+
+  <main id="backend" class="panel admin-layout" hidden>
+    <nav class="admin-nav" aria-label="后台模块">
+      <p class="nav-title">管理模块</p>
+      <a id="trial-nav" href="#manage">用量与额度</a>
+      <a id="invite-nav" href="#invites">邀请码管理</a>
+      <a id="account-nav" href="#accounts">账号管理 <span class="locked-label">已锁定</span></a>
+    </nav>
+    <div class="admin-content">
+      <section id="admin" aria-labelledby="trial-title" hidden>
+        <div class="intro">
+          <h1 id="trial-title">用量与额度</h1>
+          <p>查看模型用量、调整账号生成额度，并管理试用期间的模型调用。</p>
+          <p class="meta">交互原型 · 模拟数据 · 刷新恢复初始状态</p>
+        </div>
+        <section class="admin-section" aria-labelledby="usage-title">
+          <div class="section-head">
+            <div><h2 id="usage-title">全站模型用量</h2><p class="muted meta">统计整个试用期发出的实际模型请求。</p></div>
+            <div class="actions"><span id="model-status" class="status" data-paused="false">模型调用正常</span><button id="toggle" type="button">暂停模型调用</button></div>
+          </div>
+          <details class="rate-help">
+            <summary><span class="help-mark" aria-hidden="true">?</span>失败率口径</summary>
+            <div class="rate-help-copy">
+              <p>按整个试用期统计。失败率 = 失败调用数 ÷ 已结束的实际模型调用数。</p>
+              <p><strong>计为调用失败</strong> 上游调用错误、超时、模型响应校验失败。</p>
+              <p><strong>不参与计算</strong> 调用前被拒绝、仍在进行或结果未知的请求。</p>
+              <p>模型调用成功后的预览或保存失败单独记录。该模型调用仍按成功计入分母。</p>
+            </div>
+          </details>
+          <div class="metrics">
+            <article class="meter">
+              <h3>生成调用</h3>
+              <p class="meter-amount">18 <span>/ 30 次</span></p>
+              <progress aria-label="全站生成调用已用 18 次，共 30 次" value="18" max="30"></progress>
+              <p class="meter-remaining muted meta">试用期剩余 12 次</p>
+              <p class="failure-stat"><span>调用失败率</span><strong>16.7%</strong><span>3 失败 / 18 已结束</span></p>
+            </article>
+            <article class="meter">
+              <h3>分析调用</h3>
+              <p class="meter-amount">37 <span>/ 60 次</span></p>
+              <progress aria-label="全站分析调用已用 37 次，共 60 次" value="37" max="60"></progress>
+              <p class="meter-remaining muted meta">试用期剩余 23 次</p>
+              <p class="failure-stat"><span>调用失败率</span><strong>5.4%</strong><span>2 失败 / 37 已结束</span></p>
+            </article>
+          </div>
+          <p id="model-rule" class="policy">暂停会同时停止新的生成和分析调用。已有工具和草稿仍可使用及保存。</p>
+          <p id="model-feedback" class="notice" role="status"></p>
+        </section>
+
+        <section class="admin-section" aria-labelledby="accounts-title">
+          <div class="section-head">
+            <div><h2 id="accounts-title">个人试用额度</h2><p class="muted meta">生成默认每账号试用期 5 次。需求梳理默认每天 6 条，按北京时间零点重置。</p></div>
+          </div>
+          <p class="policy">工具或修订版成功保存后扣 1 次生成额度。一条需求首次出草稿时扣 1 条梳理额度。已发出的请求计入对应的全站用量。</p>
+          <div class="accounts">
+            <div class="account-labels" aria-hidden="true"><span>账号</span><span>生成 · 试用期</span><span>需求梳理 · 今日</span><span>操作</span></div>
+            <div id="account-list"></div>
+          </div>
+          <p id="account-feedback" class="notice" role="status"></p>
+        </section>
+
+        <section class="admin-section" aria-labelledby="audit-title">
+          <div class="section-head">
+            <div><h2 id="audit-title">操作记录</h2><p class="muted meta">记录操作者、北京时间和具体变更，最新操作在前。</p></div>
+            <span class="muted meta">操作者 admin-demo</span>
+          </div>
+          <p id="audit-empty" class="policy">还没有操作。补额度、暂停或恢复后，会在这里留下记录。</p>
+          <ol id="audit-list" class="audit-list" aria-label="管理操作记录"></ol>
+        </section>
+      </section>
+      <section id="invite-preview" aria-labelledby="invite-title" hidden>
+        <div class="intro">
+          <h1 id="invite-title">邀请码管理</h1>
+          <p>生成一枚邀请码，和官网链接一起私发给受邀评审。</p>
+        </div>
+        <div class="admin-section">
+          <div class="section-head">
+            <div><h2>发放邀请码</h2><p class="muted">新生成的邀请码自生成起 72 小时有效，可成功注册一次。</p></div>
+            <button type="button" id="invite-generate" class="primary">生成邀请码</button>
+          </div>
+          <p class="policy meta">当前为原型，生成的演示码仅供评审。</p>
+          <div id="invite-result" hidden>
+            <label class="invite-code" for="issued-code">当前演示码<input id="issued-code" readonly></label>
+            <p class="policy meta">到期时间（北京时间） <time id="invite-expires"></time></p>
+            <div class="actions invite-actions"><button id="invite-copy" type="button">复制邀请码</button></div>
+            <p id="invite-feedback" class="notice" role="status"></p>
+          </div>
+        </div>
+      </section>
+      <section id="account-preview" aria-labelledby="account-module" hidden>
+        <div class="intro">
+          <h1 id="account-module">账号管理</h1>
+          <p><strong>暂未开放</strong>。以下用示例账号展示重置密码和删除账号的位置。</p>
+        </div>
+        <div class="account-example">
+          <p><span class="muted meta">示例账号</span> <strong>reviewer-01</strong></p>
+          <div class="actions">
+            <button type="button" disabled>重置密码</button>
+            <button type="button" disabled>删除账号</button>
+          </div>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <main id="workbench" class="panel workbench-view" hidden>
+    <h1>工作台</h1>
+    <p>从「新建工具」开始，或在「我的工具」继续使用已保存的工具。</p>
+  </main>
+
+  <main id="denied" class="panel workbench-view" hidden>
+    <p class="role-tag">普通账号 · 403</p>
+    <h1>你没有管理后台权限</h1>
+    <p>请返回工作台继续使用你的工具。</p>
+  </main>
+</div>
+
+<dialog id="confirm" aria-labelledby="confirm-title" aria-describedby="confirm-copy">
+  <h2 id="confirm-title"></h2>
+  <p id="confirm-copy"></p>
+  <form method="dialog" class="actions">
+    <button value="cancel" autofocus>取消</button>
+    <button value="apply" class="primary" id="confirm-action"></button>
+  </form>
+</dialog>
+
+<template id="account-template">
+  <article class="account">
+    <div class="account-summary">
+      <h3 class="account-name"></h3>
+      <div>
+        <p class="mobile-label">生成 · 试用期</p>
+        <dl class="balance"><div><dt>已用</dt><dd class="gen-used"></dd><dt>剩余</dt><dd><strong class="gen-left"></strong></dd></div></dl>
+      </div>
+      <div>
+        <p class="mobile-label">需求梳理 · 今日</p>
+        <dl class="balance"><div><dt>已用</dt><dd class="analysis-used"></dd><dt>剩余</dt><dd><strong class="analysis-left"></strong></dd></div></dl>
+      </div>
+      <button type="button" class="open-top-up" aria-expanded="false">补额度</button>
+    </div>
+    <form class="top-up" hidden novalidate>
+      <div class="actions">
+        <label>补生成次数 <input name="amount" type="text" inputmode="numeric" autocomplete="off" placeholder="例如 2"></label>
+        <button type="submit" class="primary">保存补额</button>
+        <button type="button" class="cancel-top-up">取消</button>
+      </div>
+      <p class="meta muted">请输入正整数。补额后仍受全站生成调用上限约束。</p>
+      <p class="error" role="alert"></p>
+    </form>
+  </article>
+</template>
+<script>
+  const get = id => document.getElementById(id);
+  const role = get('role');
+  const confirm = get('confirm');
+  const toggle = get('toggle');
+  const status = get('model-status');
+  const operator = 'admin-demo';
+  const auditClock = new Intl.DateTimeFormat('zh-CN', {
+    timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23',
+  });
+  const accounts = [
+    { name: 'reviewer-01', genUsed: 3, genLimit: 5, analysisUsed: 2 },
+    { name: 'reviewer-02', genUsed: 5, genLimit: 5, analysisUsed: 5 },
+    { name: 'reviewer-03', genUsed: 1, genLimit: 5, analysisUsed: 0 },
+  ];
+  let paused = false;
+  let inviteSequence = 0;
+  let closeEditor;
+
+  function appendAudit(action) {
+    const now = new Date();
+    const item = document.createElement('li');
+    const time = document.createElement('time');
+    const actor = document.createElement('strong');
+    const change = document.createElement('span');
+    time.dateTime = now.toISOString();
+    time.textContent = auditClock.format(now);
+    actor.textContent = operator;
+    change.className = 'audit-action';
+    change.textContent = action;
+    item.append(time, actor, change);
+    get('audit-empty').hidden = true;
+    get('audit-list').prepend(item);
+  }
+
+  for (const account of accounts) {
+    const row = get('account-template').content.firstElementChild.cloneNode(true);
+    const field = selector => row.querySelector(selector);
+    const open = field('.open-top-up');
+    const form = field('.top-up');
+    const input = form.elements.amount;
+    const error = field('.error');
+    row.dataset.account = account.name;
+    form.id = 'top-up-' + account.name;
+    error.id = 'error-' + account.name;
+    input.setAttribute('aria-describedby', error.id);
+    open.setAttribute('aria-controls', form.id);
+    open.setAttribute('aria-label', '给 ' + account.name + ' 补额度');
+    field('.account-name').textContent = account.name;
+    field('.gen-used').textContent = account.genUsed + ' 次';
+    field('.analysis-used').textContent = account.analysisUsed + ' 条';
+    field('.analysis-left').textContent = (6 - account.analysisUsed) + ' 条';
+    const updateBalance = () => {
+      field('.gen-left').textContent = (account.genLimit - account.genUsed) + ' 次';
+    };
+    updateBalance();
+    function close() {
+      form.hidden = true;
+      form.reset();
+      error.textContent = '';
+      input.removeAttribute('aria-invalid');
+      open.setAttribute('aria-expanded', 'false');
+      closeEditor = undefined;
+    }
+    open.addEventListener('click', () => {
+      if (role.value !== 'admin') return;
+      if (!form.hidden) {
+        close();
+        return;
+      }
+      closeEditor?.();
+      form.hidden = false;
+      open.setAttribute('aria-expanded', 'true');
+      closeEditor = close;
+      input.focus();
+    });
+    field('.cancel-top-up').addEventListener('click', () => {
+      close();
+      open.focus();
+    });
+    input.addEventListener('input', () => {
+      error.textContent = '';
+      input.removeAttribute('aria-invalid');
+    });
+    form.addEventListener('submit', event => {
+      event.preventDefault();
+      if (role.value !== 'admin' || form.hidden) return;
+      const amount = Number(input.value.trim());
+      if (!/^[1-9][0-9]*$/.test(input.value.trim()) || !Number.isSafeInteger(account.genLimit + amount)) {
+        error.textContent = '请输入有效的正整数。';
+        input.setAttribute('aria-invalid', 'true');
+        input.focus();
+        return;
+      }
+      const before = account.genLimit - account.genUsed;
+      account.genLimit += amount;
+      updateBalance();
+      const after = before + amount;
+      get('account-feedback').textContent = '已为 ' + account.name + ' 补 ' + amount + ' 次生成额度，当前剩余 ' + after + ' 次。';
+      appendAudit('为 ' + account.name + ' 补 ' + amount + ' 次生成额度，剩余由 ' + before + ' 次变为 ' + after + ' 次。');
+      close();
+      open.focus();
+    });
+    get('account-list').append(row);
+  }
+
+  toggle.addEventListener('click', () => {
+    if (role.value !== 'admin') return;
+    const action = paused ? '恢复模型调用' : '暂停模型调用';
+    get('confirm-title').textContent = action;
+    get('confirm-action').textContent = '确认' + action;
+    get('confirm-copy').textContent = paused
+      ? '恢复后可再次发起生成和分析。个人与全站额度限制仍然有效。'
+      : '暂停后会阻止新的生成和分析请求。已有工具和草稿仍可使用及保存。';
+    confirm.returnValue = '';
+    confirm.showModal();
+  });
+  confirm.addEventListener('close', () => {
+    if (confirm.returnValue !== 'apply' || role.value !== 'admin') return;
+    paused = !paused;
+    status.dataset.paused = String(paused);
+    status.textContent = paused ? '模型调用已暂停' : '模型调用正常';
+    toggle.textContent = paused ? '恢复模型调用' : '暂停模型调用';
+    get('model-feedback').textContent = paused
+      ? '已暂停新的生成和分析调用。'
+      : '已恢复生成和分析调用，额度限制继续生效。';
+    appendAudit(paused ? '暂停模型调用，影响生成和分析。' : '恢复模型调用，生成和分析按原有额度开放。');
+  });
+
+  get('invite-generate').addEventListener('click', () => {
+    if (role.value !== 'admin' || get('invite-preview').hidden) return;
+    inviteSequence += 1;
+    get('issued-code').value = 'DEMO-INVITE-' + String(inviteSequence).padStart(4, '0');
+    const expiry = new Date(Date.now() + 72 * 60 * 60 * 1000);
+    const expiryLabel = get('invite-expires');
+    expiryLabel.dateTime = expiry.toISOString();
+    expiryLabel.textContent = auditClock.format(expiry);
+    get('invite-result').hidden = false;
+    get('invite-feedback').textContent = '演示码已生成。';
+  });
+  get('invite-copy').addEventListener('click', async () => {
+    if (role.value !== 'admin' || get('invite-result').hidden) return;
+    const code = get('issued-code');
+    try {
+      await navigator.clipboard.writeText(code.value);
+      if (!get('invite-result').hidden) get('invite-feedback').textContent = '已复制演示码。';
+    } catch {
+      if (get('invite-result').hidden) return;
+      code.focus();
+      code.select();
+      get('invite-feedback').textContent = '请手动复制已选中的演示码。';
+    }
+  });
+
+  function renderView() {
+    if (location.hash === '#access-denied') role.value = 'member';
+    const admin = role.value === 'admin';
+    const workbench = location.hash === '#workbench';
+    const showBackend = admin && !workbench;
+    const showAccounts = showBackend && location.hash === '#accounts';
+    const showInvites = showBackend && location.hash === '#invites';
+    const showUsage = showBackend && !showAccounts && !showInvites;
+    closeEditor?.();
+    if (confirm.open) confirm.close('cancel');
+    get('admin').hidden = !showUsage;
+    get('backend').hidden = !showBackend;
+    get('account-preview').hidden = !showAccounts;
+    get('invite-preview').hidden = !showInvites;
+    if (!showInvites) {
+      get('invite-result').hidden = true;
+      get('issued-code').value = '';
+      get('invite-feedback').textContent = '';
+    }
+    get('trial-nav').setAttribute('aria-current', showUsage ? 'page' : 'false');
+    get('invite-nav').setAttribute('aria-current', showInvites ? 'page' : 'false');
+    get('account-nav').setAttribute('aria-current', showAccounts ? 'page' : 'false');
+    get('workbench').hidden = !workbench;
+    get('denied').hidden = admin || workbench;
+    get('admin-entry').hidden = !admin || !workbench;
+    get('back-to-workbench').hidden = workbench;
+    get('area-label').textContent = admin && !workbench ? '管理后台' : '工作台';
+  }
+  role.addEventListener('change', () => {
+    location.hash = 'workbench';
+    renderView();
+  });
+  window.addEventListener('hashchange', renderView);
+  renderView();
+</script>
+</body>
+</html>

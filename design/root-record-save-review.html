@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ROOT · 记录保存状态评审</title>
+<link rel="stylesheet" href="root-workbench-nav.css">
+<style>
+  :root { color:#1d1d22; background:#f3f4fc; font:14px/1.6 system-ui,"PingFang SC",sans-serif; }
+  * { box-sizing:border-box; }
+  body { margin:0; }
+  .masthead { display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px 20px; padding:12px 20px; background:#fafafe; border-bottom:1px solid #dfe1e9; }
+  .brand { display:flex; align-items:center; gap:9px; }
+  .brand strong { font:900 23px/1 "Avenir Next",sans-serif; letter-spacing:-.06em; }
+  .brand i { width:8px; height:8px; background:#879cea; border-radius:2px; }
+  .controls { display:flex; align-items:center; flex-wrap:wrap; gap:6px; }
+  .controls span { color:#565969; margin-right:4px; }
+  button { font:inherit; color:inherit; background:#fafafe; border:1px solid #c8cddd; border-radius:8px; padding:6px 10px; cursor:pointer; }
+  button[aria-pressed=true] { background:#e4e8fc; color:#2f4587; border-color:#a2b2e6; }
+  :focus-visible { outline:2px solid #4563aa; outline-offset:2px; }
+  .root-shell { min-height:calc(100vh - 59px); }
+  .root-nav > span, .root-nav-children > span { display:block; padding:9px 8px; border-radius:8px; }
+  .root-nav > [aria-current] { background:#e3e8fc; color:#314b92; font-weight:650; }
+  .content { min-width:0; padding:clamp(12px,2.8vw,42px); }
+  .tool { min-width:0; min-height:380px; border:1px solid #dfe1e9; border-radius:22px; background:#fafafe; padding:clamp(12px,2.3vw,28px); }
+  .tool-label { color:#38539c; font-size:12px; }
+  h1 { font:700 clamp(23px,3vw,34px)/1.25 "Songti SC","Noto Serif SC",serif; margin:4px 0 0; }
+  .save { display:flex; align-items:baseline; flex-wrap:wrap; gap:2px 8px; margin:12px 0; padding:8px 10px; border-radius:8px; border:1px solid #d8dff4; background:#eef1fc; color:#2c4485; font-size:13px; }
+  .save[data-state=saved] { border-color:#cddfd6; background:#edf5ef; color:#22573a; }
+  .save[data-state=failed] { border-color:#eccfc9; background:#fcf0ee; color:#8a2b24; }
+  .records { background:#fff; border:1px solid #dfe1e9; border-radius:10px; }
+  .records h2 { font-size:14px; margin:0; padding:10px 12px; }
+  .records ul { list-style:none; margin:0; padding:0; }
+  .records li { border-top:1px solid #eaebf2; padding:8px 12px; overflow-wrap:anywhere; }
+  footer { margin-top:18px; color:#565969; font-size:12px; }
+  @media (max-width:500px) {
+    .masthead { padding:10px 12px; }
+    .controls button { min-height:44px; }
+    .content { padding:10px; }
+  }
+
+  .save[data-state=pending] { color:#314b92;background:#eef2fb;border-color:#d8e1f3; }
+
+</style>
+<link rel="stylesheet" href="root-visual-v4.css">
+<link rel="stylesheet" href="root-brand-blue.css">
+</head>
+<body class="root-visual brand-blue root-record-save-review">
+<header class="masthead">
+  <div class="brand"><strong>ROOT</strong><i aria-hidden="true"></i>工具工作台</div>
+  <div class="controls" aria-label="原型状态">
+    <span>评审状态</span>
+    <button type="button" data-preview="pending" aria-pressed="true">保存中</button>
+    <button type="button" data-preview="saved" aria-pressed="false">保存成功</button>
+    <button type="button" data-preview="failed" aria-pressed="false">保存失败</button>
+  </div>
+</header>
+<div class="root-shell">
+  <aside class="root-sidebar">
+    <nav class="root-nav" aria-label="工作台导航示意">
+      <span>新建工具</span><span>需求助手</span><span>我的需求</span>
+      <span aria-current="page">我的工具</span>
+      <div class="root-nav-children"><span>读书清单</span></div>
+    </nav>
+  </aside>
+  <main class="content">
+    <section class="tool" aria-labelledby="tool-title">
+      <div class="tool-label">工具预览</div>
+      <h1 id="tool-title">读书清单</h1>
+      <div class="save" id="save-state" data-state="pending" role="status" aria-atomic="true">
+        <strong id="save-title">正在保存…</strong>
+        <span id="save-detail">请等保存完成再刷新。</span>
+      </div>
+      <section class="records" aria-labelledby="records-title">
+        <h2 id="records-title">读书记录</h2>
+        <ul><li>山茶文具店</li><li>海街日记</li></ul>
+      </section>
+      <footer>隔离预览</footer>
+    </section>
+  </main>
+</div>
+<script>
+  const states = {
+    pending: ['正在保存…', '请等保存完成再刷新。'],
+    saved: ['已保存', '刷新后可从「我的工具」找回记录。'],
+    failed: ['保存失败', '这次更改尚未保存，刷新前请先记下。']
+  };
+  const buttons = document.querySelectorAll('[data-preview]');
+  const status = document.querySelector('#save-state');
+  const title = document.querySelector('#save-title');
+  const detail = document.querySelector('#save-detail');
+  buttons.forEach(button => button.addEventListener('click', () => {
+    const state = button.dataset.preview;
+    buttons.forEach(item => item.setAttribute('aria-pressed', String(item === button)));
+    status.dataset.state = state;
+    [title.textContent, detail.textContent] = states[state];
+  }));
+</script>
+</body>
+</html>

@@ -1,15 +1,26 @@
 <!doctype html>
-<html lang="en" data-visualize-standalone>
+<html lang="zh-CN" data-visualize-standalone>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="referrer" content="no-referrer">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval' blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com https://persistent.oaistatic.com/plugins/visualize/; style-src 'unsafe-inline' blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com https://persistent.oaistatic.com/plugins/visualize/charts/; img-src blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; font-src blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; media-src blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; worker-src blob:; connect-src blob: data:; frame-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval' blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com https://persistent.oaistatic.com/plugins/visualize/; style-src 'self' 'unsafe-inline' blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com https://persistent.oaistatic.com/plugins/visualize/charts/; img-src blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; font-src blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; media-src blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; worker-src blob:; connect-src blob: data:; frame-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
 <title>ROOT 工作台交互原型</title>
 <style>:root{color-scheme:light dark;background:light-dark(rgb(255 255 255), rgb(24 24 24))}html,body{margin:0}body{box-sizing:border-box;padding:1rem;background:inherit}iframe{display:block;width:100%;height:calc(100vh - 2rem);margin:0 auto;border:0}</style>
 
+<link rel="stylesheet" href="root-workbench-nav.css">
+<link rel="stylesheet" href="root-visual-v4.css">
+<link rel="stylesheet" href="root-brand-blue.css">
 </head>
-<body>
+<body class="root-visual brand-blue root-workbench-entry">
+<div id="workbench-shell">
+  <aside class="root-sidebar" id="workbench-sidebar" hidden>
+    <nav class="root-nav" aria-label="工作台导航">
+      <a href="root-new-tool-review.html" data-nav="new">新建工具</a>
+      <a href="root-workbench-entry.html?section=idea" data-nav="idea">需求</a>
+      <a href="root-new-tool-review.html#my-tools" data-nav="tools">我的工具</a>
+    </nav>
+  </aside>
 <iframe id="codex-visualization" sandbox="allow-scripts" referrerpolicy="no-referrer" title="ROOT 工作台交互原型" data-srcdoc="&lt;!doctype html&gt;
 &lt;html lang=&quot;en&quot; data-visualize-standalone&gt;
 &lt;head&gt;
@@ -1873,6 +1884,14 @@ html&gt;body{padding:0}&lt;/style&gt;
     #root-idea-flow button:disabled { opacity: .53; }
     #root-idea-flow .primary { background: var(--action); color: var(--on-action); }
     #root-idea-flow .actions { margin-top: 14px; }
+    #root-idea-flow [data-screen=&quot;brief&quot;] { max-width:760px; margin-inline:auto; }
+    #root-idea-flow :has([data-screen=&quot;brief&quot;]:not([hidden])) &gt; [data-assistant-nav] { max-width:760px; margin-inline:auto; }
+    #root-idea-flow .brief-back { color:#294685; background:transparent; border-color:transparent; padding-inline:0; min-height:44px; }
+    #root-idea-flow .brief-actions { justify-content:flex-end; gap:8px; margin-top:12px; }
+    #root-idea-flow .brief-actions button { min-height:44px; }
+    #root-idea-flow .brief-actions .primary { background:#294685; border-color:#294685; }
+    #root-idea-flow [data-save-status]:empty { display:none; }
+
     #root-idea-flow textarea { display: block; min-width: 0; width: 100%; resize: vertical; margin-top: 6px; }
     #root-idea-flow label { display: block; }
     #root-idea-flow .fields { display: grid; gap: 12px; margin-top: 17px; }
@@ -1894,8 +1913,14 @@ html&gt;body{padding:0}&lt;/style&gt;
     #root-idea-flow [data-guide-focus=&quot;true&quot;] { outline: 2px solid var(--blue); outline-offset: 3px; }
     #root-idea-flow .item { padding: 9px 0; border-top: 1px solid var(--line); }
     #root-idea-flow .item label { display: inline-flex; align-items: center; gap: 7px; }
-    #root-idea-flow .source-table { width: 100%; table-layout: fixed; border-collapse: collapse; margin-top: 8px; text-align: left; }
-    #root-idea-flow .source-table :is(th, td) { padding: 7px 4px; border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }
+    #root-idea-flow .source-table-scroll { inline-size:100%;max-inline-size:100%;overflow:auto;margin:12px 0;border:1px solid #d9e2f0;border-radius:8px;background:#fff; }
+    #root-idea-flow .source-table-hint { display:none; margin:8px 0 -8px; color:#4f607b;font-size:12px; }
+    @media(max-width:550px) { #root-idea-flow .source-table-hint { display:block; } }
+    #root-idea-flow .source-table-scroll:focus-visible { outline:2px solid #345baf;outline-offset:2px; }
+    #root-idea-flow [data-confirm-table] { background:#294685; border-color:#294685; min-height:44px; }
+    #root-idea-flow .source-table thead { background:#e6edfb;color:#243e77; }
+    #root-idea-flow .source-table { width: 100%; min-width:400px;border-collapse:collapse;text-align:left; }
+    #root-idea-flow .source-table :is(th, td) { padding:9px 12px;border-bottom:1px solid var(--line);white-space:nowrap; }
     #root-idea-flow .review { margin: 0 0 10px; align-items: center; }
     #root-idea-flow [data-tool-source] { margin-top: 6px; }
     #root-idea-flow input[type=&quot;checkbox&quot;] { accent-color: var(--blue); }
@@ -1935,6 +1960,10 @@ html&gt;body{padding:0}&lt;/style&gt;
             &lt;button type=&quot;button&quot; class=&quot;cursor-interaction&quot; data-go=&quot;table&quot;&gt;从表格生成 &lt;span&gt;确认字段，把已有数据带进工具&lt;/span&gt;&lt;/button&gt;
           &lt;/div&gt;
         &lt;/section&gt;
+        &lt;nav class=&quot;templates&quot; data-assistant-nav aria-label=&quot;需求助手导航&quot; hidden&gt;
+          &lt;button type=&quot;button&quot; data-go=&quot;idea&quot; data-assistant-view=&quot;idea&quot;&gt;梳理新需求&lt;/button&gt;
+          &lt;button type=&quot;button&quot; data-go=&quot;drafts&quot; data-assistant-view=&quot;drafts&quot;&gt;我的需求&lt;/button&gt;
+        &lt;/nav&gt;
         &lt;section data-screen=&quot;idea&quot; hidden&gt;
           &lt;p class=&quot;kicker&quot;&gt;需求助手 / 原始问题&lt;/p&gt;&lt;h2&gt;你想解决什么问题？&lt;/h2&gt;
           &lt;div class=&quot;fields&quot;&gt;
@@ -1942,7 +1971,7 @@ html&gt;body{padding:0}&lt;/style&gt;
           &lt;/div&gt;
           &lt;p class=&quot;muted&quot; style=&quot;margin-top:12px&quot;&gt;用不同示例试一遍&lt;/p&gt;
           &lt;div class=&quot;templates&quot;&gt;&lt;button type=&quot;button&quot; data-idea-example=&quot;project&quot; class=&quot;cursor-interaction&quot;&gt;跟进进度&lt;/button&gt;&lt;button type=&quot;button&quot; data-idea-example=&quot;travel&quot; class=&quot;cursor-interaction&quot;&gt;旅行开销&lt;/button&gt;&lt;button type=&quot;button&quot; data-idea-example=&quot;clear&quot; class=&quot;cursor-interaction&quot;&gt;明确的读书清单&lt;/button&gt;&lt;/div&gt;
-          &lt;div class=&quot;actions&quot;&gt;&lt;button type=&quot;button&quot; data-go=&quot;drafts&quot; class=&quot;cursor-interaction&quot;&gt;我的需求&lt;/button&gt;&lt;button type=&quot;button&quot; class=&quot;primary cursor-interaction&quot; data-analyze&gt;分析我的想法&lt;/button&gt;&lt;/div&gt;
+          &lt;div class=&quot;actions&quot;&gt;&lt;button type=&quot;button&quot; class=&quot;primary cursor-interaction&quot; data-analyze&gt;分析我的想法&lt;/button&gt;&lt;/div&gt;
         &lt;/section&gt;
         &lt;section data-screen=&quot;directions&quot; hidden&gt;
           &lt;p class=&quot;kicker&quot;&gt;需求助手 / 选择方向&lt;/p&gt;&lt;h2&gt;你更想解决哪一件事？&lt;/h2&gt;
@@ -1958,17 +1987,21 @@ html&gt;body{padding:0}&lt;/style&gt;
           &lt;div class=&quot;actions&quot;&gt;&lt;button type=&quot;button&quot; data-go=&quot;directions&quot; class=&quot;cursor-interaction&quot;&gt;换个方向&lt;/button&gt;&lt;button type=&quot;button&quot; class=&quot;primary cursor-interaction&quot; data-organize disabled&gt;整理成需求&lt;/button&gt;&lt;/div&gt;
         &lt;/section&gt;
         &lt;section data-screen=&quot;brief&quot; hidden&gt;
-          &lt;p class=&quot;kicker&quot;&gt;需求助手 / 确认&lt;/p&gt;&lt;h2&gt;检查需求草稿&lt;/h2&gt;
+          &lt;button type=&quot;button&quot; data-brief-back class=&quot;cursor-interaction brief-back&quot;&gt;返回上一页&lt;/button&gt;
+          &lt;h2&gt;检查需求草稿&lt;/h2&gt;
           &lt;p class=&quot;muted&quot; data-brief-caption&gt;你可以修改任何一项，保存后再继续。&lt;/p&gt;
+          &lt;label&gt;工具名称&lt;input data-brief-name type=&quot;text&quot; placeholder=&quot;输入工具名称&quot;&gt;&lt;/label&gt;
           &lt;label&gt;需求草稿&lt;textarea data-brief rows=&quot;7&quot;&gt;&lt;/textarea&gt;&lt;/label&gt;
           &lt;p class=&quot;muted&quot; data-save-status role=&quot;status&quot;&gt;&lt;/p&gt;
-          &lt;div class=&quot;actions&quot;&gt;&lt;button type=&quot;button&quot; data-brief-back class=&quot;cursor-interaction&quot;&gt;返回&lt;/button&gt;&lt;button type=&quot;button&quot; data-save-brief class=&quot;cursor-interaction&quot;&gt;保存需求&lt;/button&gt;&lt;button type=&quot;button&quot; class=&quot;primary cursor-interaction&quot; data-carry-brief&gt;带到直接开发&lt;/button&gt;&lt;button type=&quot;button&quot; data-go=&quot;drafts&quot; data-open-saved class=&quot;cursor-interaction&quot; hidden&gt;查看我的需求&lt;/button&gt;&lt;/div&gt;
+          &lt;div class=&quot;actions brief-actions&quot;&gt;
+            &lt;button type=&quot;button&quot; data-save-brief class=&quot;cursor-interaction&quot;&gt;保存需求&lt;/button&gt;
+            &lt;button type=&quot;button&quot; class=&quot;primary cursor-interaction&quot; data-carry-brief&gt;带入新建&lt;/button&gt;
+          &lt;/div&gt;
         &lt;/section&gt;
         &lt;section data-screen=&quot;drafts&quot; hidden&gt;
           &lt;p class=&quot;kicker&quot;&gt;需求助手 / 已保存&lt;/p&gt;&lt;h2&gt;我的需求&lt;/h2&gt;
           &lt;p class=&quot;muted&quot; data-no-drafts&gt;保存后的需求会出现在这里。&lt;/p&gt;
           &lt;div class=&quot;saved&quot; data-draft-list&gt;&lt;/div&gt;
-          &lt;div class=&quot;actions&quot;&gt;&lt;button type=&quot;button&quot; data-go=&quot;idea&quot; class=&quot;cursor-interaction&quot;&gt;分析新想法&lt;/button&gt;&lt;/div&gt;
         &lt;/section&gt;
         &lt;section data-screen=&quot;table&quot; hidden&gt;
           &lt;p class=&quot;kicker&quot;&gt;从表格生成 · 1 / 2&lt;/p&gt;&lt;h2&gt;选择表格&lt;/h2&gt;
@@ -1979,6 +2012,8 @@ html&gt;body{padding:0}&lt;/style&gt;
         &lt;section data-screen=&quot;table-review&quot; hidden&gt;
           &lt;p class=&quot;kicker&quot;&gt;从表格生成 · 2 / 2&lt;/p&gt;&lt;h2&gt;确认识别结果&lt;/h2&gt;
           &lt;div class=&quot;problem&quot;&gt;&lt;p class=&quot;kicker&quot;&gt;输入 · 示例表格&lt;/p&gt;&lt;h3&gt;交付跟进表.xlsx&lt;/h3&gt;&lt;p class=&quot;muted&quot;&gt;识别到 4 个字段、3 条记录&lt;/p&gt;&lt;/div&gt;
+          &lt;p class=&quot;source-table-hint&quot;&gt;横向滑动查看全部字段&lt;/p&gt;
+          &lt;div class=&quot;source-table-scroll&quot; tabindex=&quot;0&quot; role=&quot;region&quot; aria-label=&quot;表格预览，可横向滚动&quot;&gt;
           &lt;table class=&quot;source-table&quot; aria-label=&quot;识别出的记录&quot;&gt;
             &lt;thead&gt;&lt;tr&gt;&lt;th scope=&quot;col&quot;&gt;事项 · 文本&lt;/th&gt;&lt;th scope=&quot;col&quot;&gt;负责人 · 文本&lt;/th&gt;&lt;th scope=&quot;col&quot;&gt;截止日 · 日期&lt;/th&gt;&lt;th scope=&quot;col&quot;&gt;状态 · 选项&lt;/th&gt;&lt;/tr&gt;&lt;/thead&gt;
             &lt;tbody&gt;
@@ -1986,7 +2021,7 @@ html&gt;body{padding:0}&lt;/style&gt;
               &lt;tr&gt;&lt;td&gt;准备样例数据&lt;/td&gt;&lt;td&gt;小周&lt;/td&gt;&lt;td&gt;11 月 10 日&lt;/td&gt;&lt;td&gt;待完成&lt;/td&gt;&lt;/tr&gt;
               &lt;tr&gt;&lt;td&gt;复核体验入口&lt;/td&gt;&lt;td&gt;小陈&lt;/td&gt;&lt;td&gt;11 月 9 日&lt;/td&gt;&lt;td&gt;已完成&lt;/td&gt;&lt;/tr&gt;
             &lt;/tbody&gt;
-          &lt;/table&gt;
+          &lt;/table&gt;&lt;/div&gt;
           &lt;div class=&quot;problem&quot;&gt;&lt;p class=&quot;kicker&quot;&gt;输出 · 建议生成&lt;/p&gt;&lt;h3&gt;交付跟进板&lt;/h3&gt;&lt;p class=&quot;muted&quot;&gt;保留这 3 条记录，在看板里更新完成状态。&lt;/p&gt;&lt;/div&gt;
           &lt;div class=&quot;actions&quot;&gt;&lt;button type=&quot;button&quot; data-go=&quot;table&quot; class=&quot;cursor-interaction&quot;&gt;返回选择表格&lt;/button&gt;&lt;button type=&quot;button&quot; class=&quot;primary cursor-interaction&quot; data-confirm-table&gt;确认并生成&lt;/button&gt;&lt;/div&gt;
         &lt;/section&gt;
@@ -2020,6 +2055,7 @@ html&gt;body{padding:0}&lt;/style&gt;
       const idea = find(&#x27;[data-idea]&#x27;);
       const answer = find(&#x27;[data-answer]&#x27;);
       const brief = find(&#x27;[data-brief]&#x27;);
+      const briefName = find(&#x27;[data-brief-name]&#x27;);
       const samples = {
         project: &#x27;每到周五都要在群里问大家进度，还是不知道谁卡住了。&#x27;,
         travel: &#x27;每次旅行都记不清花了多少钱，回来才发现超预算。&#x27;,
@@ -2056,11 +2092,13 @@ html&gt;body{padding:0}&lt;/style&gt;
       let draftIndex = -1;
       let running = false;
       let screen = &#x27;home&#x27;;
-      let guideOn = true;
+      const reviewSection = &#x27;__ROOT_REVIEW_SECTION__&#x27;;
+      const isSpecializedReview = reviewSection !== &#x27;home&#x27;;
+      let guideOn = !isSpecializedReview;
       let triedTool = false;
       let guideTool = null;
       const tools = [];
-      const drafts = [];
+      const drafts = __ROOT_REVIEW_DRAFTS__;
       function updateGuide() {
         const guide = find(&#x27;[data-guide]&#x27;);
         const copy = find(&#x27;[data-guide-copy]&#x27;);
@@ -2082,6 +2120,16 @@ html&gt;body{padding:0}&lt;/style&gt;
 
       function show(nextScreen) {
         screen = nextScreen;
+        const inAssistant = [&#x27;idea&#x27;, &#x27;directions&#x27;, &#x27;question&#x27;, &#x27;brief&#x27;, &#x27;drafts&#x27;].includes(screen);
+        const assistantView = screen === &#x27;drafts&#x27; || (screen === &#x27;brief&#x27; &amp;&amp; briefSource === &#x27;drafts&#x27;) ? &#x27;drafts&#x27; : &#x27;idea&#x27;;
+        const nav = find(&#x27;[data-assistant-nav]&#x27;);
+        nav.hidden = !inAssistant;
+        nav.querySelectorAll(&#x27;[data-assistant-view]&#x27;).forEach(button =&gt; {
+          button.setAttribute(&#x27;aria-pressed&#x27;, String(button.dataset.assistantView === assistantView));
+        });
+        if (isSpecializedReview) {
+          parent.postMessage({ type: &#x27;root-review-section&#x27;, area: inAssistant ? &#x27;idea&#x27; : &#x27;new&#x27; }, &#x27;*&#x27;);
+        }
         root.querySelectorAll(&#x27;[data-screen]&#x27;).forEach(panel =&gt; { panel.hidden = panel.dataset.screen !== screen; });
         const full = [&#x27;idea&#x27;, &#x27;directions&#x27;, &#x27;question&#x27;, &#x27;brief&#x27;, &#x27;drafts&#x27;, &#x27;table&#x27;, &#x27;table-review&#x27;].includes(screen);
         find(&#x27;[data-layout]&#x27;).classList.toggle(&#x27;full&#x27;, full);
@@ -2164,6 +2212,10 @@ html&gt;body{padding:0}&lt;/style&gt;
       }
 
       root.querySelectorAll(&#x27;[data-go]&#x27;).forEach(button =&gt; button.addEventListener(&#x27;click&#x27;, () =&gt; {
+        if (isSpecializedReview &amp;&amp; [&#x27;home&#x27;, &#x27;build&#x27;, &#x27;library&#x27;].includes(button.dataset.go)) {
+          parent.postMessage({ type: &#x27;root-review-route&#x27;, route: button.dataset.go }, &#x27;*&#x27;);
+          return;
+        }
         show(button.dataset.go);
       }));
       find(&#x27;[data-guide-toggle]&#x27;).addEventListener(&#x27;click&#x27;, () =&gt; {
@@ -2194,7 +2246,11 @@ html&gt;body{padding:0}&lt;/style&gt;
         find(&#x27;[data-fast-prompt]&#x27;).textContent = templates[fastSelected][1];
         fastButtons.forEach(item =&gt; item.setAttribute(&#x27;aria-pressed&#x27;, String(item === button)));
       }));
-      function carryToBuild(text, kind, example = null) {
+      function carryToBuild(text, kind, example = null, name = &#x27;&#x27;) {
+        if (isSpecializedReview) {
+          parent.postMessage({ type: &#x27;root-review-route&#x27;, route: &#x27;build&#x27;, draft: text, name }, &#x27;*&#x27;);
+          return;
+        }
         selected = kind;
         carriedDirection = example;
         prompt.value = text;
@@ -2208,19 +2264,23 @@ html&gt;body{padding:0}&lt;/style&gt;
         find(&#x27;[data-status]&#x27;).textContent = &#x27;试用样例&#x27;;
         find(&#x27;[data-publish]&#x27;).hidden = true;
       });
-      find(&#x27;[data-fast-generate]&#x27;).addEventListener(&#x27;click&#x27;, () =&gt; generate(fastSelected, false, templates[fastSelected][1]));
+      find(&#x27;[data-fast-generate]&#x27;).addEventListener(&#x27;click&#x27;, () =&gt; {
+        if (isSpecializedReview) carryToBuild(templates[fastSelected][1], fastSelected);
+        else generate(fastSelected, false, templates[fastSelected][1]);
+      });
       prompt.addEventListener(&#x27;input&#x27;, () =&gt; { find(&#x27;[data-direct]&#x27;).disabled = !prompt.value.trim(); });
       find(&#x27;[data-direct]&#x27;).addEventListener(&#x27;click&#x27;, () =&gt; generate(selected, false, prompt.value.trim(), carriedDirection));
 
       function updateIdeaButton() {
         find(&#x27;[data-analyze]&#x27;).disabled = !idea.value.trim();
       }
-      function setBrief(text, source, caption) {
+      function setBrief(text, source, caption, name = activeDirection?.title || &#x27;&#x27;) {
+        briefName.value = name;
         briefSource = source;
+        find(&#x27;[data-brief-back]&#x27;).textContent = source === &#x27;drafts&#x27; ? &#x27;返回需求列表&#x27; : &#x27;返回上一页&#x27;;
         brief.value = text;
         updateBriefButtons();
         find(&#x27;[data-save-status]&#x27;).textContent = &#x27;&#x27;;
-        find(&#x27;[data-open-saved]&#x27;).hidden = source !== &#x27;drafts&#x27;;
         find(&#x27;[data-brief-caption]&#x27;).textContent = caption;
         show(&#x27;brief&#x27;);
       }
@@ -2236,11 +2296,11 @@ html&gt;body{padding:0}&lt;/style&gt;
           const button = document.createElement(&#x27;button&#x27;);
           button.type = &#x27;button&#x27;;
           button.className = &#x27;cursor-interaction&#x27;;
-          button.textContent = draft.direction.title;
+          button.textContent = draft.name?.trim() || &#x27;未命名需求&#x27;;
           button.addEventListener(&#x27;click&#x27;, () =&gt; {
             draftIndex = index;
             activeDirection = draft.direction;
-            setBrief(draft.text, &#x27;drafts&#x27;, &#x27;已保存的需求可以继续编辑。&#x27;);
+            setBrief(draft.text, &#x27;drafts&#x27;, &#x27;已保存的需求可以继续编辑。&#x27;, draft.name || &#x27;&#x27;);
           });
           list.append(button);
         });
@@ -2303,23 +2363,35 @@ html&gt;body{padding:0}&lt;/style&gt;
       });
       answer.addEventListener(&#x27;input&#x27;, () =&gt; { find(&#x27;[data-organize]&#x27;).disabled = !answer.value.trim(); });
       find(&#x27;[data-organize]&#x27;).addEventListener(&#x27;click&#x27;, () =&gt; {
-        setBrief(`工具：${activeDirection.title}\n原始问题：${idea.value.trim()}\n要解决的事：${activeDirection.problem}\n用户确认：${answer.value.trim()}\n第一版行为：${activeDirection.basics}`, &#x27;question&#x27;, &#x27;你可以修改任何一项，再保存或带到开发模式。&#x27;);
+        setBrief(`工具：${activeDirection.title}\n原始问题：${idea.value.trim()}\n要解决的事：${activeDirection.problem}\n用户确认：${answer.value.trim()}\n第一版行为：${activeDirection.basics}`, &#x27;question&#x27;, &#x27;你可以修改任何一项，再保存或带入新建。&#x27;);
       });
       find(&#x27;[data-brief-back]&#x27;).addEventListener(&#x27;click&#x27;, () =&gt; show(briefSource));
+      briefName.addEventListener(&#x27;input&#x27;, () =&gt; {
+        find(&#x27;[data-save-status]&#x27;).textContent = draftIndex &gt;= 0 ? &#x27;有未保存的修改。&#x27; : &#x27;&#x27;;
+      });
       brief.addEventListener(&#x27;input&#x27;, () =&gt; {
         updateBriefButtons();
         find(&#x27;[data-save-status]&#x27;).textContent = draftIndex &gt;= 0 ? &#x27;有未保存的修改。&#x27; : &#x27;&#x27;;
       });
       find(&#x27;[data-save-brief]&#x27;).addEventListener(&#x27;click&#x27;, () =&gt; {
         if (draftIndex &lt; 0) draftIndex = drafts.length;
-        drafts[draftIndex] = { text: brief.value.trim(), direction: activeDirection };
+        drafts[draftIndex] = { name: briefName.value.trim(), text: brief.value.trim(), direction: activeDirection };
+        if (isSpecializedReview) parent.postMessage({ type: &#x27;root-review-save-drafts&#x27;, drafts }, &#x27;*&#x27;);
         renderDrafts();
         find(&#x27;[data-save-status]&#x27;).textContent = &#x27;已保存到「我的需求」。&#x27;;
-        find(&#x27;[data-open-saved]&#x27;).hidden = false;
       });
-      find(&#x27;[data-carry-brief]&#x27;).addEventListener(&#x27;click&#x27;, () =&gt; carryToBuild(brief.value.trim(), activeDirection.kind, activeDirection));
+      find(&#x27;[data-carry-brief]&#x27;).addEventListener(&#x27;click&#x27;, () =&gt; carryToBuild(brief.value.trim(), activeDirection.kind, activeDirection, briefName.value.trim()));
       find(&#x27;[data-confirm-table]&#x27;).addEventListener(&#x27;click&#x27;, () =&gt; generate(&#x27;board&#x27;, true));
-      show(&#x27;home&#x27;);
+      if (isSpecializedReview) {
+        find(&#x27;[aria-label=&quot;评审状态&quot;]&#x27;).hidden = true;
+        find(&#x27;[data-product] &gt; header&#x27;).hidden = true;
+        if (reviewSection === &#x27;fast&#x27;) {
+          find(&#x27;[data-fast-generate]&#x27;).hidden = true;
+          find(&#x27;[data-customize]&#x27;).textContent = &#x27;带入示例需求&#x27;;
+        }
+        renderDrafts();
+      }
+      show(reviewSection);
     })();
   &lt;/script&gt;
 &lt;/div&gt;
@@ -2912,6 +2984,7 @@ html&gt;body{padding:0}&lt;/style&gt;
 &lt;/body&gt;
 &lt;/html&gt;
 "></iframe>
+</div>
 
 <script>(() => {
   const frame = document.getElementById("codex-visualization");
@@ -3187,7 +3260,60 @@ html&gt;body{padding:0}&lt;/style&gt;
       // Ignore missing or invalid cache entries and measure the live frame.
     }
   }
-  frame.srcdoc = frameHtml;
+  const requestedSection = new URLSearchParams(location.search).get('section');
+  const section = ['fast', 'idea', 'drafts', 'table'].includes(requestedSection) ? requestedSection : 'home';
+  const sidebar = document.getElementById('workbench-sidebar');
+  const draftsKey = 'root-design-review-drafts';
+  function highlight(area) {
+    sidebar.querySelectorAll('[data-nav]').forEach(link => {
+      link.setAttribute('aria-current', link.dataset.nav === area ? 'page' : 'false');
+    });
+  }
+  window.addEventListener('message', event => {
+    if (event.source !== frame.contentWindow) return;
+    if (event.data?.type === 'root-review-section') {
+      highlight(event.data.area);
+      return;
+    }
+    if (event.data?.type === 'root-review-save-drafts' && Array.isArray(event.data.drafts)) {
+      try { sessionStorage.setItem(draftsKey, JSON.stringify(event.data.drafts)); } catch {}
+      return;
+    }
+    if (event.data?.type !== 'root-review-route') return;
+    if (!['home', 'build', 'library'].includes(event.data.route)) return;
+    const next = new URL('root-new-tool-review.html', location.href);
+    if (event.data.route === 'library') next.hash = 'my-tools';
+    else if (typeof event.data.draft === 'string') next.hash = new URLSearchParams({draft: event.data.draft, name: event.data.name || ''}).toString();
+    location.href = next.href;
+  });
+  if (section !== 'home') {
+    document.body.style.padding = '0';
+    document.getElementById('workbench-shell').className = 'root-shell';
+    sidebar.hidden = false;
+    highlight(['idea', 'drafts'].includes(section) ? 'idea' : 'new');
+    frame.style.minHeight = '100vh';
+    frame.style.backgroundColor = '#f4f6fa';
+    document.documentElement.style.backgroundColor = '#f4f6fa';
+  }
+  let savedDrafts = [];
+  if (section !== 'home') {
+    try { savedDrafts = JSON.parse(sessionStorage.getItem(draftsKey)) || []; } catch {}
+  }
+  const brandStyles = `
+    html, body { background:#f4f6fa !important; color:#18253f; }
+    body { min-height:100vh; }
+    [data-product] { background:#f4f6fa !important; border:0 !important; border-radius:0 !important; }
+    [data-product] .panel { background:#fff; border-color:#d6dfeb; border-radius:12px; }
+    [data-product] :is(h1,h2) { font-family:Inter,system-ui,"PingFang SC",sans-serif; letter-spacing:-.035em; }
+    [data-product] button.primary { background:#233a76; border-color:#233a76; color:#fff; }
+    [data-product] :is(button,a,input,textarea):focus-visible { outline:2px solid #345baf; outline-offset:2px; }
+    [data-brief-name] { display:block; width:min(100%,440px); min-height:44px; padding:8px 10px;
+      border:1px solid #afbed4; border-radius:8px; background:#fff; color:#18253f; font:inherit; }
+  `;
+  frame.srcdoc = frameHtml.replace('lang="en"', 'lang="zh-CN"')
+    .replace('</head>', '<style>' + brandStyles + '</style></head>')
+    .replace('__ROOT_REVIEW_SECTION__', section)
+    .replace('__ROOT_REVIEW_DRAFTS__', () => JSON.stringify(savedDrafts).replaceAll('<', '\\u003c'));
   delete frame.dataset.srcdoc;
 })();
 </script>

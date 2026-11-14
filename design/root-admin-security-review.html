@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ROOT · 管理员账号安全</title>
+<link rel="stylesheet" href="root-visual-v4.css">
+<style>
+  :root{font:15px/1.55 system-ui,"PingFang SC",sans-serif}
+  *{box-sizing:border-box}
+  body{margin:0;min-height:100dvh}
+  [hidden]{display:none!important}
+  .masthead{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:16px clamp(16px,8vw,120px);border-bottom:1px solid var(--root-line)}
+  .brand{font-weight:900;color:var(--root-ink);text-decoration:none}
+  .brand::after{content:"";display:inline-block;width:8px;height:8px;margin-inline:8px;background:#496bb3;border-radius:2px}
+  main{max-width:610px;margin:clamp(20px,7vh,68px) auto;padding:0 16px 40px}
+  .panel{padding:clamp(18px,4vw,36px);border:1px solid;border-radius:16px}
+  nav{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:18px}
+  nav a{display:inline-flex;align-items:center;min-height:44px;padding:6px 12px;color:var(--root-blue);text-decoration:none;border-radius:8px}
+  nav a[aria-current="page"]{background:var(--root-active);font-weight:650}
+  h1{font-size:clamp(25px,4vw,36px);margin:0 0 7px}
+  .muted{margin:0 0 20px}
+  label{display:grid;gap:4px;margin:12px 0}
+  input,button{min-height:44px;border:1px solid var(--root-line);border-radius:8px;padding:8px 12px;font:inherit}
+  button{cursor:pointer}
+  .status{margin-top:12px;color:#254f43}
+  .status[data-tone="error"]{color:#a3372e}
+  .status:empty{display:none}
+</style>
+<link rel="stylesheet" href="root-brand-blue.css">
+</head>
+<body class="root-visual brand-blue root-admin-security-review">
+<header class="masthead"><span><a class="brand" href="index.html">ROOT</a>管理后台</span><a href="root-admin-login.html">返回后台登录</a></header>
+<main>
+  <nav aria-label="账号安全场景"><a id="setup-link" href="#setup">首次设置</a><a id="password-link" href="#password">修改密码</a></nav>
+  <section class="panel" aria-labelledby="security-title">
+    <h1 id="security-title">首次设置管理员</h1>
+    <p class="muted" id="intro"></p>
+    <form autocomplete="off">
+      <label id="setup-code">初始化码<input name="setup-code" placeholder="输入演示码"></label>
+      <label id="account">管理员用户名<input name="username"></label>
+      <label id="current">当前密码<input type="password" name="current"></label>
+      <label>新密码<input type="password" name="password" minlength="15" maxlength="128" required></label>
+      <label>确认新密码<input type="password" name="confirmation" minlength="15" maxlength="128" required></label>
+      <button class="primary" type="submit" id="save">完成设置</button>
+      <p class="status" role="status"></p>
+    </form>
+  </section>
+</main>
+<script>
+const form = document.querySelector('form');
+const status = document.querySelector('.status');
+const byId = id => document.getElementById(id);
+function activate() {
+  const setup = location.hash !== '#password';
+  byId('setup-link').setAttribute('aria-current', setup ? 'page' : 'false');
+  byId('password-link').setAttribute('aria-current', setup ? 'false' : 'page');
+  byId('security-title').textContent = setup ? '首次设置管理员' : '修改管理员密码';
+  byId('intro').textContent = setup ? '用一次性初始化码设置后台账号。' : '保存后，需要用新密码重新登录。';
+  for (const [id, visible] of [['setup-code', setup], ['account', setup], ['current', !setup]]) {
+    const row = byId(id);
+    row.hidden = !visible;
+    row.querySelector('input').required = visible;
+  }
+  byId('save').textContent = setup ? '完成设置' : '保存新密码';
+  form.reset();
+  status.textContent = '';
+}
+form.onsubmit = event => {
+  event.preventDefault();
+  const data = new FormData(form);
+  if (data.get('password') !== data.get('confirmation')) {
+    status.dataset.tone = 'error';
+    status.textContent = '两次输入的密码不一致。';
+    return;
+  }
+  form.reset();
+  status.dataset.tone = 'success';
+  status.textContent = location.hash === '#password' ? '演示：密码已更新，请重新登录。' : '演示：管理员已设置，可以进入邀请码管理。';
+};
+window.addEventListener('hashchange', activate);
+activate();
+</script>
+</body>
+</html>

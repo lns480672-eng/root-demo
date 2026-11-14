@@ -186,3 +186,36 @@ chg011_checkpoint:
   red: [runs/workbench-chg011/red-trial-http.log, runs/workbench-chg011/red-initial-commit-http.log]
   evidence: runs/workbench-chg011/candidate/开发自测.md
   handoff: runs/workbench-chg011/candidate/handoff.json
+
+# The following checkpoints describe historical candidates. Current release status is in the local CI index.
+multi_round_revision_checkpoint:
+  gate: AC-007 / AC-018-C / TEST-007-CL-01–03
+  user_decision: "2026-11-13 当前开发聊天：按当前方案开发，开发完成再部署"
+  candidate: 5467a31724f298eecc229b4479edf2f9e2735288
+  build: v4-5b30e36f08b9
+  evidence: runs/ai-tool-revision/unified-integration/合入与回归.md
+  verified: "Hook 43 项、Python 151 项、替身浏览器、DeepSeek 11 条分类及操作点选与发布复开、Claude Sonnet 5.5 增量复审"
+  documentation_fix: "392146c9488d800d621861076e390d7ceefa7308，仅 OpenAPI 会话约定，实测 401/409/404"
+  independent_result: "5467a31 退回：日期误问、必填误降级；未写旧数据，未部署"
+  followup_candidate: "bb0a9d5d5b382f3f7738cdaa4d47911829cb7375 / v4-ee53b3f92d2c"
+  followup_state: "Claude 复审及独立本地验收通过，主干已快进到 bb0a9d5，实际运行同一构建"
+  followup_handoff: "本机产品验收通过，体验入口 http://127.0.0.1:52337/，实际使用者已在当前会话确认示例页面外观"
+  product_evidence: runs/ai-tool-revision/product-bb0a9d5/产品验收回执.md
+  appearance_choice: "2026-11-13，用户在当前 Codex 会话回复可以，确认 bb0a9d5 的生成示例外观。确认来源为本会话。飞书题号 Q-469A0BACE9C6 仅作历史记录。"
+
+ac004_auth_visual:
+  acceptance: "AC-004 / TEST-004，普通工作台登录与邀请码注册"
+  design: design/root-sign-in-review.html
+  candidate: "bc2a9ff5f8d91e8dcf921a7e209be8dc0ddf0ee8 / v4-e383d72e028d"
+  red: runs/ac004-auth-visual/red.log
+  browser: runs/ac004-auth-visual/final/workbench-check.json
+  wiki: "root-architecture-generation.md:3–9，沿用原会话和入口测试"
+  historical_status: "Claude Sonnet 5.5 通过，固定候选已提交独立验收。"
+
+ai_record_code_release:
+  scope: "新建台账和看板默认由 AI 生成页面和交互代码。旧台账不迁移。"
+  candidate: "27d22671c0c605a7c5b80087266c8a95f60631a8 / v4-dfae06b7d9f2"
+  evidence: runs/ai-ledger-code/实现与验证.md
+  independent_result: "27d2267 被独立验收退回。ROOT-GEN-RECORD-01 为表头 scope 属性被误拒。"
+  fix_candidate: "0ce9ede9aa09437605e237500e01d679cc7aa388 / v4-3d5a75dab141"
+  historical_status: "原话真实生成、157 项全量及 Claude 复审通过，修复候选已提交独立复验。"

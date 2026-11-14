@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ROOT 官网配色对比</title>
+<style>
+  :root { font: 15px/1.5 system-ui, "PingFang SC", sans-serif; color: #19233f; background: #fff; }
+  * { box-sizing: border-box; }
+  body { margin: 0; height: 100dvh; display: grid; grid-template-rows: auto minmax(0, 1fr); }
+  header { padding: 12px clamp(12px, 4vw, 40px); border-bottom: 1px solid #dce3ef; background: #f4f6fa; }
+  h1 { font-size: 17px; margin: 0 0 8px; }
+  .controls { display: flex; flex-wrap: wrap; gap: 6px; }
+  button { min-height: 44px; padding: 6px 12px; font: inherit; color: #233a76; border: 1px solid #c5d0e2; background: #fff; border-radius: 8px; cursor: pointer; }
+  button[aria-pressed="true"] { background: #233a76; border-color: #233a76; color: #fff; font-weight: 650; }
+  :focus-visible { outline: 2px solid #4266aa; outline-offset: 2px; }
+  p { margin: 6px 0 0; color: #4b5770; }
+  iframe { display: block; width: 100%; height: 100%; border: 0; }
+  @media (max-width: 480px) { button { padding-inline: 8px; font-size: 14px; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>官网配色对比</h1>
+  <div class="controls" role="group" aria-label="配色方向">
+    <button type="button" data-palette="a" aria-pressed="false">A · 更克制</button>
+    <button type="button" data-palette="b" aria-pressed="false">B · 突出试玩</button>
+    <button type="button" data-palette="refined" aria-pressed="true">B · 调整后</button>
+    <button type="button" id="jump">看试玩区</button>
+    <button type="button" id="top">看首屏</button>
+  </div>
+  <p>各版共用深蓝首屏。切换配色时保留当前浏览位置。</p>
+</header>
+<iframe id="site" title="ROOT 官网配色预览" src="root-public-site-review.html?v=11&amp;review=palette"></iframe>
+<script>
+  const frame = document.querySelector('#site');
+  const choices = [...document.querySelectorAll('[data-palette]')];
+  let palette = 'refined';
+  let initial = true;
+
+  function applyPalette() {
+    const site = frame.contentDocument?.querySelector('#root-public-review');
+    if (site) site.dataset.palette = palette;
+    choices.forEach(button => button.setAttribute('aria-pressed', String(button.dataset.palette === palette)));
+  }
+  function jumpTo(id) {
+    frame.contentDocument?.getElementById(id)?.scrollIntoView({ block: 'start' });
+  }
+  choices.forEach(button => button.addEventListener('click', () => {
+    palette = button.dataset.palette;
+    applyPalette();
+  }));
+  frame.addEventListener('load', () => {
+    applyPalette();
+    if (initial) {
+      initial = false;
+      frame.contentWindow.scrollTo(0, 0);
+    }
+  });
+  document.querySelector('#jump').addEventListener('click', () => jumpTo('root-site-example'));
+  document.querySelector('#top').addEventListener('click', () => frame.contentWindow.scrollTo(0, 0));
+</script>
+</body>
+</html>

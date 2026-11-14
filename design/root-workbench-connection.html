@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ROOT 工作台 · 断线恢复状态稿</title>
+<style>
+  :root { color-scheme: light; color: #1d1d22; background: #fafafe; font: 14px/1.6 system-ui, "PingFang SC", sans-serif;
+    --paper: #fafafe; --line: #dfe1e9; --muted: #565969; --blue: #3f589c; --serif: "Songti SC", STSong, serif; }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: clamp(10px, 2vw, 24px); }
+  main { width: 100%; margin: 0; padding: clamp(12px, 2vw, 24px); border-radius: 22px;
+    background: radial-gradient(ellipse at 86% 100%, #e4e8fc, transparent 70%), linear-gradient(130deg, #f7f7fc, #eceefa); }
+  h1, h2, p { margin: 0; }
+  h1, h2 { font-family: var(--serif); font-weight: 650; line-height: 1.25; }
+  h1 { font-size: clamp(21px, 3vw, 31px); }
+  h2 { font-size: clamp(22px, 3vw, 33px); }
+  button, textarea { color: inherit; font: inherit; }
+  button { cursor: pointer; min-height: 36px; padding: 6px 12px; border: 1px solid var(--line);
+    border-radius: 8px; background: var(--paper); text-align: start; }
+  button:disabled { cursor: default; opacity: .55; }
+  button:focus-visible, textarea:focus-visible, summary:focus-visible { outline: 2px solid #506bb7; outline-offset: 3px; }
+  .brandbar, .preview { border: 1px solid var(--line); background: var(--paper); }
+  .brandbar { display: flex; align-items: center; gap: 9px; min-height: 56px; border-radius: 999px; padding: 5px 16px; }
+  .brand { font-size: 23px; font-weight: 900; letter-spacing: -.09em; }
+  .brand-dot, .status-dot { flex: none; width: 8px; height: 8px; background: #6883d0; border-radius: 2px; }
+  .account { margin-inline-start: auto; color: var(--muted); }
+  .layout { display: grid; grid-template-columns: minmax(242px, .32fr) minmax(0, .68fr); gap: clamp(16px, 3vw, 32px); margin-block-start: 23px; }
+  .left { min-width: 0; }
+  .eyebrow { color: var(--blue); }
+  .composer { padding-block-start: 14px; border-block-start: 1px solid var(--line); }
+  .eyebrow { margin-bottom: 5px; font-size: 11px; font-weight: 700; letter-spacing: .12em; }
+  .task-progress { margin-block-start: 16px; padding: 11px; border: 1px solid var(--line); border-radius: 10px; background: var(--paper); }
+  .task-progress h3 { font-size: 15px; margin: 0; }
+  .state { display: grid; gap: 7px; padding: 9px; margin-block-start: 8px; border: 1px solid #c7d0ee; border-radius: 9px; background: #edf0fb; }
+  .state p, .subtle, .help { color: var(--muted); font-size: 13px; }
+  .state[data-tone="error"] { border-color: #ddbbb5; background: #fff4f1; }
+  .state[data-tone="ready"] { border-color: #d3ddd4; background: #f1f7f2; }
+  .state-head, .preview-head { display: flex; align-items: baseline; gap: 7px; flex-wrap: wrap; }
+  .state-head strong { overflow-wrap: anywhere; }
+  .spinner { flex: none; width: 12px; height: 12px; border: 2px solid #bac7ea; border-top-color: #3f589c;
+    border-radius: 50%; align-self: center; animation: spin 900ms linear infinite; }
+  @keyframes spin { to { transform: rotate(1turn); } }
+  .state-action, .primary { width: fit-content; color: white; background: #202127; border-color: #202127; }
+  label { display: block; font-weight: 650; }
+  textarea { display: block; width: 100%; min-height: 112px; margin: 5px 0 9px; padding: 9px; resize: vertical;
+    border: 1px solid #adb1c0; border-radius: 9px; background: var(--paper); }
+  .help { margin-block-start: 8px; }
+  .preview { min-width: 0; min-height: 355px; padding: clamp(16px, 3vw, 26px); border-radius: 22px; }
+  .preview-head { justify-content: space-between; align-items: center; padding-block-end: 14px; border-bottom: 1px solid var(--line); }
+  .preview-status { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; }
+  .records { width: 100%; margin-top: 12px; border-collapse: collapse; font-size: 13px; }
+  .records th, .records td { padding: 8px 5px; text-align: start; border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }
+  .records th { color: var(--muted); font-weight: 650; }
+  details { margin-block-start: 20px; padding: 9px 11px; border: 1px dashed #b4bfdc; border-radius: 9px; }
+  summary { cursor: pointer; font-weight: 650; }
+  .controls { display: flex; flex-wrap: wrap; gap: 5px; margin-block-start: 7px; }
+  .controls button[aria-pressed="true"] { color: var(--blue); border-color: #6883d0; background: #edf0fb; }
+  [hidden] { display: none !important; }
+  @media (max-width: 650px) {
+    .layout { grid-template-columns: minmax(0, 1fr); }
+    .brandbar { padding-inline: 11px; border-radius: 16px; }
+    .preview { min-height: 230px; }
+  }
+  @media (pointer: coarse) { button { min-height: 44px; } textarea { font-size: 16px; } }
+  @media (prefers-reduced-motion: reduce) { .spinner { animation: none; } }
+
+  body { background:#f4f6fc; } .preview-status { color:#314b92; }
+</style>
+<link rel="stylesheet" href="root-workbench-nav.css">
+<link rel="stylesheet" href="root-visual-v4.css">
+<link rel="stylesheet" href="root-brand-blue.css">
+</head>
+<body class="root-visual brand-blue root-workbench-connection" style="padding:0">
+<div class="root-shell">
+  <aside class="root-sidebar">
+    <nav class="root-nav" aria-label="工作台导航">
+      <a href="root-new-tool-review.html" data-nav="new" aria-current="page">新建工具</a>
+      <a href="root-workbench-entry.html?section=idea" data-nav="idea">需求</a>
+      <a href="root-new-tool-review.html#my-tools" data-nav="tools">我的工具</a>
+    </nav>
+  </aside>
+<main>
+  <header class="brandbar"><span class="brand">ROOT</span><span class="brand-dot" aria-hidden="true"></span>工具工作台 <span class="account">体验账号</span></header>
+  <div class="layout">
+    <div class="left">
+      <section class="composer" aria-labelledby="composer-title">
+        <p class="eyebrow">新建工具</p>
+        <h1 id="composer-title">你想做什么工具？</h1>
+        <label for="requirement">工具需求</label>
+        <textarea id="requirement" rows="4">做一个交付跟进板，可以按负责人筛选，刷新后保留记录。</textarea>
+        <button id="generate" class="primary" type="button" disabled>直接生成</button>
+        <section id="task-progress" class="task-progress" aria-labelledby="task-title">
+          <h3 id="task-title">生成任务</h3>
+          <p id="task-status" class="help"></p>
+          <div id="connection" class="state" data-tone="wait" hidden>
+            <div class="state-head"><span id="spinner" class="spinner" aria-hidden="true"></span><strong id="status-title" role="status"></strong></div>
+            <p id="status-copy"></p>
+            <button id="recovery-action" class="state-action" type="button" hidden></button>
+          </div>
+        </section>
+      </section>
+    </div>
+    <section class="preview" id="preview" aria-labelledby="preview-title" hidden>
+      <p class="eyebrow">工具预览</p>
+      <header class="preview-head">
+        <h2 id="preview-title">交付跟进板</h2>
+        <span class="preview-status"><span class="status-dot" aria-hidden="true"></span><span id="preview-status">上次工具仍可查看</span></span>
+      </header>
+      <table class="records"><thead><tr><th>事项</th><th>负责人</th><th>状态</th></tr></thead><tbody>
+        <tr><td>核对演示入口</td><td>小林</td><td>待完成</td></tr><tr><td>准备交付样表</td><td>小陈</td><td>已完成</td></tr>
+      </tbody></table>
+      <p id="preview-help" class="help">已显示的记录保留在页面中。连接恢复前暂不能确认新的保存。</p>
+    </section>
+  </div>
+  <details open>
+    <summary>评审状态切换</summary>
+    <p class="subtle">原型只模拟状态。按钮不发送模型、生成或保存请求。</p>
+    <div id="state-controls" class="controls" aria-label="评审状态"></div>
+  </details>
+</main>
+</div>
+<script>
+  const state = {
+    idle: ['', '', 'wait', false, '', '暂无进行中的任务。'],
+    normal: ['', '', 'wait', false, '', '原任务 · 正在生成工具。'],
+    reconnecting: ['连接中断，正在尝试恢复', '当前输入和工具仍在。恢复后会先核对原操作。', 'wait', true, '', '原操作结果待确认。'],
+    checking: ['连接已恢复，正在核对原操作', '正在确认原任务或保存结果，请稍候。', 'wait', true, '', '正在查找原操作。'],
+    resumed: ['', '', 'ready', false, '', '已找到原任务 · 正在生成工具。'],
+    saved: ['已确认工具保存成功', '已打开这次保存的工具。', 'ready', false, '', '本次操作已完成。'],
+    unknown: ['连接已恢复，保存结果待确认', '当前版本仍保留。请核对本次保存后继续。', 'wait', false, '核对保存', '保存确认尚未完成。'],
+    timeout: ['连接仍未恢复', '已等约 20 秒。输入和已有工具仍在。', 'error', false, '重试连接', '保留原操作，恢复后核对。'],
+    failed: ['生成阶段未完成', '模型返回不完整，输入已保留。可以继续同一任务。', 'error', false, '', '原任务 · 等待继续生成。'],
+  };
+  const labels = {idle:'空闲',normal:'正常生成',reconnecting:'连接中断',checking:'恢复后核对',resumed:'原任务继续',saved:'已找回保存',unknown:'保存待确认',timeout:'持续断线',failed:'模型失败'};
+  const get = id => document.getElementById(id);
+  let current = 'reconnecting';
+  let simulation = null;
+  const buttons = Object.keys(state).map(key => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.textContent = labels[key];
+    button.addEventListener('click', () => {
+      clearTimeout(simulation);
+      show(key);
+    });
+    get('state-controls').append(button);
+    return button;
+  });
+  function show(key) {
+    current = key;
+    const [title, copy, tone, busy, action, task] = state[key];
+    get('connection').hidden = !title;
+    get('status-title').textContent = title;
+    get('status-copy').textContent = copy;
+    get('connection').dataset.tone = tone;
+    get('spinner').hidden = !busy;
+    get('recovery-action').textContent = action;
+    get('recovery-action').hidden = !action;
+    get('task-status').textContent = task;
+    get('requirement').readOnly = busy || key === 'normal' || key === 'resumed' || key === 'unknown';
+    get('generate').disabled = !['failed', 'saved', 'idle'].includes(key);
+    get('generate').textContent = key === 'failed' ? '继续生成' : '直接生成';
+    get('preview').hidden = !['reconnecting', 'checking', 'saved', 'unknown', 'timeout', 'failed'].includes(key);
+    get('preview-status').textContent = key === 'saved' ? '本次工具已保存' : key === 'unknown' ? '等待同步' : '上次工具仍可查看';
+    get('preview-help').textContent = key === 'saved' ? '工具和记录已核对，可继续使用。' :
+      key === 'unknown' ? '暂时暂停该工具的写入，等保存状态确认后继续。' :
+        '原记录保留在页面中。连接不可用时，新的修改不能确认保存。';
+    buttons.forEach((button, index) => button.setAttribute('aria-pressed', String(Object.keys(state)[index] === key)));
+  }
+  get('recovery-action').addEventListener('click', () => {
+    const destination = current === 'unknown' ? 'saved' : 'resumed';
+    show('checking');
+    simulation = setTimeout(() => show(destination), 700);
+  });
+  get('generate').addEventListener('click', () => show('resumed'));
+  show(current);
+</script>
+</body>
+</html>
