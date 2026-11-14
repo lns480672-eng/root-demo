@@ -466,6 +466,55 @@ class StagedReconnectHTTP(StagedHTTPFixture):
 
 
 class StagedHTTP(StagedHTTPFixture):
+    def test_generation_history_filters_before_limit_and_revision_history_stays_with_owner_tool(self):
+        owner_name, other_name = "history-owner", "history-outsider"
+        owner, other = self.account(owner_name), self.account(other_name)
+        tool_a, tool_b, other_tool = "run-history1", "run-history2", "run-history3"
+        with self.store.connection(write=True) as db:
+            account = {row["username"]: row["id"] for row in db.execute(
+                "SELECT id,username FROM accounts WHERE username IN (?,?)", (owner_name, other_name))}
+            db.executemany("INSERT INTO tools(id,owner,title,published) VALUES (?,?,?,1)", [
+                (tool_a, account[owner_name], "工具甲"), (tool_b, account[owner_name], "工具乙"),
+                (other_tool, account[other_name], "他人工具"),
+            ])
+            now = time.time()
+
+            def add_task(username, label, rank, tool=None, state="failed", expired=False):
+                identifier = uuid4().hex
+                db.execute("""INSERT INTO staged_jobs
+                    (id,owner,request_id,requirement,head,expires,updated_at,state)
+                    VALUES (?,?,?,?,?,?,?,?)""",
+                    (identifier, account[username], uuid4().hex, label, "0" * 40,
+                    now + (-60 if expired else 600), now + rank, state))
+                if tool:
+                    db.execute("INSERT INTO staged_revisions VALUES (?,?,?,?,?)",
+                               (identifier, tool, 1, "0" * 64, "{}"))
+                return identifier
+
+            new_tasks = [
+                add_task(owner_name, f"新建 {rank}", rank, state="complete" if rank % 2 else "failed",
+                         expired=bool(rank % 2))
+                for rank in range(35)
+            ]
+            a_tasks = [add_task(owner_name, f"修改甲 {rank}", 100 + rank, tool_a) for rank in range(32)]
+            b_tasks = [add_task(owner_name, f"修改乙 {rank}", 200 + rank, tool_b) for rank in range(3)]
+            other_new = add_task(other_name, "他人新建", 300)
+            other_revision = add_task(other_name, "他人修改", 400, other_tool)
+            active = add_task(owner_name, "原工具待检查预览", 500, tool_a, state="complete")
+
+        def ids(path, auth):
+            status, body, _ = self.request(path, auth=auth)
+            self.assertEqual(status, 200, body)
+            return [item["id"] for item in body["tasks"]]
+
+        self.assertEqual(ids("/api/staged/history", owner), new_tasks[-30:][::-1])
+        self.assertEqual(ids("/api/staged/history", other), [other_new])
+        self.assertEqual(ids("/api/staged", owner), [active])
+        self.assertEqual(ids(f"/api/tools/{tool_a}/revision-tasks", owner), a_tasks[-29:] + [active])
+        self.assertEqual(ids(f"/api/tools/{tool_b}/revision-tasks", owner), b_tasks)
+        self.assertEqual(ids(f"/api/tools/{other_tool}/revision-tasks", other), [other_revision])
+        self.assertEqual(self.request(f"/api/tools/{tool_a}/revision-tasks", auth=other)[0], 404)
+
     def test_failed_revision_can_be_abandoned_without_changing_tool(self):
         owner = self.account("revision-abandon-owner")
         task = self.gen(owner, "计算两个数字")[1]["task"]["id"]
@@ -498,7 +547,8 @@ class StagedHTTP(StagedHTTPFixture):
         self.assertEqual((failed["state"], failed["reason"], failed["resumable"]),
                          ("failed", "staged_runtime_failed", False))
         history = self.request("/api/staged/history", auth=owner)[1]["tasks"]
-        self.assertIn(failed, history)
+        self.assertNotIn(failed, history)
+        self.assertIn(failed, self.request(tool + "/revision-tasks", auth=owner)[1]["tasks"])
         self.assertEqual(self.request(path + "/cancel-revision", {"nonce":"wrong"}, owner)[0], 409)
         abandoned = self.request(path + "/cancel-revision", {"nonce":failed["issue"]}, owner)
         self.assertEqual((abandoned[0], abandoned[1]["task"]["state"]), (200, "cancelled"))

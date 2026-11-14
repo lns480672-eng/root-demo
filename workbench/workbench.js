@@ -333,8 +333,12 @@ function rememberStagedTask(task) {
 function updateToolRevisionLog(task) {
   if (!editing || !active || task?.baseToolId !== active.id) return;
   const index = toolRevisionTasks.findIndex(item => item.id === task.id);
-  if (index < 0) toolRevisionTasks.push(task);
-  else toolRevisionTasks[index] = task;
+  if (index < 0) {
+    toolRevisionTasks.push(task);
+    toolRevisionTasks = toolRevisionTasks.slice(-30);
+  } else {
+    toolRevisionTasks[index] = task;
+  }
 }
 
 function revisionMessage(role, text) {
@@ -364,10 +368,11 @@ function renderToolRevisionLog(restriction, canAct) {
   if (dialog.hidden) return;
   byId('tool-revision-status').textContent = toolRevisionStatus;
   const list = byId('tool-revision-log');
-  const signature = JSON.stringify([toolRevisionTasks, selectedStagedId, restriction, canAct, profile?.nickname ?? session.user]);
+  const signature = JSON.stringify([toolRevisionTasks, selectedStagedId, restriction, canAct, stagedPendingId, profile?.nickname ?? session.user]);
   if (list.dataset.signature === signature) return;
   list.dataset.signature = signature;
   const focusedTask = document.activeElement?.dataset.revisionTask;
+  const focusedRestore = document.activeElement?.dataset.bringBackRevision;
   list.replaceChildren(...toolRevisionTasks.map(task => {
     const row = document.createElement('li');
     row.append(revisionMessage('user', task.requirement));
@@ -390,10 +395,20 @@ function renderToolRevisionLog(restriction, canAct) {
       button.setAttribute('aria-current', String(task.id === selectedStagedId));
       row.append(button);
     }
+    if (['failed', 'expired', 'exhausted', 'unsupported'].includes(task.state)) {
+      const restore = document.createElement('button');
+      restore.type = 'button';
+      restore.dataset.bringBackRevision = task.id;
+      restore.textContent = '带回需求';
+      restore.disabled = !canAct || Boolean(stagedPendingId);
+      row.append(restore);
+    }
     return row;
   }));
-  if (focusedTask && canAct) {
-    [...list.querySelectorAll('button')].find(button => button.dataset.revisionTask === focusedTask)?.focus();
+  if (canAct && (focusedTask || focusedRestore)) {
+    [...list.querySelectorAll('button')].find(button => focusedRestore
+      ? button.dataset.bringBackRevision === focusedRestore
+      : button.dataset.revisionTask === focusedTask)?.focus();
   }
 }
 
@@ -405,7 +420,7 @@ async function loadToolRevisionLog(id) {
     const latest = new Map(toolRevisionTasks.map(task => [task.id, task]));
     toolRevisionTasks = result.tasks.map(task => latest.get(task.id) || task);
     for (const task of result.tasks) latest.delete(task.id);
-    toolRevisionTasks.push(...latest.values());
+    toolRevisionTasks = [...toolRevisionTasks, ...latest.values()].slice(-30);
     toolRevisionStatus = '';
   } catch {
     if (request !== toolRevisionRead || !editing || active?.id !== id) return;
@@ -415,9 +430,22 @@ async function loadToolRevisionLog(id) {
 }
 
 byId('tool-revision-log').addEventListener('click', event => {
-  const id = event.target.closest('button')?.dataset.revisionTask;
+  const button = event.target.closest('button');
+  const restoreId = button?.dataset.bringBackRevision;
+  const id = button?.dataset.revisionTask || restoreId;
   const task = toolRevisionTasks.find(item => item.id === id);
   if (!task || !editing || active?.id !== task.baseToolId || phase !== 'idle') return;
+  if (restoreId) {
+    if (stagedPendingId || pendingPublication || !networkIsolated) return;
+    clearStagedSelection();
+    stagedSubmission = null;
+    requirement.value = task.requirement;
+    failure = '';
+    setRevisionView('preview');
+    requirement.focus();
+    render();
+    return;
+  }
   clearStagedSelection();
   rememberStagedTask(task);
   selectedStagedId = id;
