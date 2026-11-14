@@ -19,7 +19,7 @@ function toolIdFromLocation() {
 const standaloneToolId = toolIdFromLocation();
 const standalone = standaloneToolId !== null;
 const coachmark = byId('entry-coachmark');
-const primaryNavigation = ['new-tool', 'idea-entry', 'drafts-entry', 'library-entry'];
+const primaryNavigation = ['new-tool', 'idea-entry', 'library-entry'];
 requirement.closest('.elys-requirement').append(coachmark);
 const toolHistory = byId('tool-version-panel');
 const restoreDialog = byId('restore-version-dialog');
@@ -46,7 +46,7 @@ let restored = false;
 let editing = false;
 let pendingPublication = null;
 let entryMode = 'direct';
-let assistantDestination = 'idea-entry';
+let draftTaskTitle = '';
 let trial = null;
 let trialRequest = 0;
 const validStagedId = id => typeof id === 'string' && /^[a-f0-9]{32}$/.test(id);
@@ -135,7 +135,7 @@ function render() {
   const browsing = !standalone && !assistantOpen && (workspace.dataset.mode === 'browse' || editing);
   library.hidden = !browsing;
   byId('library-entry').setAttribute('aria-expanded', String(browsing));
-  markNavigation(profileRoute() ? null : assistantOpen ? assistantDestination : browsing ? 'library-entry' : 'new-tool');
+  markNavigation(profileRoute() ? null : assistantOpen ? 'idea-entry' : browsing ? 'library-entry' : 'new-tool');
   for (const id of primaryNavigation) byId(id).disabled = blocked || (starting && id === 'library-entry');
   byId('new-tool-options').hidden = !atStart && !tableMode;
   previewSection.hidden = !standalone && !browsing && !editing && !syncing && !stagedPendingId && (!showingResult || assistantOpen);
@@ -223,7 +223,6 @@ function render() {
   form.hidden = tableMode;
   byId('table-entry').setAttribute('aria-pressed', String(tableMode));
   byId('table-entry').disabled = byId('assistant-entry').disabled = blocked;
-  byId('guide-start').disabled = blocked || editing;
   renderStagedTasks(blocked, restriction);
 }
 
@@ -459,7 +458,7 @@ function renderStagedHistory(blocked) {
       const original = document.createElement('p');
       const reason = document.createElement('p');
       const button = document.createElement('button');
-      title.textContent = stagedStatus(task);
+      title.textContent = task.title ? stagedStatus(task) + " · " + task.title : stagedStatus(task);
       original.textContent = task.requirement;
       reason.className = 'auth-muted';
       reason.textContent = stagedReason(task) + (task.issue && !generationRestrictions.has(task.reason)
@@ -524,7 +523,7 @@ function renderStagedTasks(blocked, restriction) {
   list.hidden = editing;
   byId('staged-list-status').hidden = editing && !stagedLoadError;
   const activeTasks = stagedTasks.filter(isActiveStagedTask);
-  const signature = JSON.stringify(activeTasks.map(item => [item.id, item.requirement, stagedStatus(item, restriction)]));
+  const signature = JSON.stringify(activeTasks.map(item => [item.id, item.title || item.requirement, stagedStatus(item, restriction)]));
   if (list.dataset.signature !== signature) {
     list.dataset.signature = signature;
     const focusedId = document.activeElement?.dataset.taskId;
@@ -533,7 +532,7 @@ function renderStagedTasks(blocked, restriction) {
       const button = document.createElement('button');
       button.type = 'button';
       button.dataset.taskId = item.id;
-      button.textContent = (stagedStatus(item, restriction) || '待确认') + ' · ' + item.requirement.slice(0, 70);
+      button.textContent = (stagedStatus(item, restriction) || '待确认') + ' · ' + (item.title || item.requirement).slice(0, 70);
       row.append(button);
       return row;
     }));
@@ -551,6 +550,13 @@ function renderStagedTasks(blocked, restriction) {
   byId('staged-refresh').hidden = !stagedLoadError && !(isActiveStagedTask(task) && task.resumable && quotaBlocked);
   byId('staged-refresh').disabled = phase !== 'idle';
   byId('staged-detail').hidden = !task && !stagedPendingId && !stagedActivity && !stagedMessage;
+  const original = byId('staged-original');
+  original.hidden = !task?.title;
+  const originalText = task?.title ? task.requirement : '';
+  if (original.lastElementChild.textContent !== originalText) {
+    original.open = false;
+    original.lastElementChild.textContent = originalText;
+  }
   const status = byId('staged-status');
   const statusText = stagedActivity || (stagedPendingId ? '保存结果待核对' : stagedStatus(task, restriction));
   if (status.textContent !== statusText) status.textContent = statusText;
@@ -689,7 +695,7 @@ async function restoreStagedRequirement(task, source) {
       return false;
     }
   }
-  beginComposition(Boolean(task.baseToolId), task.requirement, task.category);
+  beginComposition(Boolean(task.baseToolId), task.requirement, task.category, true, task.title);
   return true;
 }
 
@@ -869,20 +875,14 @@ const tableImport = setupTableImport({
 const requirementAssistant = setupRequirementAssistant({
   request: workspaceApi,
   offerStorageKey: () => 'root:assistant-offer:' + session.marker,
-  onViewChange: view => {
-    if (view === 'drafts') assistantDestination = 'drafts-entry';
-    else if (view === 'idea') assistantDestination = 'idea-entry';
-    if (!byId('assistant-panel').hidden) markNavigation(assistantDestination);
+  onViewChange: () => {
+    if (!byId('assistant-panel').hidden) markNavigation('idea-entry');
   },
-  onBuild: text => beginComposition(false, text),
-  onExit: () => {
-    requirementAssistant.close();
-    render();
-    byId(assistantDestination).focus();
-  },
+  onBuild: (text, title) => beginComposition(false, text, 'auto', true, title),
 });
 
 byId('table-entry').addEventListener('click', () => {
+  draftTaskTitle = '';
   clearStagedSelection();
   editing = false;
   failure = '';
@@ -895,20 +895,11 @@ function openAssistant(destination) {
   clearStagedSelection();
   dismissCoachmark();
   requirementAssistant.open(destination);
-  assistantDestination = destination === 'drafts' ? 'drafts-entry' : 'idea-entry';
   render();
 }
 
 byId('idea-entry').addEventListener('click', () => openAssistant());
 byId('assistant-entry').addEventListener('click', () => openAssistant());
-byId('drafts-entry').addEventListener('click', () => openAssistant('drafts'));
-byId('guide-start').addEventListener('click', () => {
-  if (phase !== 'idle' || pendingPublication || stagedPendingId || editing) return;
-  byId('account').open = false;
-  beginComposition(false, requirement.value, byId('generation-category').value, false);
-  byId('new-tool').focus();
-  showCoachmark();
-});
 function versionRecord({ version, note, current, date, label, build }) {
   const row = document.createElement('li');
   const header = document.createElement('div');
@@ -1044,7 +1035,7 @@ byId('profile-link').addEventListener('click', event => {
   if (!profile) void readProfile();
   void refreshTrial();
 });
-for (const id of ['new-tool', 'idea-entry', 'drafts-entry', 'library-entry']) {
+for (const id of primaryNavigation) {
   byId(id).addEventListener('click', () => {
     if (!profileRoute()) return;
     history.replaceState(null, '', location.pathname + location.search);
@@ -2192,12 +2183,13 @@ form.addEventListener('submit', async event => {
     const text = requirement.value.trim();
     const version = editing ? active.version : undefined;
     const category = stagedEnabled && !editing ? byId('generation-category').value : undefined;
-    const submission = JSON.stringify([path, version, text, category]);
+    const submission = JSON.stringify([path, version, text, category, draftTaskTitle]);
     if (stagedEnabled && stagedSubmission?.submission !== submission) {
       stagedSubmission = { submission, id: crypto.randomUUID().replaceAll('-', '') };
     }
     const tool = await workspaceApi(path, {
       requirement: text, version, category,
+      title: stagedEnabled && !editing && draftTaskTitle ? draftTaskTitle : undefined,
       requestId: stagedEnabled ? stagedSubmission.id : undefined,
     }, stagedEnabled ? publicationTimeout : undefined);
     stagedSubmission = null;
@@ -2270,7 +2262,8 @@ async function selectTool(id, source) {
   }
 }
 
-function beginComposition(revise, value = '', category = 'auto', focus = true) {
+function beginComposition(revise, value = '', category = 'auto', focus = true, title = '') {
+  draftTaskTitle = title;
   requirementAssistant.close();
   byId('first-tool-saved').hidden = true;
   clearStagedSelection();
@@ -2292,6 +2285,7 @@ function beginComposition(revise, value = '', category = 'auto', focus = true) {
 byId('new-tool').addEventListener('click', () => beginComposition(false));
 byId('revise-tool').addEventListener('click', () => beginComposition(true));
 function browseLibrary(focus) {
+  draftTaskTitle = '';
   requirementAssistant.close();
   const trigger = byId(focus);
   byId('first-tool-saved').hidden = true;

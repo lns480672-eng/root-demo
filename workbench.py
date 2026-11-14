@@ -485,7 +485,7 @@ def serve(key, port, runs=generate.RUNS, *, generation_limits=(5, 30), analysis_
                 return
             if match := DRAFT_PATH.fullmatch(self.path):
                 value = data.get("text")
-                if key and isinstance(value, str) and key in value:
+                if key and any(isinstance(item, str) and key in item for item in (value, data.get("title"))):
                     with store.connection() as db:
                         store.session(db, token, self.marker())
                     raise ApiError(400, "invalid_draft_text", "请移除凭据后再保存。")
@@ -650,7 +650,7 @@ def serve(key, port, runs=generate.RUNS, *, generation_limits=(5, 30), analysis_
                 if admitted:
                     budget.finish_dispatch("analysis", dispatch_id, success=True)
                 if result["kind"] == "draft":
-                    budget.offer_analysis_draft(token, marker, round_id, request_id, result["text"])
+                    budget.offer_analysis_draft(token, marker, round_id, request_id, result["text"], result.get("title"))
                     result = {"kind": "draft_ready", "offerId": request_id}
                 else:
                     with store.connection() as db:
@@ -669,14 +669,14 @@ def serve(key, port, runs=generate.RUNS, *, generation_limits=(5, 30), analysis_
                     store.session(db, token, marker)
             requirement = data.get("requirement")
             requirement = requirement.strip() if isinstance(requirement, str) else ""
-            if not 0 < len(requirement) <= 2000 or (key and key in requirement):
+            if not 0 < len(requirement) <= 2000 or (key and (key in requirement or (isinstance(data.get("title"), str) and key in data["title"]))):
                 raise ApiError(400, "invalid_requirement", "请输入 1–2000 字的工具需求，避免填写凭据。")
             if not key:
                 self.error(503, "key_required", "请在本机服务配置 DeepSeek Key。")
                 return
             if staged:
                 task = staged.create(token, marker, requirement, data.get("requestId"),
-                                     tool_id=tool_id, version=data.get("version"), category=data.get("category", "auto"))
+                                     tool_id=tool_id, version=data.get("version"), category=data.get("category", "auto"), title=data.get("title"))
                 self.send_json(202, {"task":start_staged(token, marker, task["id"], resume=False)})
                 return
             model_input = None

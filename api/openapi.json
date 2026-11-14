@@ -3534,6 +3534,7 @@
       "Draft": {
         "type": "object",
         "properties": {
+          "title": {"type": ["string", "null"], "maxLength": 40},
           "id": {
             "type": "string",
             "format": "uuid",
@@ -3559,7 +3560,8 @@
           "id",
           "text",
           "revision",
-          "updatedAt"
+          "updatedAt",
+          "title"
         ]
       },
       "DraftList": {
@@ -3604,6 +3606,7 @@
       "SaveDraft": {
         "type": "object",
         "properties": {
+          "title": {"type": "string", "maxLength": 40, "description": "省略保留名称，空字符串清除。"},
           "text": {
             "type": "string",
             "minLength": 1,
@@ -4412,6 +4415,7 @@
       "StartGeneration": {
         "type": "object",
         "properties": {
+          "title": {"type": "string", "maxLength": 40, "description": "从需求草稿带入的任务名称；属于 requestId 的绑定内容。"},
           "requirement": {
             "type": "string",
             "minLength": 1,
@@ -4434,6 +4438,7 @@
       "StagedTask": {
         "type": "object",
         "properties": {
+          "title": {"type": "string", "maxLength": 40, "description": "草稿短名，普通直接生成时缺省。requirement 始终返回完整需求。"},
           "canRepair": {"type": "boolean"},
           "canSupplement": {"type": "boolean"},
           "repairs": {
@@ -5018,6 +5023,7 @@
       "EditableAnalysisDraft": {
         "type": "object",
         "properties": {
+          "title": {"type": "string", "maxLength": 40, "description": "模型建议的短名；旧回执可缺省。"},
           "kind": {
             "const": "draft"
           },

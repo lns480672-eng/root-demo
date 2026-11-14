@@ -1029,6 +1029,17 @@ class StagedHTTP(StagedHTTPFixture):
         self.assertEqual(self.request(tool, auth=owner)[1]["version"], 6)
         self.assertEqual(self.request("/api/trial", auth=owner)[1]["generation"]["used"], before + 5)
 
+    def test_named_requirement_task_preserves_full_request_and_replay_identity(self):
+        owner = self.account("draft-task-title")
+        request = {"requestId": uuid4().hex, "requirement": "计算两个数字并展示合计", "title": "快速合计"}
+        status, response, _ = self.request("/api/generate", request, owner)
+        self.assertEqual(status, 202)
+        task = response["task"]
+        self.assertEqual((task["title"], task["requirement"]), (request["title"], request["requirement"]))
+        self.assertEqual(self.request("/api/staged/" + task["id"], auth=owner)[1]["task"]["title"], request["title"])
+        self.assertEqual(self.request("/api/generate", request, owner)[1]["task"]["id"], task["id"])
+        self.assertEqual(self.request("/api/generate", {**request, "title": "新名称"}, owner)[0], 409)
+
     def test_generation_category_is_part_of_the_request_identity(self):
         auth = self.account("generation-category")
         path = "/api/generate"
