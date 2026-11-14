@@ -470,17 +470,37 @@ try {
     await generate(requirements[0]);
     const original = await activeTool();
     if (await visible('#open-generated-tool')) await click('#open-generated-tool');
+    const layoutEvidence = [];
     for (const width of [1440, 390]) {
       await cdp('Emulation.setDeviceMetricsOverride', {width,height:844,deviceScaleFactor:1,mobile:width===390});
       assert.equal(await visible('#tool-history'), false);
       assert.equal(await evaluate('document.querySelector("#revise-tool").textContent'), '修改');
       assert.equal(await evaluate('document.documentElement.scrollWidth <= innerWidth'), true);
-      if (width === 390) assert.equal(await evaluate(`(() => {
-        const title = document.querySelector('#preview-title').getBoundingClientRect();
-        const primary = document.querySelector('#revise-tool').getBoundingClientRect();
-        return primary.top >= title.bottom && Math.abs(primary.left - title.left) < 2;
-      })()`), true);
+      await evaluate('window.scrollTo(0, 0)');
       await screenshot('tool-actions-' + width);
+      const geometry = await evaluate(`(() => {
+        const box = selector => document.querySelector(selector).getBoundingClientRect().toJSON();
+        return {
+          title: box('#preview-title'),
+          primary: box('#revise-tool'),
+          standalone: box('#open-standalone'),
+          actions: box('.tool-heading .preview-actions'),
+          content: box('#preview iframe[data-tool]'),
+        };
+      })()`);
+      const { title, primary, standalone, actions, content } = geometry;
+      assert.ok(Math.abs(title.left - content.left) < 2, '工具名和工具预览应共享左边界');
+      if (width === 1440) {
+        assert.ok(Math.abs(content.width - 520) < 2, '桌面工具内容应沿用确认稿 520 px 的内容列');
+        assert.ok(Math.abs(actions.right - content.right) < 2, '桌面工具操作和工具预览应共享右边界');
+        assert.ok(primary.top < title.bottom && primary.bottom > title.top, '桌面修改操作应与工具名同排');
+        assert.ok(standalone.left >= primary.right && Math.abs(standalone.top - primary.top) < 2,
+          '桌面修改和独立打开操作应并排');
+      } else {
+        assert.ok(primary.top >= title.bottom && Math.abs(primary.left - content.left) < 2,
+          '390 px 修改操作应在工具名下方并对齐左边界');
+      }
+      layoutEvidence.push({width, geometry});
     }
     await type('#book', '历史版本保留的记录', original.context);
     await click('form button', original.context);
@@ -517,7 +537,7 @@ try {
       extraRows.forEach(extra => extra.remove());
       return scrollsInside;
     })()`), true);
-    evidence.tests.push({id:'AC-006/007/008', passed:true, versions:titles});
+    evidence.tests.push({id:'AC-006/007/008', passed:true, versions:titles, layout:layoutEvidence});
   } else if (process.argv.includes('--navigation-sorting')) {
     stage = 'NAV-01/02 tool creation and draft save ordering';
     await cdp('Page.navigate', {url:base});

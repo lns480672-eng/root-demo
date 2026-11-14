@@ -602,6 +602,12 @@ body:has(#auth:not([hidden])) { padding: 0; }
   .profile-quotas { grid-template-columns: 1fr; }
 }
 
+/* Keep the saved-tool heading and preview within the confirmed content column. */
+.elys-product:not(.standalone) .elys-workspace[data-mode="browse"]
+  .elys-preview:has(iframe[data-tool]) > :is(.elys-preview-header, .preview-frames, .record-save-status, .elys-preview-footer) {
+  width: 100%;
+  max-width: 520px;
+}
 .tool-heading {
   flex: 1 0 100%;
   min-width: 0;
@@ -610,7 +616,8 @@ body:has(#auth:not([hidden])) { padding: 0; }
   justify-content: space-between;
   gap: 10px;
 }
-#preview-title { margin: 0; overflow-wrap: anywhere; }
+#preview-title { flex: 1; min-width: 0; margin: 0; overflow-wrap: anywhere; }
+.tool-heading .preview-actions { flex: 0 0 auto; max-width: 100%; }
 .elys-product #revise-tool {
   min-height: 44px;
   padding: 8px 12px;
