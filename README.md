@@ -17,13 +17,9 @@
 
 ## Demo 生成范围
 
-「直接开发」支持按需求自动选择类别，也可以手动选择清单、台账或看板、计算工具、单页落地页和多页品牌官网。品牌官网的页面导航在工作台的隔离预览内运行，保存后可重新打开。生成失败的需求可从「生成历史」带回编辑，再提交时启动新任务。
+打开「新建工具」，输入需求后点「生成工具」。可以自动选择类别，也可以手动选择清单、台账或看板、计算工具、单页落地页和多页品牌官网。已有表格可以从「从表格生成」进入。生成失败时，可以从「生成历史」带回需求，编辑后重新提交。
 
-后续计划包括自定义组件、复杂交互、数据库、外部服务和公开发布。范围和验收条件见[生成能力路线图](docs/实施计划.md#生成能力路线图)。
-
-从自然语言新建台账或看板时，DeepSeek 根据已确认的字段生成 HTML、CSS 和 JavaScript。工作台在隔离环境中检查并运行生成结果，由服务端按账号和工具保存记录。
-
-新建的台账和看板可以通过「继续修改」调整页面 CSS。先查看改动，再确认应用到同一个工具，已有记录会保留。首发使用新运行目录，从当前版本新建工具开始体验。
+生成结果在隔离预览里运行。台账和看板的交互记录由服务端按账号和工具保存。已保存的工具可以独立打开，也可以点「修改」，先看候选，再确认应用。涉及已有记录的改动按工具类型和变更范围校验。具体的生成范围和验收条件见[实施计划](docs/实施计划.md#生成能力路线图)。
 
 ## 本机启动
 
@@ -39,11 +35,23 @@ python3 -B workbench.py --port 8773 --runs-dir runs/accounts-local
 python3 -B workbench.py --runs-dir runs/accounts-local --create-invite
 ```
 
-工作台使用该运行目录下的 SQLite 和生成产物。更换浏览器后登录同一账号即可恢复。第 4 版匿名浏览器数据与账号工作台独立保存。
+工作台使用该运行目录下的 SQLite 和生成产物。更换浏览器后登录同一账号即可恢复。
 
 预览需要执行 `Connection-Allowlist` 出站限制的浏览器，已在 Chrome 156 验证。工作台启动时会检查限制是否生效，检查失败时停用生成和已有工具预览。
 
 分阶段候选发布还需要服务端的 Node.js 和支持出站限制的 Chrome 或 Chromium。服务使用临时浏览器配置独立运行候选。可用 `ROOT_VERIFY_NODE` 和 `ROOT_VERIFY_CHROME` 指定程序路径。Linux 以非 root 服务用户运行，并启用 Chromium 沙箱。无法运行检查时，发布会等待可用的验证环境。
+
+### 体验 Pi 编程 Agent
+
+上面的命令启动默认工作台。要体验 0.9 的 Pi 编程 Agent 路径，先配置下方的 DeepSeek Key，再准备 Node.js 及包含 `pi-agent-core/dist/index.js` 和 `pi-ai/dist/index.js` 的模块目录。
+
+```sh
+ROOT_PI_MODULES=/path/to/pi-modules python3 -B workbench.py \
+  --coding-agent --port 8775 --runs-dir runs/agent-local
+python3 -B workbench.py --runs-dir runs/agent-local --create-invite
+```
+
+首次使用新的数据目录，在另一终端发邀请码。用终端显示的地址打开工作台。生产模式使用专门准备的数据目录，见[部署说明](deploy/whole/README.md#08-agent-升级验收)。
 
 ### 配置 DeepSeek
 
@@ -58,7 +66,7 @@ export DEEPSEEK_API_KEY
 python3 -B workbench.py --port 8773 --runs-dir runs/accounts-local
 ```
 
-输入不回显。同一个终端中重启可以继续使用该环境变量。只想临时启动一次时可用 `python3 workbench.py --prompt-key`。
+输入不回显。同一个终端中重启可以继续使用该环境变量。只想临时启动一次时，在启动命令中加 `--prompt-key`，并沿用同一端口和数据目录。
 
 **使用 macOS 钥匙串跨终端启动**
 
@@ -110,6 +118,6 @@ ROOT_TEST_INVITE="$(python3 -B workbench.py --runs-dir runs/accounts-local --cre
   node tests/verify-workbench.mjs --live
 ```
 
-验收范围和证据见[实施计划](docs/实施计划.md)。技术架构、账号边界和 AC-007 的预留设计见[账号与工具设计](docs/账号与工具设计.md)。
+验收范围和证据见[实施计划](docs/实施计划.md)。系统调用链见[技术架构](docs/技术架构.md)，账号与权限见[账号与工具设计](docs/账号与工具设计.md)。
 
 验收用例、关键断言、结果与截图入口见[测试证据索引](docs/测试证据索引.md)。
