@@ -10,11 +10,13 @@ form.addEventListener('submit', async event => {
   if (submit.disabled) return;
   const password = field('setup-password').value;
   if (password !== field('setup-password-again').value) {
+    feedback.dataset.error = 'true';
     feedback.textContent = '两次输入的密码不一致。';
     field('setup-password-again').focus();
     return;
   }
   submit.disabled = true;
+  delete feedback.dataset.error;
   feedback.textContent = '正在设置管理员…';
   try {
     const response = await fetch('/api/admin/setup', {
@@ -29,6 +31,7 @@ form.addEventListener('submit', async event => {
     });
     const result = await response.json();
     if (!response.ok) {
+      feedback.dataset.error = 'true';
       feedback.textContent = result.message;
       return;
     }
@@ -36,6 +39,7 @@ form.addEventListener('submit', async event => {
     history.replaceState(null, '', '/admin#invites');
     location.reload();
   } catch {
+    feedback.dataset.error = 'true';
     feedback.textContent = '暂时无法确认设置结果。若初始化码已失效，请重新打开后台，用刚设置的账号登录。';
   } finally {
     submit.disabled = false;

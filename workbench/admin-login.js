@@ -9,6 +9,7 @@ const submit = document.getElementById('admin-login-submit');
 try {
   if (sessionStorage.getItem('root:admin-expired')) {
     sessionStorage.removeItem('root:admin-expired');
+    feedback.dataset.error = 'true';
     feedback.textContent = '后台登录已过期，请重新登录。';
   }
 } catch {
@@ -19,6 +20,7 @@ form.addEventListener('submit', async event => {
   event.preventDefault();
   if (submit.disabled) return;
   submit.disabled = true;
+  delete feedback.dataset.error;
   feedback.textContent = '正在登录…';
   try {
     const response = await fetch('/api/admin/login', {
@@ -33,10 +35,12 @@ form.addEventListener('submit', async event => {
       location.reload();
       return;
     }
+    feedback.dataset.error = 'true';
     feedback.textContent = result.message;
     password.value = '';
     password.focus();
   } catch {
+    feedback.dataset.error = 'true';
     feedback.textContent = '暂时无法登录，请稍后重试。';
   } finally {
     submit.disabled = false;
