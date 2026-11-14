@@ -3,7 +3,7 @@ task:
   goal: "AC-001 和 AC-002：正式本地工作台生成两种工具，操作并刷新恢复；失败和重试期间旧工具可操作"
   out_of_scope: [AC-003, 发布, 公开仓库, 提交笔试, 独立验收]
   owner: 开发聊天
-  write_scope: [generate.py, workbench.py, workbench, tests, 实施计划.md, workbench-harness.yaml, runs]
+  write_scope: [generate.py, workbench.py, workbench, tests, docs/实施计划.md, workbench-harness.yaml, runs]
 baseline:
   observable_state: "第 4 版原型已确认；旧样例完成真实生成及隔离刷新；正式工作台入口尚缺"
   reproduction_or_command: "node tests/verify-workbench.mjs"
@@ -33,7 +33,7 @@ checkpoint:
   path: workbench-harness.yaml
   verified_facts: ["本地 Git 已初始化并核验忽略规则", "浏览器初始、生成、恢复、失败与重试已用替身验证", "可达探针只收到控制请求", "真实 DeepSeek 两条交互通过且保留请求 ID、用量及截图"]
   first_unfinished_oracle: 固定候选独立验收另行执行
-  changed_files: [.gitignore, generate.py, workbench.py, workbench, tests, README.md, 实施计划.md, workbench-harness.yaml]
+  changed_files: [.gitignore, generate.py, workbench.py, workbench, tests, README.md, docs/实施计划.md, workbench-harness.yaml]
   last_validation:
     tested_version: v4-0dcfaae42ca6
     environment: Python 3.9.6, Node 24.21.0, Chrome 156.0.8078.80
@@ -112,7 +112,7 @@ webrtc_checkpoint:
 
 accounts_checkpoint:
   objective: AC-004 到 AC-006 本地可提测
-  design: 账号与工具设计.md
+  design: docs/账号与工具设计.md
   strategy_boxes_used: 1
   slice: 邀请注册与会话 API
   next_action: 用 HTTP 测试先验证保护接口和邀请的 Red
