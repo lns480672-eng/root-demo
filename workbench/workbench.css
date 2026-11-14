@@ -574,3 +574,18 @@ body:has(#auth:not([hidden])) { padding: 0; }
 #staged-history-list li { display: grid; gap: 5px; padding: 8px; border: 1px solid var(--elys-line); border-radius: 9px; }
 #staged-history-list p { white-space: pre-wrap; overflow-wrap: anywhere; }
 #staged-history-list button { inline-size: fit-content; }
+
+.generation-result {
+  display: grid;
+  justify-items: start;
+  gap: 14px;
+  margin-block-start: 14px;
+  padding: clamp(12px, 2vw, 20px);
+  border: 1px solid var(--elys-line);
+  border-radius: 16px;
+  background: var(--elys-white);
+}
+.generation-result #generation-saved { margin: 0; font-weight: 700; }
+#generation-original { min-width: 0; max-width: 100%; }
+#generation-original p { margin-block-start: 8px; white-space: pre-wrap; overflow-wrap: anywhere; }
+#open-generated-tool { min-height: 44px; }
