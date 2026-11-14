@@ -145,7 +145,14 @@ function render() {
   markNavigation(profileRoute() ? null : assistantOpen ? 'idea-entry' : browsing ? 'library-entry' : 'new-tool');
   for (const id of primaryNavigation) byId(id).disabled = blocked || (starting && id === 'library-entry');
   byId('new-tool-options').hidden = !atStart && !tableMode;
-  previewSection.hidden = !standalone && !browsing && !editing && !syncing && !stagedPendingId && (!showingResult || assistantOpen);
+  const composingNewTool = !assistantOpen && !editing && workspace.dataset.mode === 'compose';
+  const failedNewTool = Boolean(failure) || stagedTask?.state === 'failed';
+  const showGenerationPreview = composingNewTool &&
+    (pending || Boolean(stagedActivity) || Boolean(stagedTask) || failedNewTool);
+  const awaitingNewPreview = showGenerationPreview && !syncing && !stagedPendingId &&
+    (!failedNewTool || !showingTool);
+  previewSection.hidden = !standalone && !browsing && !editing && !syncing && !stagedPendingId &&
+    !showingResult && !showGenerationPreview;
   const result = byId('generation-result');
   result.hidden = !showingResult || blocked || Boolean(failure);
   if (animateSavedResult && !result.hidden) {
@@ -169,7 +176,7 @@ function render() {
       labelTool(button, active.version);
     }
   }
-  byId('preview-title').textContent = currentTitle;
+  byId('preview-title').textContent = awaitingNewPreview ? '工具预览' : currentTitle;
   byId('composer-title').textContent = editing ? '修改对话' :
     atStart || entryMode !== 'direct' ? '你想做什么工具？' : '生成工具';
   byId('requirement-label').textContent = editing ? '修改「' + currentTitle + '」' : '工具需求';
@@ -178,9 +185,10 @@ function render() {
   standaloneLink.hidden = standalone || blocked || !showingTool || showingResult || !browsing || editing;
   if (standaloneLink.hidden) standaloneLink.removeAttribute('href');
   else standaloneLink.href = standaloneBack.getAttribute('href') + '#tool/' + active.id;
-  byId('revise-tool').hidden = standalone || syncing || !showingTool || showingResult || editing;
+  byId('revise-tool').hidden = standalone || syncing || !showingTool || showingResult || editing || awaitingNewPreview;
   renderRevisionViews();
-  byId('publish-lock').hidden = standalone || syncing || !showingTool || showingResult;
+  if (awaitingNewPreview) preview.hidden = true;
+  byId('publish-lock').hidden = standalone || syncing || !showingTool || showingResult || showGenerationPreview;
   byId('revise-tool').disabled = blocked || !configured;
   const sync = byId('sync-tool');
   sync.hidden = !syncing;
@@ -220,15 +228,16 @@ function render() {
     else item.removeAttribute('aria-current');
   }
   const status = byId('preview-status');
-  status.toggleAttribute('data-usable', showingTool && !pausingEdits && !stagedEditsPaused);
+  status.toggleAttribute('data-usable', showingTool && !awaitingNewPreview && !pausingEdits && !stagedEditsPaused);
   status.textContent = standalone && !active ? (starting ? '正在打开工具…' : '工具不可用')
     : stagedEditsPaused ? '待核对保存 · 暂停编辑'
-    : pausingEdits ? '待同步 · 暂停编辑' : active
-    ? pending || failure || syncing ? '上次工具仍可用' : tableMode ? '上次工具 · 可用' : restored ? '已恢复' : '已就绪'
+    : pausingEdits ? '待同步 · 暂停编辑' : awaitingNewPreview ? (failedNewTool ? '生成未完成' : '等待预览') : active
+    ? pending || failedNewTool || syncing ? '上次工具仍可用' : tableMode ? '上次工具 · 可用' : restored ? '已恢复' : '已就绪'
     : syncing ? '新工具待同步' : pending ? '等待预览' : '待生成';
-  byId('empty').hidden = standalone || showingTool || syncing;
-  byId('empty-title').textContent = pending ? '等待预览' : '还没有生成工具';
-  byId('empty-copy').textContent = pending ? '工具准备好后，会在这里显示。' : '输入需求后，工具会在这里出现。';
+  byId('empty').hidden = standalone || syncing || (showingTool && !awaitingNewPreview);
+  byId('empty-title').textContent = awaitingNewPreview && !failedNewTool ? '正在准备预览' : '还没有生成工具';
+  byId('empty-copy').textContent = awaitingNewPreview && !failedNewTool
+    ? '生成完成后可在这里试用。' : '输入需求后，工具会在这里出现。';
   byId('table-panel').hidden = !tableMode;
   byId('table-panel').inert = syncing;
   form.hidden = tableMode || showingResult;
@@ -2424,6 +2433,7 @@ function authMode(next) {
   registering = next;
   byId('auth-title').textContent = next ? '凭邀请码注册' : '登录工作台';
   byId('auth-submit').textContent = next ? '注册并进入' : '登录';
+  byId('auth-help').textContent = next ? '填写邀请码，创建你的工作台账号。' : '登录后继续使用你保存的工具。';
   byId('auth-mode').textContent = next ? '已有账号？登录' : '凭邀请码注册';
   byId('invite-field').hidden = !next;
   byId('invite').required = next;
