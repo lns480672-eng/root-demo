@@ -12,6 +12,9 @@ const revisionDialog = byId('tool-revision-dialog');
 const stagedPanel = byId('staged-panel');
 const stagedPanelNext = stagedPanel.nextElementSibling;
 const library = byId('saved-tools');
+const sidebarToolLimit = 9;
+const allTools = byId('all-tools');
+const toolSearch = byId('tool-search');
 const previewSection = preview.closest('section');
 const standaloneBack = byId('standalone-back');
 const standaloneLink = byId('open-standalone');
@@ -20,7 +23,20 @@ function toolIdFromLocation() {
     ? location.hash.slice('#tool/'.length) : null;
 }
 const standaloneToolId = toolIdFromLocation();
-const standalone = standaloneToolId !== null;
+function shareIdFromLocation() {
+  return ['/', '/workbench'].includes(location.pathname) && location.hash.startsWith('#share/')
+    ? location.hash.slice('#share/'.length) : null;
+}
+const discoveryShareId = shareIdFromLocation();
+const standalone = standaloneToolId !== null || discoveryShareId !== null;
+const discoveryBack = byId('discovery-back');
+const shareButton = byId('share-tool');
+const shareDialog = byId('share-dialog');
+let discoveredWorks = [];
+let currentShare = null;
+let sharing = false;
+let shareRead = 0;
+let discoveryRead = 0;
 const coachmark = byId('entry-coachmark');
 const primaryNavigation = ['new-tool', 'library-entry', 'idea-entry', 'history-entry'];
 requirement.closest('.elys-requirement').append(coachmark);
@@ -59,7 +75,7 @@ function isRunningStagedTask(task) {
 const validStagedId = id => typeof id === 'string' && /^[a-f0-9]{32}$/.test(id);
 const stagedStepLabels = {
   'revision-plan': '理解修改', spec: '理解需求', implementation: '生成工具', entry: '设计录入和明细',
-  filters: '设计筛选', summary: '设计统计', export: '设计导出', assemble: '组装工具',
+  filters: '设计筛选', summary: '设计统计', export: '设计导出', assemble: '准备预览',
 };
 const stagedStates = {
   queued: '等待执行', running: '正在生成工具', failed: '阶段未完成', interrupted: '生成已中断',
@@ -92,7 +108,6 @@ let toolRevisionStatus = '';
 let selectedStagedId = null;
 let stagedAutoId = null;
 let foregroundGeneration = null;
-let keepPreviousPreviewOnRetry = false;
 let animateSavedResult = false;
 let stagedRead = 0;
 let stagedTimer = null;
@@ -109,6 +124,8 @@ let revisionView = 'preview';
 let sourceRequest = 0;
 let sourceKey = '';
 let sourceFiles = [];
+let sourceIndex = 0;
+let sourceSnapshot = null;
 let repairTrial = null;
 let repairRequest = null;
 let supplementIssue = null;
@@ -150,10 +167,13 @@ function render() {
   generationCategory.disabled = blocked;
   const assistantOpen = !byId('assistant-panel').hidden;
   const showingHistory = stagedEnabled && !standalone && workspace.dataset.mode === 'history';
+  const showingAllTools = !standalone && !assistantOpen && !profileRoute() && workspace.dataset.mode === 'library';
   byId('history-entry').hidden = !stagedEnabled;
   byId('staged-history').hidden = !showingHistory;
-  const browsing = !standalone && !assistantOpen && (workspace.dataset.mode === 'browse' || editing);
+  const browsing = !standalone && !assistantOpen && (showingAllTools || workspace.dataset.mode === 'browse' || editing);
   library.hidden = !browsing;
+  allTools.hidden = !showingAllTools;
+  byId('view-all-tools').disabled = blocked || starting;
   byId('library-entry').setAttribute('aria-expanded', String(browsing));
   markNavigation(profileRoute() ? null : assistantOpen ? 'idea-entry' : showingHistory ? 'history-entry' : browsing ? 'library-entry' : 'new-tool');
   for (const id of primaryNavigation) byId(id).disabled = blocked || (starting && id === 'library-entry');
@@ -165,11 +185,13 @@ function render() {
   const failedNewTool = Boolean(failure) || generationFailed;
   const showGenerationPreview = composingNewTool &&
     (pending || Boolean(stagedActivity) || Boolean(stagedTask) || failedNewTool);
-  const waitingForNewTool = !tableMode && !failedNewTool && !stagedLoadError && !keepPreviousPreviewOnRetry &&
+  const waitingForNewTool = !tableMode && !failedNewTool && !stagedLoadError &&
     (runningNewTool || phase === 'preview' || stagedTask?.state === 'complete');
-  const awaitingNewPreview = showGenerationPreview && !syncing && !stagedPendingId &&
-    (!showingTool || waitingForNewTool);
-  previewSection.hidden = assistantOpen || (!standalone && !browsing && !editing && !syncing && !stagedPendingId &&
+  const awaitingStagedPreview = stagedEnabled && composingNewTool && !tableMode &&
+    (showGenerationPreview || syncing || Boolean(stagedPendingId));
+  const awaitingNewPreview = awaitingStagedPreview || (showGenerationPreview && !syncing && !stagedPendingId &&
+    (!showingTool || waitingForNewTool));
+  previewSection.hidden = assistantOpen || showingAllTools || (!standalone && !browsing && !editing && !syncing && !stagedPendingId &&
     !showingResult && !showGenerationPreview);
   const result = byId('generation-result');
   result.hidden = !showingResult || blocked || Boolean(failure);
@@ -182,10 +204,16 @@ function render() {
     }
   }
   const returnToLibrary = byId('return-to-library');
-  returnToLibrary.hidden = !active || showingResult || editing && stagedEnabled;
+  returnToLibrary.hidden = !active || showingResult || awaitingStagedPreview || editing && stagedEnabled;
   returnToLibrary.disabled = blocked;
-  let currentTitle = '工具预览';
-  for (const button of byId('tool-list').querySelectorAll('button')) {
+  let currentTitle = active?.title || '工具预览';
+  const sidebarButtons = Array.from(byId('tool-list').querySelectorAll('button'));
+  const olderActive = sidebarButtons.slice(sidebarToolLimit).find(button => button.dataset.id === active?.id);
+  byId('view-all-tools').hidden = sidebarButtons.length <= sidebarToolLimit;
+  sidebarButtons.forEach((button, index) => {
+    button.parentElement.hidden = button !== olderActive && index >= sidebarToolLimit - Number(Boolean(olderActive));
+  });
+  for (const button of [...sidebarButtons, ...byId('all-tool-list').querySelectorAll('button')]) {
     button.disabled = blocked || starting || !networkIsolated;
     const selected = button.dataset.id === active?.id;
     button.setAttribute('aria-current', String(selected));
@@ -250,20 +278,130 @@ function render() {
   status.toggleAttribute('data-usable', showingTool && !awaitingNewPreview && !pausingEdits && !stagedEditsPaused);
   status.textContent = standalone && !active ? (starting ? '正在打开工具…' : '工具不可用')
     : stagedEditsPaused ? '待核对保存 · 暂停编辑'
-    : pausingEdits ? '待同步 · 暂停编辑' : awaitingNewPreview ? (failedNewTool ? '生成未完成' : '等待预览') : active
+    : pausingEdits ? '待同步 · 暂停编辑' : awaitingStagedPreview && syncing ? '新工具待同步' : awaitingNewPreview ? (failedNewTool ? '生成未完成' : '等待预览') : active
     ? pending || runningNewTool || failedNewTool || syncing ? '上次工具仍可用' : tableMode ? '上次工具 · 可用' : restored ? '已恢复' : '已就绪'
     : syncing ? '新工具待同步' : pending ? '等待预览' : '待生成';
   byId('empty').hidden = standalone || syncing || (showingTool && !awaitingNewPreview);
-  byId('empty-title').textContent = awaitingNewPreview && !failedNewTool ? '正在准备预览' : '还没有生成工具';
-  byId('empty-copy').textContent = awaitingNewPreview && !failedNewTool
-    ? '生成完成后可在这里试用。' : '输入需求后，工具会在这里出现。';
+  byId('empty-title').textContent = awaitingStagedPreview && failedNewTool ? '本次未生成预览'
+    : awaitingNewPreview && !failedNewTool ? '正在准备预览' : '还没有生成工具';
+  byId('empty-copy').textContent = awaitingStagedPreview && failedNewTool ? '重试成功后可在这里试用。'
+    : awaitingNewPreview && !failedNewTool ? '生成完成后可在这里试用。' : '输入需求后，工具会在这里出现。';
   byId('table-panel').hidden = !tableMode;
   byId('table-panel').inert = syncing;
   form.hidden = tableMode || showingResult || runningNewTool || generationFailed;
   byId('table-entry').setAttribute('aria-pressed', String(tableMode));
   byId('table-entry').disabled = byId('assistant-entry').disabled = blocked;
   renderStagedTasks(blocked, restriction, {runningNewTool, generationFailed});
+  renderDiscovery(atStart && !assistantOpen && !tableMode, browsing && !editing && !blocked);
 }
+
+function renderDiscovery(showDiscovery, showShare) {
+  byId('discovery').hidden = standalone || !showDiscovery || !discoveredWorks.length;
+  shareButton.hidden = standalone || !showShare || !active;
+  shareButton.disabled = sharing;
+  shareButton.textContent = currentShare?.tool === active ? '撤回分享' : '分享到发现';
+  if (shareButton.hidden) byId('share-feedback').hidden = true;
+}
+
+function workbenchRoute() {
+  return standaloneBack.getAttribute('href');
+}
+
+async function loadDiscovery() {
+  const request = ++discoveryRead;
+  try {
+    const result = await workspaceApi('/api/discovery', undefined, publicationTimeout);
+    if (request !== discoveryRead) return;
+    discoveredWorks = result.items;
+    byId('discovery-list').replaceChildren(...discoveredWorks.map(work => {
+      const item = document.createElement('li');
+      const link = document.createElement('a');
+      link.href = workbenchRoute() + '#share/' + work.id;
+      const cover = document.createElement('span');
+      cover.className = 'discovery-cover';
+      cover.setAttribute('aria-hidden', 'true');
+      const thumbnail = document.createElement('img');
+      thumbnail.loading = 'lazy';
+      thumbnail.alt = '';
+      thumbnail.src = '/api/discovery/' + work.id + '/thumbnail';
+      thumbnail.addEventListener('error', () => thumbnail.remove(), {once:true});
+      cover.append(thumbnail);
+      const title = document.createElement('strong');
+      title.textContent = work.title;
+      link.append(cover, title);
+      item.append(link);
+      return item;
+    }));
+    render();
+    if (location.hash === '#discovery' && !byId('discovery').hidden) byId('discovery-title').focus();
+  } catch {
+    // Discovery is optional on the new-tool page.
+  }
+}
+
+async function loadToolShare(tool) {
+  const read = ++shareRead;
+  try {
+    const {share} = await workspaceApi('/api/tools/' + tool.id + '/share', undefined, publicationTimeout);
+    if (read !== shareRead || active !== tool) return;
+    currentShare = share ? {tool, ...share} : null;
+    render();
+  } catch {
+    // The share button can retry the status lookup.
+  }
+}
+
+shareButton.addEventListener('click', async () => {
+  const tool = active;
+  if (!tool || sharing) return;
+  sharing = true;
+  const read = ++shareRead;
+  render();
+  const feedback = byId('share-feedback');
+  feedback.hidden = true;
+  try {
+    const {share} = await workspaceApi('/api/tools/' + tool.id + '/share', undefined, publicationTimeout);
+    if (active !== tool || read !== shareRead || workspace.dataset.mode !== 'browse') return;
+    currentShare = share ? {tool, ...share} : null;
+    shareDialog.dataset.tool = tool.id;
+    shareDialog.dataset.share = share?.id || '';
+    const action = share ? '撤回分享' : '分享到发现';
+    byId('share-dialog-title').textContent = action;
+    byId('share-confirm').textContent = action;
+    byId('share-dialog-copy').textContent = share
+      ? '作品将从发现移除，旧分享链接也会失效。'
+      : '将 v' + tool.version + ' 分享到发现。登录用户可以试玩，试玩数据每次重开都会复位。';
+    shareDialog.returnValue = '';
+    shareDialog.showModal();
+  } catch (error) {
+    feedback.textContent = error.message;
+    feedback.hidden = false;
+  } finally {
+    sharing = false;
+    render();
+  }
+});
+shareDialog.addEventListener('close', async () => {
+  const tool = active;
+  if (shareDialog.returnValue !== 'confirm' || !tool || tool.id !== shareDialog.dataset.tool || sharing) return;
+  const shareId = shareDialog.dataset.share;
+  sharing = true;
+  render();
+  const feedback = byId('share-feedback');
+  try {
+    const {share} = await workspaceApi('/api/tools/' + tool.id + '/share', shareId
+      ? {action:'revoke', id:shareId} : {action:'share', version:tool.version}, runtimeVerificationTimeout);
+    if (active === tool) currentShare = share ? {tool, ...share} : null;
+    feedback.textContent = shareId ? '已撤回分享。' : '已分享到发现。';
+    void loadDiscovery();
+  } catch (error) {
+    feedback.textContent = error.message + ' 请重试。';
+  } finally {
+    sharing = false;
+    feedback.hidden = active !== tool;
+    render();
+  }
+});
 
 async function api(path, options) {
   let response;
@@ -356,7 +494,6 @@ function rememberRunningGeneration(id) {
 }
 
 function clearStagedSelection() {
-  keepPreviousPreviewOnRetry = false;
   rememberRunningGeneration(null);
   closeRepairTrial();
   closeRevisionInspection();
@@ -740,8 +877,10 @@ function renderStagedTasks(blocked, restriction, {runningNewTool, generationFail
     runningNewTool && !task ? '正在提交生成任务' :
     submitting ? '正在修改' : inRevision && failure ? '修改失败' : taskStatus);
   if (status.textContent !== statusText) status.textContent = statusText;
-  byId('revision-waiting-dots').hidden = !inRevision || stagedPendingId || pendingPublication ||
-    Boolean(stagedLoadError || failure || stagedActivity) || !(submitting || isRunningStagedTask(task));
+  const waiting = (inRevision && (submitting || isRunningStagedTask(task))) ||
+    (inNewGeneration && runningNewTool);
+  byId('revision-waiting-dots').hidden = !waiting || stagedPendingId || pendingPublication ||
+    Boolean(stagedLoadError || failure || stagedActivity);
   panel.dataset.tone = generationFailed || inRevision && (task?.state === 'failed' || failure) ? 'failed' :
     inRevision && task?.state === 'clarifying' ? 'question' : '';
   const steps = byId('staged-steps');
@@ -1062,9 +1201,8 @@ function labelTool(button, version) {
 
 let latestToolId;
 
-async function loadLibrary(timeout) {
-  const { items, latest } = await workspaceApi('/api/tools', undefined, timeout);
-  const buttons = items.map(tool => {
+function renderToolRows(list, items) {
+  list.replaceChildren(...items.map(tool => {
     const li = document.createElement('li');
     const button = document.createElement('button');
     button.type = 'button';
@@ -1076,16 +1214,32 @@ async function loadLibrary(timeout) {
     button.addEventListener('click', () => selectTool(tool.id, button));
     li.append(button);
     return li;
-  });
-  byId('tool-list').replaceChildren(...buttons);
+  }));
+}
+
+function filterToolRows() {
+  const query = toolSearch.value.trim().toLocaleLowerCase();
+  let matches = 0;
+  for (const row of byId('all-tool-list').children) {
+    row.hidden = !row.firstElementChild.dataset.title.toLocaleLowerCase().includes(query);
+    if (!row.hidden) matches += 1;
+  }
+  byId('tool-search-empty').hidden = matches > 0;
+}
+
+async function loadLibrary(timeout) {
+  const { items, latest } = await workspaceApi('/api/tools', undefined, timeout);
+  renderToolRows(byId('tool-list'), items);
+  renderToolRows(byId('all-tool-list'), items);
+  filterToolRows();
   byId('library-empty').hidden = items.length > 0;
   render();
   latestToolId = latest;
   return latest;
 }
 
-function compose(enabled, mode = 'compose') {
-  workspace.dataset.mode = enabled ? mode : 'browse';
+function compose(enabled, mode = enabled ? 'compose' : 'browse') {
+  workspace.dataset.mode = mode;
   composer.hidden = !enabled;
   if (workspace.dataset.mode !== 'start') dismissCoachmark();
 }
@@ -1210,15 +1364,108 @@ function renderRevisionViews() {
   if (byId('source-panel').hidden) {
     sourceRequest += 1;
     sourceKey = '';
+    sourceSnapshot = null;
   } else {
     readRevisionSource(inspecting);
   }
 }
 
+function renderSourceTree() {
+  const query = byId('source-search').value.trim().toLowerCase();
+  const list = byId('source-files');
+  list.replaceChildren();
+  const folders = new Map();
+  sourceFiles.forEach((file, index) => {
+    if (!file.path.toLowerCase().includes(query)) return;
+    const parts = file.path.split('/');
+    const name = parts.pop();
+    let parent = list;
+    let path = '';
+    for (const part of parts) {
+      path += '/' + part;
+      if (!folders.has(path)) {
+        const row = document.createElement('li');
+        const folder = document.createElement('details');
+        const label = document.createElement('summary');
+        const nested = document.createElement('ul');
+        label.textContent = part;
+        folder.open = true;
+        folder.append(label, nested);
+        row.append(folder);
+        parent.append(row);
+        folders.set(path, nested);
+      }
+      parent = folders.get(path);
+    }
+    const row = document.createElement('li');
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.textContent = name;
+    button.title = file.path;
+    button.dataset.fileIndex = index;
+    button.setAttribute('aria-current', String(index === sourceIndex));
+    row.append(button);
+    parent.append(row);
+  });
+  byId('source-no-match').hidden = Boolean(list.children.length);
+}
+
+// Token fragments are rendered as text, including HTML and embedded scripts.
+const sourceTokens = /(?<comment><!--[\s\S]*?-->|\/\*[\s\S]*?\*\/|^\s*\/\/[^\n]*)|(?<string>"(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*'|`(?:\\.|[^`\\])*`)|(?<tag><\/?[a-z][\w:-]*|<!doctype)|(?<keyword>\b(?:const|let|var|function|return|async|await|if|else|import|export|class|new|true|false|null|undefined)\b)|(?<number>\b\d+(?:\.\d+)?\b)/gim;
+
 function displaySourceFile() {
-  const file = sourceFiles[Number(byId('source-files').value)];
-  byId('source-code').textContent = file?.text ?? '';
-  byId('source-text').hidden = !file;
+  const file = sourceFiles[sourceIndex];
+  const code = byId('source-code');
+  code.replaceChildren();
+  let offset = 0;
+  for (const match of file.text.matchAll(sourceTokens)) {
+    const type = Object.keys(match.groups).find(key => match.groups[key] !== undefined);
+    const token = document.createElement('span');
+    token.className = 'source-token-' + type;
+    token.textContent = match[0];
+    code.append(file.text.slice(offset, match.index), token);
+    offset = match.index + match[0].length;
+  }
+  code.append(file.text.slice(offset));
+  byId('source-path').textContent = file.path;
+  byId('source-lines').textContent = file.text.split('\n').map((_, index) => index + 1).join('\n');
+  byId('source-text').scrollTo(0, 0);
+  for (const button of byId('source-files').querySelectorAll('button')) {
+    button.setAttribute('aria-current', String(Number(button.dataset.fileIndex) === sourceIndex));
+  }
+}
+
+function downloadSource(blob, name) {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = name;
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+async function exportSource() {
+  const snapshot = sourceSnapshot;
+  if (!snapshot || byId('source-panel').hidden) return;
+  const button = byId('source-export');
+  const status = byId('source-export-status');
+  button.disabled = true;
+  status.textContent = '正在打包…';
+  try {
+    const options = post({...snapshot.data, format:'zip'});
+    options.headers['X-Root-Session'] = session.marker;
+    options.signal = AbortSignal.timeout(publicationTimeout);
+    const response = await fetch(snapshot.path, options);
+    if (!response.ok) throw new Error((await response.json()).message || '导出失败，请重试。');
+    const blob = await response.blob();
+    if (snapshot !== sourceSnapshot || byId('source-panel').hidden) return;
+    downloadSource(blob, snapshot.name);
+    status.textContent = '已请求下载。';
+  } catch (error) {
+    if (snapshot === sourceSnapshot) status.textContent = error.message || '导出失败，请重试。';
+  } finally {
+    if (snapshot === sourceSnapshot) button.disabled = false;
+  }
 }
 
 async function readRevisionSource(inspecting) {
@@ -1230,18 +1477,24 @@ async function readRevisionSource(inspecting) {
   sourceKey = key;
   const request = ++sourceRequest;
   const status = byId('source-status');
-  const select = byId('source-files');
-  const label = byId('source-file-label');
+  const browser = byId('source-browser');
+  const retry = byId('source-retry');
   sourceFiles = [];
-  select.replaceChildren();
-  label.hidden = true;
-  displaySourceFile();
+  sourceSnapshot = null;
+  browser.hidden = true;
+  retry.hidden = true;
+  byId('source-search').value = '';
+  byId('source-export-status').textContent = '';
+  byId('source-export').disabled = false;
+  byId('source-files').replaceChildren();
+  byId('source-code').replaceChildren();
+  byId('source-lines').textContent = '';
+  byId('source-path').textContent = '';
   status.textContent = '正在读取代码…';
   const path = staged ? '/api/staged/' + staged.taskId + '/source' : '/api/tools/' + id + '/source';
+  const data = staged ? {...staged, toolId:id, runId:inspecting.runId, version} : {version};
   try {
-    const result = await workspaceApi(path, staged
-      ? {...staged, toolId:id, runId:inspecting.runId, version}
-      : {version}, publicationTimeout);
+    const result = await workspaceApi(path, data, publicationTimeout);
     if (request !== sourceRequest) return;
     if (result.toolId !== id || result.version !== version || result.applied !== !staged) {
       throw new Error('代码与当前工具版本不匹配，请重新打开工具。');
@@ -1249,12 +1502,16 @@ async function readRevisionSource(inspecting) {
     sourceFiles = result.files;
     status.textContent = sourceFiles.length ? (staged ? '候选 v' + version + ' · 尚未应用' : '当前 v' + version)
       : '此版本没有可查看的代码';
-    select.replaceChildren(...sourceFiles.map((file, index) => new Option(file.path, index)));
-    label.hidden = !sourceFiles.length;
+    if (!sourceFiles.length) return;
+    sourceSnapshot = {path, data, name: id + '-v' + version + (staged ? '-candidate' : '') + '.zip'};
+    sourceIndex = 0;
+    renderSourceTree();
     displaySourceFile();
+    browser.hidden = false;
   } catch (error) {
     if (request !== sourceRequest) return;
     status.textContent = error.message;
+    retry.hidden = false;
   }
 }
 
@@ -1423,7 +1680,9 @@ function renderRoute(focus = false) {
   byId('account').open = false;
   byId('auth').hidden = updates || !identityResolved || Boolean(session);
   byId('auth-home').hidden = standalone || byId('auth').hidden;
-  standaloneBack.hidden = !standalone;
+  standaloneBack.hidden = !standalone || discoveryShareId !== null;
+  discoveryBack.hidden = discoveryShareId === null;
+  discoveryBack.href = workbenchRoute() + '#discovery';
   product.classList.toggle('standalone', standalone);
   byId('account').hidden = workspace.hidden = updates || !session;
   const showingProfile = Boolean(session) && profileRoute();
@@ -1450,7 +1709,7 @@ for (const id of ['updates-link', 'updates-back']) {
   });
 }
 window.addEventListener('popstate', () => {
-  if (toolIdFromLocation() !== standaloneToolId) {
+  if (toolIdFromLocation() !== standaloneToolId || shareIdFromLocation() !== discoveryShareId) {
     preview.replaceChildren();
     location.reload();
     return;
@@ -1470,7 +1729,23 @@ byId('compare-revision').addEventListener('click', () => {
 byId('preview-view').addEventListener('click', () => setRevisionView('preview'));
 byId('source-view').addEventListener('click', () => setRevisionView('source'));
 byId('tool-history').addEventListener('click', () => setRevisionView(revisionView === 'history' ? 'preview' : 'history'));
-byId('source-files').addEventListener('change', displaySourceFile);
+byId('source-retry').addEventListener('click', () => {
+  sourceKey = '';
+  renderRevisionViews();
+});
+byId('source-search').addEventListener('input', renderSourceTree);
+byId('source-files').addEventListener('click', event => {
+  const button = event.target.closest('button[data-file-index]');
+  if (!button) return;
+  sourceIndex = Number(button.dataset.fileIndex);
+  displaySourceFile();
+});
+byId('source-download').addEventListener('click', () => {
+  if (!sourceSnapshot || byId('source-panel').hidden) return;
+  const file = sourceFiles[sourceIndex];
+  downloadSource(new Blob([file.text], {type:'text/plain;charset=utf-8'}), file.path.split('/').pop());
+});
+byId('source-export').addEventListener('click', exportSource);
 
 async function confirmsNetworkPolicy() {
   try {
@@ -1732,7 +2007,7 @@ async function handleRecordOperation(frame, {request, operation}) {
     reply(null, '请等当前操作完成。');
     return;
   }
-  if (frame === repairTrial?.frame && operation?.action !== 'list') {
+  if ((frame === repairTrial?.frame || frame.demo && frame === active) && operation?.action !== 'list') {
     try {
       const rows = JSON.parse(new Map(JSON.parse(frame.snapshot)).get('root-structured-records-v1') || '[]');
       const values = operation.values;
@@ -1750,7 +2025,7 @@ async function handleRecordOperation(frame, {request, operation}) {
     }
     return;
   }
-  if (frame === candidate) {
+  if (frame === candidate || frame.demo) {
     if (operation?.action !== 'list') {
       frame.reject(new Error('候选预览试图在初始化时写入记录。'));
       reply(null, '候选预览不能写入记录。');
@@ -1809,7 +2084,7 @@ window.addEventListener('message', event => {
     try {
       const snapshot = serializeEntries(entries, frame.storageLimit);
       frame.snapshot = snapshot;
-      if (frame === active) enqueueSave(frame, snapshot);
+      if (frame === active && !frame.demo) enqueueSave(frame, snapshot);
     } catch {
       if (frame === candidate) frame.reject(new Error('无法保存新工具的数据，旧工具已保留。'));
       else {
@@ -2308,7 +2583,7 @@ function closeRevisionInspection() {
 }
 
 async function openTool(tool, restore = false, mode = '') {
-  if (!validToolId(tool.id) || typeof tool.html !== 'string' || !/^<!doctype html>/i.test(tool.html)) {
+  if (!(mode === 'discovery' ? /^[0-9a-f]{32}$/.test(tool.id) : validToolId(tool.id)) || typeof tool.html !== 'string' || !/^<!doctype html>/i.test(tool.html)) {
     throw new Error('工具文件不完整，无法打开预览。');
   }
   const entries = tool.previewEntries ?? tool.entries;
@@ -2326,7 +2601,7 @@ async function openTool(tool, restore = false, mode = '') {
   iframe.inert = true;
   const frame = {
     id: tool.id, token: crypto.randomUUID(), iframe, snapshot: original,
-    storageLimit, backup, storageDisabled, recordCode,
+    storageLimit, backup, storageDisabled, recordCode, demo: mode === 'discovery',
     revision: tool.revision, version: tool.version, saveTail: Promise.resolve(), saveFailed: false, recordSaveSequence: 0,
   };
   const old = active;
@@ -2390,20 +2665,21 @@ async function openTool(tool, restore = false, mode = '') {
       savedSnapshot = frame.snapshot;
       const saved = await commitInitial(frame);
       frame.revision = saved.revision;
-    } else {
+    } else if (!frame.demo) {
       await workspaceApi('/api/tools/' + frame.id + '/open', { version: frame.version },
         pendingPublication || stagedPendingId ? publicationTimeout : undefined);
     }
     old?.recordPort?.close();
     old?.iframe.remove();
     active = frame;
+    if (restore && !standalone) void loadToolShare(frame);
     iframe.dataset.tool = frame.id;
     iframe.removeAttribute('tabindex');
     resumeStorage(frame);
     warnStorage('');
     showRecordSave(frame, '');
     restored = restore;
-    if (frame.snapshot !== savedSnapshot) enqueueSave(frame, frame.snapshot);
+    if (!frame.demo && frame.snapshot !== savedSnapshot) enqueueSave(frame, frame.snapshot);
     if (old?.id !== frame.id) revisionView = 'preview';
     else if (!toolHistory.hidden) loadToolHistory();
   } finally {
@@ -2532,7 +2808,6 @@ byId('new-generation-edit').addEventListener('click', () => {
 byId('new-generation-retry').addEventListener('click', () => {
   if (byId('new-generation-retry').disabled) return;
   clearStagedSelection();
-  keepPreviousPreviewOnRetry = true;
   form.requestSubmit();
 });
 byId('generation-category').addEventListener('change', event => {
@@ -2626,6 +2901,9 @@ byId('sync-tool').addEventListener('click', async () => {
 async function selectTool(id, source) {
   if (!networkIsolated || pendingPublication || stagedPendingId || phase !== 'idle' || !validToolId(id)) return;
   const returnFocus = document.activeElement === source || composer.contains(document.activeElement);
+  const fromLibrary = workspace.dataset.mode === 'library';
+  const libraryError = byId('all-tools-error');
+  libraryError.hidden = true;
   clearStagedSelection();
   if (entryMode === 'table') tableImport.close();
   phase = 'restore';
@@ -2641,10 +2919,16 @@ async function selectTool(id, source) {
     byId('first-tool-saved').hidden = true;
   } catch (error) {
     warnStorage(error.message);
+    if (fromLibrary) {
+      libraryError.textContent = error.message;
+      libraryError.hidden = false;
+    }
   } finally {
     phase = 'idle';
     render();
-    if (returnFocus && document.activeElement === document.body) source?.focus();
+    if (fromLibrary && workspace.dataset.mode === 'browse') {
+      byId('tool-list').querySelector('[aria-current="true"]')?.focus();
+    } else if (returnFocus && document.activeElement === document.body) source?.focus();
   }
 }
 
@@ -2671,7 +2955,7 @@ function beginComposition(revise, value = '', category = 'auto', focus = true, t
 }
 byId('new-tool').addEventListener('click', () => beginComposition(false));
 byId('revise-tool').addEventListener('click', () => beginComposition(true));
-function browseLibrary(focus) {
+function browseLibrary(focus, showAll = false) {
   draftTaskTitle = '';
   requirementAssistant.close();
   const trigger = byId(focus);
@@ -2680,12 +2964,21 @@ function browseLibrary(focus) {
   if (entryMode === 'table') tableImport.close();
   failure = '';
   finishComposition();
+  if (showAll) compose(false, 'library');
   render();
   trigger.focus();
-  if (!active && latestToolId) selectTool(latestToolId);
+  if (!showAll && !active && latestToolId) selectTool(latestToolId);
 }
 byId('return-to-library').addEventListener('click', () => browseLibrary(editing ? 'revise-tool' : 'new-tool'));
 byId('library-entry').addEventListener('click', () => browseLibrary('library-entry'));
+toolSearch.addEventListener('input', filterToolRows);
+byId('view-all-tools').addEventListener('click', () => {
+  browseLibrary('view-all-tools', true);
+  toolSearch.value = '';
+  filterToolRows();
+  byId('all-tools-error').hidden = true;
+  toolSearch.focus();
+});
 
 function authMode(next) {
   registering = next;
@@ -2801,10 +3094,17 @@ window.addEventListener('focus', async () => {
 async function openStandaloneTool() {
   const notice = byId('standalone-error');
   try {
-    if (!validToolId(standaloneToolId)) throw new Error('此工具不可用。');
+    if (discoveryShareId !== null && !/^[0-9a-f]{32}$/.test(discoveryShareId)) throw new Error('此作品不可用。');
+    if (discoveryShareId === null && !validToolId(standaloneToolId)) throw new Error('此工具不可用。');
     if (!await confirmsNetworkPolicy()) throw new Error('当前浏览器未启用预览网络隔离。请使用支持 Connection-Allowlist 的 Chrome。');
-    await loadLibrary();
-    await openTool(await workspaceApi('/api/tools/' + standaloneToolId), true);
+    if (discoveryShareId !== null) {
+      const tool = await workspaceApi('/api/discovery/' + discoveryShareId, undefined, publicationTimeout);
+      await openTool(tool, true, 'discovery');
+      active.title = tool.title;
+    } else {
+      await loadLibrary();
+      await openTool(await workspaceApi('/api/tools/' + standaloneToolId), true);
+    }
     compose(false);
     render();
     document.title = byId('preview-title').textContent + ' · ROOT';
@@ -2831,6 +3131,7 @@ async function start(registration = null) {
       return;
     }
     await readProfile();
+    void loadDiscovery();
     const config = await api('/api/config');
     configured = config.configured;
     stagedEnabled = config.staged === true;
@@ -2882,6 +3183,7 @@ async function start(registration = null) {
         rememberRunningGeneration(null);
       }
     }
+    if (location.hash === '#discovery') beginComposition(false, '', 'auto', false);
     if (registration && location.pathname !== '/updates' && !profileRoute()) {
       showCoachmark();
     }

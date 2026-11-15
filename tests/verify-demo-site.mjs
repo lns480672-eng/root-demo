@@ -201,6 +201,20 @@ export async function verifyDemoSite(ctx) {
   evidence.tests.push({id:'CHG-046-late-navigation', outboundBlocked:true, workbenchRetained:true});
 
   if (process.env.ROOT_STAGED_LIVE !== '1') {
+    const escapedRequirement = '转义标签回归：生成一个有首页与产品页的茶壶品牌官网。';
+    await click('#new-tool');
+    await generate(escapedRequirement);
+    const escapedTask = await until(async () => {
+      const {body:{tasks}} = await appRequest('/api/staged/history');
+      return tasks.find(task => task.requirement === escapedRequirement && task.state === 'failed');
+    });
+    assert.equal(escapedTask.reason, 'staged_runtime_failed');
+    assert.equal(escapedTask.resumable, false);
+    await until(() => evaluate('!document.querySelector("#generate").disabled'));
+    assert.equal(await evaluate('document.querySelector("#requirement").value'), escapedRequirement);
+    assert.equal((await library()).items.length, 2);
+    assert.equal((await appRequest('/api/trial')).body.generation.used, after.used);
+    evidence.tests.push({id:'website-markup-text', failed:escapedTask.id, requirementRetained:true, toolCount:2});
     const recoveryRequirement = '做一个单页官网原型，有上午和下午可切换的日程。';
     await click('#new-tool');
     await generate(recoveryRequirement);

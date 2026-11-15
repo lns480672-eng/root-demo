@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="referrer" content="no-referrer">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src 'self'; base-uri 'none'; form-action 'none'">
 <title>ROOT 官网</title>
 <meta name="description" content="从一个想法、明确需求或已有表格开始，用 ROOT 做自己的清单、看板和计算器。">
 <style>
@@ -216,6 +216,22 @@
 
 
 
+    #root-public-review .brand-demo { margin: 28px 0; }
+    #root-public-review .brand-demo figcaption { margin-bottom: 12px; }
+    #root-public-review .brand-demo figcaption strong { display: block; font-size: 20px; }
+    #root-public-review .brand-demo figcaption span { color: var(--muted); }
+    #root-public-review .brand-demo .brand-screen {
+      aspect-ratio: 1664 / 574;
+      overflow: hidden; border-radius: 12px;
+      background: #eef5f0; box-shadow: 0 0 0 1px #c6d8d2;
+    }
+    #root-public-review .brand-demo .brand-screen img {
+      width: 100%; height: auto; display: block;
+    }
+    @media (max-width: 640px) {
+      #root-public-review .brand-demo figcaption strong { font-size: 18px; }
+      #root-public-review .brand-demo .brand-screen { border-radius: 8px; }
+    }
   </style>
   <div class="page">
     <div class="intro" id="root-site-top">
@@ -258,7 +274,7 @@
     <section class="chapter" id="root-site-example" aria-labelledby="root-example-title">
       <p class="kicker">直接开发</p>
       <h2 id="root-example-title">需求想清楚了，就直接做。</h2>
-      <p class="lead">描述你想要的工具，或导入手头已有的表格。用文字可以从零开始，用表格可以带上原有记录。</p>
+      <p class="lead">用文字描述你想要的小工具，也可以导入已有表格，带着原有记录开始。</p>
       <div class="frame example-text">
         <strong>用一句话做读书清单</strong>
         <p>「我想记录书名和阅读状态，能标记已读，重新打开还看得到记录。」</p>
@@ -276,6 +292,20 @@
           <div class="row" data-item><label><input type="checkbox">准备样例数据</label><span class="state" data-status="进行中">进行中</span></div>
           <div class="row" data-item><label><input type="checkbox" checked>复核体验入口</label><span class="state" data-status="待完成">已完成</span></div>
           <p class="count" data-count aria-live="polite">还有 2 项未完成</p>
+        </div>
+      </figure>
+    </section>
+    <section class="chapter" id="root-site-brand-demo" aria-labelledby="root-brand-demo-title">
+      <h2 id="root-brand-demo-title">生成品牌官网</h2>
+      <p class="lead">写下品牌风格和需要的页面，就能生成带导航的多页官网。</p>
+      <div class="frame example-text">
+        <strong>需求示例</strong>
+        <p>「为陶隐茶壶做一个青绿色品牌官网。首页左侧介绍品牌，右侧展示茶壶，并提供工艺、产品和常见问题入口。」</p>
+      </div>
+      <figure class="brand-demo">
+        <figcaption><strong>陶隐茶壶</strong><span>生成结果 · 官网首屏</span></figcaption>
+        <div class="brand-screen">
+          <img src="root-site-taoyin-preview.png" width="1664" height="574" alt="陶隐茶壶官网首屏，左侧是「一壶一世界，半盏人间清欢」及品牌介绍，右侧是青绿色茶壶。">
         </div>
       </figure>
     </section>

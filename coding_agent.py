@@ -20,6 +20,12 @@ import staged_website
 
 HELPER = Path(__file__).with_name("coding-agent.mjs")
 PARTS = {"markup": "tool.html", "style": "tool.css", "script": "tool.js"}
+TEST_FIRST = (
+    "\n先根据本次需求写出可验证的验收用例，说明前置条件、操作和预期结果，再编写实现。"
+    "修改现有工具时，先明确能复现问题的用例，并覆盖受影响的原有行为。"
+    "优先覆盖主要操作和需求中明确的边界。有执行条件时先验证用例能发现缺失行为，"
+    "实现后重跑，修复失败后再提交。只把实际执行过的用例视为已运行。"
+)
 RECORD_WRITE_INTENT = re.compile(
     r"(?:已有|现有|旧|历史)(?:的)?(?:记录|数据).{0,100}(?:填为|填成|填上|填入|填补|补上|补齐|补填|回填)"
     r"|(?:回填|批量更新|批量修改).{0,80}(?:记录|数据|字段)"
@@ -42,7 +48,7 @@ def provide(stage, requirement, prior, key, dispatch, *, base=None, timeout_seco
     if website:
         system = "\n".join(system.splitlines()[:1] + system.splitlines()[4:])
     elif record:
-        system = "\n".join(system.splitlines()[:1] + system.splitlines()[3:]).removesuffix("仅输出 JSON，不用 Markdown。")
+        system = "\n".join(system.splitlines()[:1] + system.splitlines()[3:]).removesuffix("仅输出 JSON，不用 Markdown。").replace("accepted_spec", "spec")
     else:
         system += (
             "\n使用 #root-program 中的节点。仅 storage=tool 可使用 localStorage。"
@@ -61,6 +67,13 @@ def provide(stage, requirement, prior, key, dispatch, *, base=None, timeout_seco
         "收到诊断后修正。需要澄清时省略源码参数。"
         "新建或仅改代码时只填写源码参数。"
     )
+    system += TEST_FIRST
+    if record and not base:
+        system += (
+            "\n规格已确定新建工具可使用的字段和类型，按 spec 实现可操作的完整工具。"
+            "以规格中的日期类型实现日期字段，开页读取记录，并在用户新增或更新时保存适用的日期。"
+            "提交可操作页面与初始化脚本。"
+        )
     task = {"requirement":requirement, "spec":spec}
     if base:
         answers = base.get("clarification", [])
@@ -138,12 +151,13 @@ def provide(stage, requirement, prior, key, dispatch, *, base=None, timeout_seco
                 result = json.dumps(implementation, ensure_ascii=False).encode()
                 blueprint.validate(stage, result, prior)
                 runtime_verify.check_script(implementation["script"])
-                if website:
-                    if not implementation["style"].strip():
+                if website or record:
+                    if website and not implementation["style"].strip():
                         raise ValueError("bad_website_style_empty")
-                    html = staged_website.assemble(spec, implementation)
+                    assembler = staged_website if website else staged_record_code
+                    html = assembler.assemble(spec, implementation)
                     try:
-                        runtime_verify.verify(html, [], website=True)
+                        runtime_verify.verify(html, [], website=website)
                     except runtime_verify.RuntimeVerificationError as error:
                         raise ValueError(error.diagnostic) from error
                 return result
@@ -170,6 +184,7 @@ def revise_table_style(requirement, base, key, dispatch, timeout_seconds):
         "保留字段、记录和表格操作。禁止外部资源，@ 规则仅支持 @media。"
         "只改工具标题或新增列筛选时，用 propose_table_edit，列序号从零开始。"
         "如需要澄清，填写 status=clarify 和 question。"
+        + TEST_FIRST
     )
 
     def validate(message):
@@ -273,6 +288,7 @@ def run(request, key, dispatch, validate, timeout_seconds):
                                    "bad_website_anchor_target": "让每个页内链接的 href 指向页面内实际存在的 id。",
                                    "bad_website_style_empty": "在 style 参数提交完整的非空 CSS。",
                                    "website_style": "CSS 未改变桌面或窄屏首页的可见样式。检查选择器、声明和媒体查询。",
+                                   "record_initialization": "页面启动时调用 window.rootRecords.list() 并显示记录。提交完整可用的页面及脚本，确保启动时只读记录。",
                                    "website_tabs": "检查导航点击、面板可见性和 aria-selected 是否正确切换。",
                                    "bad_revision_data_control": "同时提交改好的 markup 和 script。保留目标字段的输入框 id，并将 type 对应改成 number、date 或 text；同步调整提交值类型。",
                                    "undeclared_record_field": "新增保存字段须填写 field_label、field_type 和用户明确类型的原话 type_evidence。用户未明确日期、时长或具体时间时，先提交 clarify，勿提交源码。",

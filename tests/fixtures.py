@@ -93,6 +93,8 @@ def fixture(requirement, key):
             ).replace(
                 "render();\ntry", "readFilter.onchange = render;\nrender();\ntry",
             ).replace("PROBE_URL", json.dumps(sys.argv[4]))
+    elif requirement == "回归：工具列表搜索样例":
+        html = reading.replace("读书清单", "旅行书单").replace("PROBE_URL", json.dumps(sys.argv[4]))
     elif "读书清单" in requirement:
         html = reading.replace("PROBE_URL", json.dumps(sys.argv[4]))
     elif "搬家预算计算器" in requirement:

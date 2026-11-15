@@ -334,6 +334,8 @@ export async function verifyRunningLayout(ctx) {
   const taskButton = '#staged-task-list button[data-task-id="' + task.id + '"]';
   const assertRunningLayout = async (path, title) => {
     for (const width of [1440, 390]) {
+      assert.equal(await visible('#revision-waiting-dots'), true, '新建任务运行时应显示等待动效');
+      assert.equal(await evaluate('document.querySelector("#revision-waiting-dots").getAnimations({subtree:true}).length'), 3);
       await cdp('Emulation.setDeviceMetricsOverride', {width,height:844,deviceScaleFactor:1,mobile:width===390});
       const layout = await evaluate(`(() => {
         const composer = document.querySelector('.elys-composer');
@@ -371,7 +373,13 @@ export async function verifyRunningLayout(ctx) {
   await cdp('Page.reload');
   await until(() => evaluate(`performance.timeOrigin !== ${navigation} && document.documentElement.dataset.ready === 'true'`));
   await assertRunningLayout('reload', '旧清单');
+  assert.match(await evaluate('document.querySelector("#staged-steps").textContent'), /准备预览/);
   assert.equal((await appRequest('/api/staged')).body.tasks.filter(item => item.requirement === input).length, 1);
+  await cdp('Emulation.setEmulatedMedia', {features:[{name:'prefers-reduced-motion',value:'reduce'}]});
+  assert.equal(await visible('#revision-waiting-dots'), true);
+  assert.equal(await evaluate('document.querySelector("#revision-waiting-dots").getAnimations({subtree:true}).length'), 0);
+  await until(async () => !await visible('#revision-waiting-dots'), 25000);
+  await until(() => visible('#generation-result'));
   evidence.tests.push({id:'BLUE-02',task:task.id,paths:['submit','reopen','reload'],viewports:[1440,390]});
 }
 
@@ -765,9 +773,47 @@ export async function verifyStagedRevision(ctx) {
   }
   await cdp('Emulation.setDeviceMetricsOverride', {width:1440,height:980,deviceScaleFactor:1,mobile:false});
   await click('#source-view');
-  await until(() => visible('#source-files'));
+  await until(() => visible('#source-browser'));
   assert.match(await evaluate('document.querySelector("#source-code").textContent'), /添加/);
-  assert.equal(await evaluate('document.querySelector("#source-code").children.length'), 0);
+  assert.equal(await visible('#source-code .source-token-tag'), true);
+  assert.equal(await evaluate('document.querySelector("#source-code").querySelector("script,html,iframe") === null'), true);
+  assert.equal(await visible('#source-export'), true);
+  assert.equal(await evaluate(`(() => {
+    const code = document.querySelector('#source-code');
+    return !code.isContentEditable && code.textContent.split(String.fromCharCode(10)).length ===
+      document.querySelector('#source-lines').textContent.split(String.fromCharCode(10)).length;
+  })()`), true);
+  await screenshot('source-browser-1440');
+  await cdp('Emulation.setDeviceMetricsOverride', {width:390,height:844,deviceScaleFactor:1,mobile:true});
+  assert.equal(await evaluate('document.documentElement.scrollWidth === document.documentElement.clientWidth'), true);
+  await screenshot('source-browser-390');
+  await cdp('Emulation.setDeviceMetricsOverride', {width:1440,height:980,deviceScaleFactor:1,mobile:false});
+  await evaluate(`(() => {
+    const create = URL.createObjectURL;
+    const click = HTMLAnchorElement.prototype.click;
+    window.sourceDownloads = [];
+    URL.createObjectURL = blob => {
+      const url = create.call(URL, blob);
+      window.sourceDownloadBlob = blob;
+      return url;
+    };
+    HTMLAnchorElement.prototype.click = function () {
+      if (this.download && this.href.startsWith('blob:')) {
+        window.sourceDownloads.push({name:this.download, blob:window.sourceDownloadBlob});
+      } else click.call(this);
+    };
+    window.restoreSourceDownload = () => {
+      URL.createObjectURL = create;
+      HTMLAnchorElement.prototype.click = click;
+    };
+  })()`);
+  await click('#source-download');
+  assert.equal(await evaluate('(async () => (await window.sourceDownloads[0].blob.text()) === document.querySelector("#source-code").textContent)()'), true);
+  await click('#source-export');
+  await until(() => evaluate('window.sourceDownloads.length === 2'));
+  assert.equal(await evaluate('window.sourceDownloads[1].blob.type'), 'application/zip');
+  assert.match(await evaluate('window.sourceDownloads[1].name'), /-v1\.zip$/);
+  await evaluate('window.restoreSourceDownload()');
   await click('#preview-view');
   await type('#requirement', change);
   await evaluate(`(() => {
@@ -848,9 +894,9 @@ export async function verifyStagedRevision(ctx) {
   assert.equal(await evaluate('document.querySelector("#candidate-badge").dataset.candidate'), 'true');
   await until(() => evaluate('document.querySelector("#source-code").textContent.includes("加入书单")'));
   assert.match(await evaluate('document.querySelector("#source-status").textContent'), /尚未应用/);
-  assert.deepEqual(await evaluate('Array.from(document.querySelector("#source-files").options, o => o.textContent)'),
+  assert.deepEqual(await evaluate('Array.from(document.querySelectorAll("#source-files button"), o => o.textContent)'),
     ['app.html', 'implementation.json', 'spec.json']);
-  await evaluate('document.querySelector("#source-files").value="1"; document.querySelector("#source-files").dispatchEvent(new Event("change"));');
+  await click('#source-files button[data-file-index="1"]');
   assert.match(await evaluate('document.querySelector("#source-code").textContent'), /加入书单/);
   await screenshot('revision-source-pending');
   await click('#tool-history');
@@ -1109,6 +1155,10 @@ with sqlite3.connect(sys.argv[1]) as db:
     assert.equal(await visible('#new-generation-retry'), true);
     assert.equal(await visible('#new-generation-edit'), true);
     assert.equal(await visible('#composer'), false);
+    assert.equal(await visible('#preview iframe[data-tool]'), false);
+    assert.equal(await visible('#revise-tool'), false);
+    assert.equal(await evaluate('document.querySelector("#preview-title").textContent'), '工具预览');
+    assert.equal(await evaluate('document.querySelector("#empty-title").textContent'), '本次未生成预览');
     assert.equal(await evaluate('document.querySelector("#staged-panel").dataset.tone'), 'failed');
     await click('#new-generation-failure summary');
     assert.equal(await visible('#staged-reason'), true);
@@ -1120,19 +1170,39 @@ with sqlite3.connect(sys.argv[1]) as db:
   assert.equal(await visible('#staged-resume'), false);
   assert.equal((await balance()).used, oldBalance.used);
   assert.equal(await visible('.elys-preview'), true);
-  assert.equal(await evaluate('document.querySelector("#preview iframe[data-tool]").dataset.tool'), old.id);
   assert.equal((await appRequest('/api/tools')).body.items.length, 1);
-  await type('#book', '失败时旧工具仍能写入', old.context);
-  await click('#add', old.context);
-  await until(async () => JSON.stringify((await stored(old.id)).entries).includes('失败时旧工具仍能写入'));
   const beforeRetry = taskCount();
+  await evaluate(`(() => {
+    const original = window.fetch;
+    window.fetch = async (url, options) => {
+      if (url === '/api/generate' && options?.method === 'POST') {
+        window.fetch = original;
+        await new Promise(resolve => { window.releaseRetry = resolve; });
+      }
+      return original(url, options);
+    };
+  })()`);
   await click('#new-generation-retry');
+  await until(() => evaluate('Boolean(window.releaseRetry)'));
+  assert.equal(await visible('#preview iframe[data-tool]'), false);
+  assert.equal(await evaluate('document.querySelector("#empty-title").textContent'), '正在准备预览');
+  await evaluate('window.releaseRetry()');
   await until(() => Number(taskCount()) === Number(beforeRetry) + 1);
   await until(() => visible('#new-generation-retry'));
-  assert.equal(await evaluate('document.querySelector("#preview iframe[data-tool]").dataset.tool'), old.id);
-  // A category selection is an edit until the user submits it.
-  await click('#new-generation-edit');
+  assert.equal(await visible('#preview iframe[data-tool]'), false);
+  assert.equal(await evaluate('document.querySelector("#empty-title").textContent'), '本次未生成预览');
+  await click('#library-entry');
+  await click('#tool-list button[data-id="' + old.id + '"]');
+  const reopened = await activeTool();
+  assert.equal(reopened.id, old.id);
+  await type('#book', '从我的工具重开后写入', reopened.context);
+  await click('#add', reopened.context);
+  await until(async () => JSON.stringify((await stored(old.id)).entries).includes('从我的工具重开后写入'));
+  await click('#history-entry');
+  await until(() => visible(historyButton(failed.id)));
+  await bringBack(failed.id);
   assert.equal(await visible('#requirement'), true);
+  // A category selection is an edit until the user submits it.
   assert.equal(await evaluate('document.querySelector("#requirement").value'), failedRequirement);
   fixtureSql(`
 import sqlite3, sys, time, uuid
@@ -1209,7 +1279,7 @@ with sqlite3.connect(sys.argv[1]) as db:
   assert.equal(published.state, 'failed');
   assert.equal((await appRequest('/api/tools')).body.items.length, 2);
   assert.equal((await balance()).used, oldBalance.used + 1);
-  assert.ok(JSON.stringify((await stored(old.id)).entries).includes('失败时旧工具仍能写入'));
+  assert.ok(JSON.stringify((await stored(old.id)).entries).includes('从我的工具重开后写入'));
   await until(() => visible('#open-generated-tool'));
   await screenshot('new-generation-saved-390');
 

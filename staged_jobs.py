@@ -19,10 +19,10 @@ import staged_record_code
 
 MAX_ATTEMPTS = 8
 MAX_CLARIFICATION_ROUNDS = 2
-RUNTIME_PROOF_VERSION = 8
+RUNTIME_PROOF_VERSION = 9
 REPAIRABLE_REVISION_FAILURES = {"invalid_staged_result", "revision_patch_invalid", "staged_runtime_failed"}
 REPAIRABLE_RUNTIME_ERRORS = frozenset({
-    "script_exception", "document_not_ready", "record_initialization", "record_field_behavior", "record_visibility", "website_tabs", "website_style",
+    "script_exception", "document_not_ready", "record_initialization", "record_field_behavior", "record_visibility", "website_tabs", "website_style", "website_markup_text",
 })
 LEASE_SECONDS = 90
 RETAIN_SECONDS = 48 * 60 * 60
@@ -1162,7 +1162,7 @@ class StagedJobs:
             logging.getLogger(__name__).warning("staged runtime rejected task=%s candidate=%s reason=%s",
                                                 identifier, identity["sha256"], error.diagnostic)
             permanent_failure = (
-                (spec.get("kind") == "website" and error.diagnostic in ("website_tabs", "website_style"))
+                (spec.get("kind") == "website" and error.diagnostic in ("website_tabs", "website_style", "website_markup_text"))
                 or (staged_record_code.matches(spec) and error.diagnostic == "record_initialization")
             )
             if ((revision is None and permanent_failure and not data["entries"])
@@ -1173,10 +1173,10 @@ class StagedJobs:
                         WHERE id=? AND state='complete' AND head=? AND expires>?
                         AND EXISTS (
                             SELECT 1 FROM staged_candidates
-                            WHERE task=staged_jobs.id AND nonce=? AND runtime_proof IS NULL
+                            WHERE task=staged_jobs.id AND nonce=? AND runtime_proof IS ?
                         )
                     """, (error.code, uuid.uuid4().hex[:12], self.clock(), identifier, identity["commit"],
-                          self.clock(), candidate["nonce"]))
+                          self.clock(), candidate["nonce"], candidate["runtime_proof"]))
             raise
         with self.store.connection(write=True) as db:
             row, _, revision, result_id = self.publication_binding(db, token, marker, identifier, identity, data)

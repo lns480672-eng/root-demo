@@ -1,5 +1,6 @@
 """Run an immutable tool candidate in an isolated Chromium verifier."""
 from pathlib import Path
+import base64
 import json
 import os
 import shutil
@@ -70,7 +71,7 @@ def _command():
     return [node, str(HELPER), chrome]
 
 
-def verify(html, entries, *, backup=False, storage_limit=TOOL_STORAGE_BYTES, website=False, record_field=None, record_fields=None, record_visibility=None):
+def verify(html, entries, *, backup=False, storage_limit=TOOL_STORAGE_BYTES, website=False, record_field=None, record_fields=None, record_visibility=None, thumbnail=False):
     """Require isolated startup and the applicable website checks for the fixed snapshot."""
     packed = pack_entries(entries, limit=storage_limit)
     if not isinstance(html, bytes) or not html.lower().startswith(b"<!doctype html>"):
@@ -91,7 +92,7 @@ def verify(html, entries, *, backup=False, storage_limit=TOOL_STORAGE_BYTES, web
                 env[name] = directory
             payload = json.dumps({"html": source, "entries": json.loads(packed), "backup": backup,
                                   "limit": storage_limit, "website": website, "recordField": record_field,
-                                  "recordVisibility": record_visibility}, ensure_ascii=False).encode()
+                                  "recordVisibility": record_visibility, "thumbnail": thumbnail}, ensure_ascii=False).encode()
             with subprocess.Popen([*command, directory, str(MAX_JSON_BYTES + 6 * storage_limit)], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                   stderr=subprocess.DEVNULL, env=env, start_new_session=True) as process:
                 try:
@@ -107,6 +108,15 @@ def verify(html, entries, *, backup=False, storage_limit=TOOL_STORAGE_BYTES, web
         raise _unavailable() from None
     finally:
         SLOTS.release()
+
+    if thumbnail and process.returncode == 0 and output.startswith(b"thumbnail:"):
+        try:
+            image = base64.b64decode(output[len(b"thumbnail:"):].strip(), validate=True)
+        except ValueError:
+            return None
+        if image.startswith(b"\xff\xd8") and len(image) <= 180_000:
+            return image
+        return None
 
     if process.returncode == 0 and output.startswith(b"record:"):
         try:
@@ -135,7 +145,7 @@ def verify(html, entries, *, backup=False, storage_limit=TOOL_STORAGE_BYTES, web
         return
     if process.returncode == 0:
         for reason in ("script_exception", "frame_changed", "isolation_event", "document_not_ready",
-                       "website_tabs", "website_style", "record_initialization", "record_field_behavior", "runtime_timeout", "storage_not_allowed"):
+                       "website_tabs", "website_style", "website_markup_text", "record_initialization", "record_field_behavior", "runtime_timeout", "storage_not_allowed"):
             if output == f"failed:{reason}\n".encode("ascii"):
                 raise RuntimeVerificationError(reason)
     raise _unavailable()

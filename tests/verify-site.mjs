@@ -246,6 +246,18 @@ try {
         ['需求助手', '直接开发', '我的工具'].every(name => document.body.textContent.includes(name))];
     })()`);
     assert.deepEqual(layout, [workbench + '/', workbench + '/', true, true, true]);
+    if ([1440, 390].includes(width)) {
+      const brand = await evaluate(`(() => {
+        const section = document.querySelector('#root-site-brand-demo');
+        const image = section?.querySelector('img');
+        return [section?.previousElementSibling.id, section?.nextElementSibling.id,
+          section?.textContent.includes('为陶隐茶壶'),
+          image?.naturalWidth > 0 && image.naturalHeight > 0,
+          Boolean(image?.alt) && new URL(image.src).origin === location.origin];
+      })()`);
+      assert.deepEqual(brand, ['root-site-example', 'root-site-tools', true, true, true],
+        `${width} px 应显示「生成品牌官网」和完整同源图片`);
+    }
     const palette = await evaluate(`(() => {
       const style = selector => {
         const element = document.querySelector(selector);
@@ -383,7 +395,7 @@ try {
   assert.deepEqual(sample.output, sample.source);
   assert.deepEqual([sample.focused, sample.filtered, sample.remaining, sample.faqOpened, sample.storage],
     [true, 2, '还有 1 项未完成', true, 0]);
-  assert.ok(sample.resources.every(url => url === site + '/favicon.ico'), '试用不得请求模型或账号接口');
+  assert.ok(sample.resources.every(url => ['/favicon.ico', '/root-site-taoyin-preview.png'].some(path => url === site + path)), '试用不得请求模型或账号接口');
   for (const width of [390, 760, 761, 1023, 1024, 1440, 1920]) {
     await cdp('Emulation.setDeviceMetricsOverride', { width, height: 850, deviceScaleFactor: 1, mobile: false });
     const state = await evaluate(`[

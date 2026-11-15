@@ -1,4 +1,5 @@
 """Controlled DeepSeek responses for the CHG-046 browser flow."""
+from html import escape
 import json
 from unittest.mock import patch
 
@@ -64,6 +65,9 @@ def demo_site_provider(stage, requirement, prior, key, admit, record, *, categor
     assert layout in {"landing", "brand"}
     spec = {"kind": "website", "layout": layout, "title": "山野咖啡", "goal": "品牌介绍和咖啡菜单"}
     content = {"spec": spec, "implementation": website_code(layout)}[stage]
+    if stage == "implementation" and requirement.startswith("转义标签回归："):
+        content["markup"] = escape(content["markup"])
+        content["script"] = "void 0;"
     if stage == "implementation" and requirement == RECOVERY_REQUIREMENT:
         global recovery_generated
         content["markup"] += """

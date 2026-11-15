@@ -200,6 +200,17 @@ class RuntimeVerifierTests(unittest.TestCase):
                 http.shutdown()
                 server.join(timeout=2)
 
+    def test_website_rejects_page_markup_rendered_as_visible_text(self):
+        markup = '&lt;header&gt;&lt;h1&gt;陶隐茶壶&lt;/h1&gt;&lt;/header&gt;'
+        shell = '<!doctype html><main id="root-website">{}</main>'
+        for body in (markup, '<p>' + markup + '</p>'):
+            with self.subTest(body=body):
+                with self.assertRaises(RuntimeVerificationError) as rejected:
+                    verify(shell.format(body).encode(), [], website=True)
+                self.assertEqual(rejected.exception.diagnostic, "website_markup_text")
+        verify(shell.format("<h1>HTML 示例</h1><pre><code>" + markup + "</code></pre>").encode(),
+               [], website=True)
+
     def test_website_requires_styles_that_change_the_rendered_page(self):
         from staged_website import assemble
 

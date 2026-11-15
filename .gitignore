@@ -43,6 +43,7 @@
 /design/*
 !/design/root-workbench.html
 !/design/root-public-site.html
+!/design/root-site-taoyin-preview.png
 !/design/root-account.html
 !/design/root-version-history.html
 !/design/root-workbench-entry.html

@@ -10,7 +10,7 @@ const profile = process.argv[3];
 const maxMessageSize = Number(process.argv[4] || 2 * 1024 * 1024);
 const input = [];
 for await (const part of process.stdin) input.push(part);
-const { html, entries, backup, limit, website, recordField, recordVisibility } = JSON.parse(Buffer.concat(input).toString());
+const { html, entries, backup, limit, website, recordField, recordVisibility, thumbnail } = JSON.parse(Buffer.concat(input).toString());
 const dateDay = String(10 + Number.parseInt(randomUUID().slice(0, 2), 16) % 18);
 const recordSample = recordField?.type === 'date' ? '2026-01-' + dateDay :
   recordField?.type === 'integer' ? Number(dateDay) : randomUUID();
@@ -228,6 +228,20 @@ function verifyWebsiteStyle() {
   }
 }
 
+function websiteDisplaysMarkup() {
+  const root = document.getElementById('root-website') || document.body;
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  const opening = /<(?:div|header|nav|main|section|article|h[1-6]|p|button|footer)(?=[\s>])/i;
+  const closing = /<\/(?:div|header|nav|main|section|article|h[1-6]|p|button|footer)\s*>/i;
+  for (let node; (node = walker.nextNode());) {
+    const parent = node.parentElement;
+    if (parent.closest('pre, code, samp, script, style, textarea, template')) continue;
+    if (opening.test(node.data) && closing.test(node.data)
+        && parent.checkVisibility({visibilityProperty:true})) return true;
+  }
+  return false;
+}
+
 async function verifyWebsiteTabs() {
   const groupSelector = '[role="tablist"]';
   const visible = node => node?.checkVisibility({visibilityProperty:true});
@@ -318,6 +332,9 @@ async function run() {
   await cdp('Fetch.enable', {}, targetSession);
   await cdp('Target.setAutoAttach', autoAttach, targetSession);
   await cdp('Browser.setDownloadBehavior', { behavior: 'deny' });
+  if (thumbnail) await cdp('Emulation.setDeviceMetricsOverride', {
+    width:480,height:300,deviceScaleFactor:1,mobile:false,
+  }, targetSession);
   const top = await cdp('Page.navigate', { url: wrapper }, targetSession);
   if (top.errorText) throw new Error('Could not load verification wrapper');
   const { executionContextId } = await cdp('Page.createIsolatedWorld', {
@@ -338,6 +355,7 @@ async function run() {
     const frame = document.createElement('iframe');
     frame.setAttribute('sandbox', ${JSON.stringify('allow-scripts allow-forms' + (backup && !storageDisabled ? ' allow-downloads' : ''))});
     frame.referrerPolicy = 'no-referrer';
+    if (${Boolean(thumbnail)}) frame.style.cssText = 'position:fixed;inset:0;width:100vw;height:100vh;border:0;';
     frame.srcdoc = '<!doctype html><title>Empty verification frame</title>';
     document.body.append(frame);
     return true;
@@ -468,6 +486,9 @@ async function run() {
     submissions.push(JSON.parse(observed));
   }
   if (recordField || Array.isArray(recordVisibility)) return 'record:' + JSON.stringify({visible, submissions});
+  if (website && await evaluate(
+    '(' + websiteDisplaysMarkup.toString() + ')()', observer.executionContextId, sessionId,
+  )) return 'failed:' + (failure || 'website_markup_text');
   if (website && html.includes('<style data-root-website-style>')) {
     for (const width of [1440, 390]) {
       await evaluate(`document.querySelector('iframe').style.width = "${width}px"`, executionContextId);
@@ -485,7 +506,13 @@ async function run() {
   if (website && !await evaluate(
     '(' + verifyWebsiteTabs.toString() + ')()', observer.executionContextId, sessionId,
   )) return 'failed:' + (failure || 'website_tabs');
-  return failure ? 'failed:' + failure : 'ok';
+  if (failure) return 'failed:' + failure;
+  if (thumbnail) {
+    const screenshot = await cdp('Page.captureScreenshot', {format:'jpeg', quality:70}, targetSession).catch(() => null);
+    if (failure) return 'failed:' + failure;
+    if (screenshot?.data) return 'thumbnail:' + screenshot.data;
+  }
+  return 'ok';
 }
 
 let timer;

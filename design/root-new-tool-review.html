@@ -179,7 +179,7 @@
           <details class="stage-detail"><summary>查看原需求</summary><p id="submitted"></p></details>
         </article>
       </section>
-      <section class="preview" id="running-preview" hidden><p class="preview-label">工具预览</p><h2>正在准备预览</h2><p>生成完成后可在这里试用。</p></section>
+      <section class="preview" id="running-preview" hidden><p class="preview-label">工具预览</p><h2 id="pending-preview-title">正在准备预览</h2><p id="pending-preview-copy">生成完成后可在这里试用。</p></section>
       <section class="preview" id="old-preview" hidden aria-labelledby="old-title">
         <p class="preview-label">工具预览 · 上一版仍可用</p><h2 id="old-title" tabindex="-1">读书清单</h2>
         <p><a href="root-tool-experience-review.html#revision">继续修改示例</a></p>
@@ -233,15 +233,15 @@
     return '';
   }
 
-  function recordTitleDemo(mode, keepOldPreview = false) {
+  function recordTitleDemo(mode) {
     try {
       sessionStorage.setItem(titleDemoKey, JSON.stringify({
-        mode, requirement: prompt.value, title: taskTitle, draftName, outcome: byId('outcome').value, keepOldPreview,
+        mode, requirement: prompt.value, title: taskTitle, draftName, outcome: byId('outcome').value,
       }));
     } catch {}
   }
 
-  function show(mode, { focusHeading = true, keepOldPreview = false } = {}) {
+  function show(mode, { focusHeading = true } = {}) {
     clearTimeout(timer);
     openResult.hidden = mode !== 'ready';
     start.hidden = mode !== 'start';
@@ -250,8 +250,10 @@
     if (['start', 'old', 'created'].includes(mode)) split.dataset.stage = mode;
     dismissGuide();
     split.hidden = mode === 'start' || mode === 'history';
-    oldPreview.hidden = mode !== 'old' && mode !== 'failed' && !keepOldPreview;
-    byId('running-preview').hidden = mode !== 'running' || keepOldPreview;
+    oldPreview.hidden = mode !== 'old';
+    byId('running-preview').hidden = mode !== 'running' && mode !== 'failed';
+    byId('pending-preview-title').textContent = mode === 'failed' ? '本次未生成预览' : '正在准备预览';
+    byId('pending-preview-copy').textContent = mode === 'failed' ? '重试成功后可在这里试用。' : '生成完成后可在这里试用。';
     byId('created-actions').hidden = mode !== 'created';
     byId('preview-label').hidden = mode !== 'ready';
     byId('review-state').value = ['running','ready','failed'].includes(mode) ? mode : 'start';
@@ -280,8 +282,8 @@
     prompt.focus();
   }
   function showStep(current) {
-    const steps = ['理解需求', '生成工具', '组装工具'];
-    status.textContent = ['正在理解需求', '正在生成工具', '正在组装工具'][current];
+    const steps = ['理解需求', '生成工具', '准备预览'];
+    status.textContent = ['正在理解需求', '正在生成工具', '正在准备预览'][current];
     byId('stage-count-text').textContent = (current + 1) + ' / ' + steps.length;
     document.querySelectorAll('.stage-meter i').forEach((segment, index) => {
       segment.dataset.state = index < current ? 'done' : index === current ? 'active' : 'waiting';
@@ -293,9 +295,9 @@
       return item;
     }));
   }
-  function stage(mode, current = mode === 'failed' ? 0 : 1, keepOldPreview = false) {
+  function stage(mode, current = mode === 'failed' ? 0 : 1) {
     const completing = split.dataset.stage === 'running' && mode === 'ready';
-    show(mode, { keepOldPreview });
+    show(mode);
     split.dataset.stage = mode;
     split.dataset.arriving = String(completing);
     byId('stage-title').textContent = taskTitle || '新工具';
@@ -306,14 +308,14 @@
     if (mode === 'failed') {
       byId('failure-reason').textContent = current === 0
         ? '理解需求 · 本阶段的结果未能保存。'
-        : '组装工具 · 新版未通过预览检查。';
+        : '准备预览 · 新版未通过预览检查。';
     }
     const [label, info] = {
       running: ['正在生成工具', ''],
       ready: ['已保存', '可以打开工具，也可以稍后从「我的工具」找回。'],
       failed: ['生成未完成', current === 0
-        ? '需求分析结果未能保存。可以编辑需求或重试，右侧读书清单仍可使用。'
-        : '新版未通过预览检查。可以编辑需求或重试，右侧读书清单仍可使用。']
+        ? '需求分析结果未能保存。可以编辑需求或重试。'
+        : '新版未通过预览检查。可以编辑需求或重试。']
     }[mode];
     status.textContent = label;
     byId('status-info').textContent = info;
@@ -328,18 +330,18 @@
       byId('open-created').hidden = false;
     }
   }
-  function generate(resume = false, keepOldPreview = false) {
+  function generate(resume = false) {
     if (!prompt.value.trim()) return;
     const outcome = byId('outcome').value;
     if (resume !== true) taskTitle = draftName;
-    stage('running', 0, keepOldPreview);
+    stage('running', 0);
     byId('stage-title').focus();
-    recordTitleDemo('running', keepOldPreview);
+    recordTitleDemo('running');
     timer = setTimeout(() => {
       taskTitle ||= sampleTitle(prompt.value);
       byId('stage-title').textContent = taskTitle;
       showStep(1);
-      recordTitleDemo('running', keepOldPreview);
+      recordTitleDemo('running');
       timer = setTimeout(() => {
         showStep(2);
         timer = setTimeout(() => {
@@ -416,7 +418,7 @@
     if (event.key === 'Escape') dismissGuide();
   });
   composer.onsubmit = event => { event.preventDefault(); generate(); };
-  retry.onclick = () => generate(false, true);
+  retry.onclick = () => generate();
   edit.onclick = showInput;
   byId('books').onsubmit = event => {
     event.preventDefault();
@@ -466,7 +468,7 @@
         taskTitle = saved.title;
         byId('outcome').value = saved.outcome;
         syncPrompt();
-        if (saved.mode === 'running') generate(true, saved.keepOldPreview === true);
+        if (saved.mode === 'running') generate(true);
         else stage(saved.mode, 2);
       }
     } catch {}

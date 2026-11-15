@@ -9,6 +9,7 @@ import re
 import runpy
 import subprocess
 import sys
+import tarfile
 from datetime import datetime, timezone
 from tempfile import NamedTemporaryFile
 from urllib.parse import urlsplit
@@ -136,7 +137,10 @@ def check_evidence(record, checks, candidate, *, optional_live=False, artifact_s
         item = evidence.get(key)
         if not isinstance(item, dict):
             raise ValueError(f"缺少「{label}」回执（evidence.{key}）。")
-        if (item.get("commit"), item.get("build")) != candidate:
+        evidence_candidate = candidate
+        if artifact_sha and key in {"target", "rollback"}:
+            evidence_candidate = (candidate[0], release_build(record, candidate))
+        if (item.get("commit"), item.get("build")) != evidence_candidate:
             raise ValueError(f"「{label}」的 SHA 或构建与本次候选不一致。")
         if key in {"independent", "product"}:
             covered = item.get("scope")
@@ -173,6 +177,49 @@ def check_running_build(entry, build):
         config = json.loads(response.read(65536))
     if not isinstance(config, dict) or config.get("build") != build:
         raise ValueError(f"工作台运行构建与候选 {build} 不一致。")
+
+
+def check_release_integration(commit):
+    def git(*args, cwd=ROOT):
+        return subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True, timeout=15).stdout
+
+    main = "refs/heads/main"
+    base = git("rev-parse", "--verify", main).strip().decode()
+    common = git("merge-base", base, commit).strip().decode()
+    if common == commit:
+        return
+    if common != base:
+        raise ValueError("候选无法从当前 main 快进，请先整合主干，再固定整版候选。")
+
+    worktree = None
+    for item in git("worktree", "list", "--porcelain", "-z").split(b"\0"):
+        if item.startswith(b"worktree "):
+            worktree = Path(item[len(b"worktree "):].decode())
+        if item == b"branch refs/heads/main":
+            break
+    else:
+        return
+
+    def paths(output):
+        return set(output.decode().split("\0")) - {""}
+
+    incoming = paths(git("diff", "--name-only", "-z", base, commit))
+    local = paths(git("diff", "--name-only", "-z", "--cached", cwd=worktree))
+    local |= paths(git("diff", "--name-only", "-z", cwd=worktree))
+    if incoming:
+        local |= paths(git("ls-files", "--others", "-z", "--",
+                           *sorted(incoming), cwd=worktree))
+        for target in incoming:
+            for parent in Path(target).parents:
+                path = worktree / parent
+                if path.is_symlink() or path.is_file():
+                    local.add(parent.as_posix())
+    conflicts = sorted(path for path in local if any(
+        path == target or path.startswith(target + "/") or target.startswith(path + "/")
+        for target in incoming
+    ))
+    if conflicts:
+        raise ValueError("main 工作区有与发布重叠的未提交文件，请先保留改动再提测：" + "、".join(conflicts))
 
 
 def check_handoff(record, candidate):
@@ -334,6 +381,10 @@ def check_product_result(record, candidate):
             "report_sha256": hashlib.sha256(report.read_bytes()).hexdigest()}
 
 
+def release_build(record, candidate):
+    return field(record, "production_build") if "production_build" in record else candidate[1]
+
+
 def check_deploy(record, candidate):
     field(record, "environment")
     local_file(field(record, "authorization"))
@@ -347,6 +398,18 @@ def check_deploy(record, candidate):
             digest.update(chunk)
     if digest.hexdigest() != expected:
         raise ValueError(f"部署制品 SHA-256 不匹配：{artifact}")
+    if "production_build" in record:
+        try:
+            with tarfile.open(artifact) as archive:
+                version_file = archive.extractfile("VERSION")
+                if version_file is None:
+                    raise ValueError("部署制品的 VERSION 须为文件。")
+                with version_file:
+                    identity = version_file.read(256).decode().split()
+        except (KeyError, tarfile.TarError) as error:
+            raise ValueError("部署制品缺少有效的 VERSION。") from error
+        if len(identity) != 3 or tuple(identity[:2]) != (candidate[0], release_build(record, candidate)):
+            raise ValueError("部署制品的提交或生产构建与记录不一致。")
     check_evidence(record, DEPLOY_CHECKS, candidate, artifact_sha=expected)
     qa = check_product(record, candidate)
     product, receipt = checked_receipt(
@@ -546,12 +609,15 @@ def main():
         else:
             candidate = check_candidate(record)
             if args.expected_release:
-                actual = (*candidate, field(record, "environment"), field(record, "artifact_sha256"))
+                actual = (candidate[0], release_build(record, candidate),
+                          field(record, "environment"), field(record, "artifact_sha256"))
                 if actual != tuple(args.expected_release):
                     raise ValueError("部署记录与实际切换的候选、目标或制品不一致。")
             check = {"handoff": check_handoff, "qa-accept": check_qa_accept,
                      "qa-result": check_qa_result, "product-start": check_product,
                      "product-result": check_product_result, "deploy": check_deploy}[args.stage]
+            if args.stage == "handoff" and record.get("kind") == "整版":
+                check_release_integration(candidate[0])
             details = check(record, candidate) or {}
             if args.stage == "qa-result":
                 details = {"qa_acceptance": details}

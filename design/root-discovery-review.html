@@ -1,0 +1,276 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ROOT · 发现与分享</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#f4f6fa;color:#18263f;font:15px/1.55 system-ui,"PingFang SC",sans-serif}
+[hidden]{display:none!important}header{height:64px;background:#fff;border-bottom:1px solid #d7dfed;display:flex;align-items:center;gap:12px;padding:0 22px}header strong{font-size:23px;letter-spacing:-.06em;font-weight:900}
+.shell{display:grid;grid-template-columns:158px minmax(0,1fr);min-height:calc(100dvh - 64px)}aside{padding:18px 10px;background:#edf1f8;border-right:1px solid #d7dfed}aside button{width:100%;text-align:left;border:0;background:transparent}aside [aria-current=page]{background:#dfe8f8;color:#233f7c;font-weight:700}
+main{min-width:0;padding:clamp(16px,4vw,60px)}.start{max-width:660px;margin:clamp(24px,7vh,72px) auto}
+h1,h2,p{margin:0}h1{font-size:clamp(26px,4vw,43px);line-height:1.2}.start>h1{text-align:center;margin-bottom:22px}
+button,textarea{font:inherit;color:inherit}button{min-height:44px;padding:7px 12px;border-radius:8px;border:1px solid #d3dced;background:white;cursor:pointer}button:disabled{opacity:.5;cursor:default}button:focus-visible,textarea:focus-visible{outline:2px solid #405cb0;outline-offset:3px}.primary{background:#2e478e;color:white;border-color:#2e478e}
+.composer,.discovery,.tool{background:white;border:1px solid #d7dfed;border-radius:14px;padding:16px}.composer textarea{width:100%;min-height:110px;resize:vertical;border:0;padding:8px;background:#f4f6fa;border-radius:7px}.actions{display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin-top:12px}.actions .primary{margin-left:auto}.modes{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:14px 0}.modes button{text-align:left}
+.discovery{margin-top:32px}.discovery h2{font-size:20px;margin-bottom:14px}.entry{display:block;width:min(100%,340px);padding:0;overflow:hidden;text-align:left}.entry>span:last-child{display:block;padding:9px 13px}.miniature{display:grid;place-items:center;text-align:center;padding:15px;min-height:130px;background:#eae2d4;color:#392d25;font:700 26px/1.3 "Songti SC",serif}.miniature small{font:13px system-ui}
+.tool{max-width:960px;margin:auto}.tool-head{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:16px}
+dialog{max-width:min(440px,calc(100vw - 24px));border:1px solid #d7dfed;border-radius:14px;padding:22px;color:inherit}dialog::backdrop{background:#111e3966}dialog p{margin-top:8px}#notice{margin:8px 0;color:#234682}
+@media(max-width:650px){.shell{grid-template-columns:70px minmax(0,1fr)}aside{padding:10px 4px}aside button{padding:4px;font-size:12px}main{padding:10px}.composer,.discovery,.tool{padding:10px}.actions .primary{margin-left:0}}
+.balance{color:#435473;font-size:13px;margin-bottom:2px}
+.composer{padding:12px;border-radius:12px}
+.composer label{display:block;font-size:13px;font-weight:700;margin-bottom:6px}
+.composer select,.composer textarea{font:inherit;color:inherit;width:100%;border:1px solid #a9b9d6;border-radius:8px;padding:10px 12px}
+.composer select{min-height:44px;background:white}.composer textarea{min-height:132px;background:#f2f5fa}
+.scope{margin:8px 0 13px;color:#435473;font-size:14px}
+.composer .actions{margin-top:10px}.composer .actions button:not(.primary){min-height:36px;border-radius:999px;font-size:13px}
+.composer .primary:disabled{opacity:1;background:#eaf0f8;color:#435473;border-color:#d3dced}
+.modes small{display:block;margin-top:3px;color:#435473}
+.discovery{max-width:1200px;margin:42px auto 0;padding:20px 0 0;border:0;border-top:1px solid #cbd6e8;border-radius:0;background:transparent}
+.discovery h2{margin:0 0 16px;font-size:21px}
+.works{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:20px}
+.entry{width:100%;min-width:0;border:0;background:transparent;border-radius:10px;padding:0}
+.entry:hover .miniature{border-color:#6a83b8}
+.entry>span:last-child{padding:10px 2px 4px;font-weight:650}
+.miniature{display:flex;flex-direction:column;justify-content:start;align-items:stretch;gap:8px;padding:13px;border:1px solid #d3dced;border-radius:10px;min-height:0;aspect-ratio:1.7;overflow:hidden;background:#fff;color:#263957;text-align:left;font:600 11px/1.35 system-ui}
+.miniature[data-tone="tea"]{background:#eae2d4;color:#392d25}
+.thumb-bar{display:flex;gap:8px;justify-content:space-between;border-bottom:1px solid currentColor;padding-bottom:5px;font-size:9px;opacity:.8}
+.thumb-title{font:700 clamp(15px,2vw,27px)/1.15 "Songti SC",serif;margin-top:5px}
+.thumb-row{display:block;border-bottom:1px solid #c9d3e4;padding:3px 0;font-size:10px;font-weight:500}
+.miniature[data-tone="green"] .thumb-row{background:#eef4ef;border-radius:4px;padding:5px}
+@media(max-width:1040px){.works{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:650px){.works{grid-template-columns:minmax(0,1fr);gap:12px}.discovery{margin-top:30px;padding-top:16px}}
+.work-frame{display:block;width:100%;height:clamp(480px,72dvh,820px);border:1px solid #d7dfed;border-radius:10px;background:#f7f3ea}
+.miniature.cover-image{padding:0}.cover-image img{width:100%;height:100%;object-fit:cover;object-position:center top}
+.trial{max-width:660px;margin:18px auto 0;padding:clamp(14px,3vw,28px);border:1px solid #d7dfed;border-radius:12px;background:#f8faff}
+.trial :is(input,select){font:inherit;width:100%;min-width:0;min-height:44px;padding:8px;border:1px solid #a9b9d6;border-radius:8px;color:inherit;background:white}
+.trial label{display:grid;gap:4px}.trial .fields{display:grid;gap:10px;grid-template-columns:repeat(auto-fit,minmax(min(100%,120px),1fr))}
+.trial output{display:block;font-weight:700;margin-top:12px}.trial ul{list-style:none;padding:0;margin:12px 0 0}
+.trial li label{display:flex;align-items:center;min-height:44px;border-top:1px solid #d7dfed;gap:8px}
+.trial input[type=checkbox]{width:18px;min-height:18px}
+#tool-name:focus{outline:none}
+a.entry{display:block;color:inherit;text-decoration:none}
+a.entry:focus-visible{outline:2px solid #405cb0;outline-offset:3px}
+body.standalone .shell{display:block}
+body.standalone aside{display:none}
+body.standalone main{padding:0}
+body.standalone .tool{max-width:none;padding:0;border:0;border-radius:0}
+body.standalone .tool-head{margin:0;padding:10px 20px;background:#fff;border-bottom:1px solid #d7dfed}
+body.standalone .tool-head h1{font:700 18px/1.3 system-ui}
+body.standalone #notice:not(:empty),body.standalone #unavailable{margin:12px 20px}
+body.standalone .work-frame{height:calc(100dvh - 130px);min-height:320px;border:0;border-radius:0}
+#back{color:inherit;text-decoration:none;padding:8px 12px;border:1px solid #d3dced;border-radius:8px}
+</style>
+<header><strong>ROOT</strong><span>工具工作台</span></header>
+<div class="shell">
+<aside aria-label="工作台导航"><button id="new" aria-current="page">新建工具</button><button id="library">我的工具</button><button id="saved" hidden>茶壶官网</button></aside>
+<main>
+<section class="start" id="start">
+<h1>你想做什么工具？</h1>
+<p class="balance">个人生成额度剩余 988 / 1000 次</p>
+<div class="composer">
+<label for="category">生成类别</label>
+<select id="category" aria-describedby="scope"><option>按需求自动选择</option><option>清单、台账或看板</option><option>计算工具</option><option>单页落地页</option><option>多页品牌官网</option></select>
+<p class="scope" id="scope">本版支持清单、台账、看板、计算工具、单页落地页和多页品牌官网。结果可在工作台预览、保存和重新打开。后续计划包括自定义组件、数据库、外部服务与公开发布。</p>
+<label for="prompt">工具需求</label>
+<textarea id="prompt" maxlength="2000" placeholder="描述你想做的工具、怎么用、需要保存哪些数据。"></textarea>
+<div class="actions"><button id="example">试试茶壶官网</button><button id="calculator">试试简易计算器</button><button class="primary" id="begin" disabled>开始</button></div></div>
+<nav class="modes" aria-label="新建方式"><button id="assistant"><strong>需求助手</strong><small>把想法梳理成需求</small></button><button id="table"><strong>从表格生成</strong><small>用现有数据开始</small></button></nav>
+</section>
+<section class="discovery" id="discovery" aria-labelledby="discovery-title" hidden><h2 id="discovery-title" tabindex="-1">发现</h2><div class="works" id="works"></div></section>
+<section class="tool" id="tool" hidden>
+<div class="tool-head"><h1 id="tool-name" tabindex="-1">茶壶官网</h1><button id="share">分享到发现</button><a id="back" href="root-discovery-review.html" hidden>← 返回发现</a></div>
+<p id="notice" role="status"></p>
+<div id="trial-content"></div>
+<p id="unavailable" hidden>此作品当前未公开分享。</p>
+</section>
+</main>
+</div>
+<dialog id="confirmation" aria-labelledby="dialog-title"><form method="dialog"><h2 id="dialog-title">发布到发现</h2><p id="dialog-copy">其他工作台用户可查看茶壶官网的当前版本。私有记录不会随作品分享。</p><div class="actions"><button value="cancel">取消</button><button class="primary" value="confirm" id="confirm">确认发布</button></div></form></dialog>
+<script>
+const el = id => document.getElementById(id);
+const params = new URLSearchParams(location.search);
+const shareKey = params.get('share');
+const reviewState = shareKey ? '#' + (params.get('from') || '') : location.hash;
+const publicationKey = 'root-discovery-review:tea:' + reviewState;
+let published = sessionStorage.getItem(publicationKey) === 'published';
+if (!shareKey && sessionStorage.getItem(publicationKey) === null && ['#single', '#multiple'].includes(reviewState)) {
+  published = true;
+  sessionStorage.setItem(publicationKey, 'published');
+}
+const tea = {kind:'website', name:'茶壶官网', subtitle:'茶壶系列 · 制壶工艺', heading:'一壶一茶', rows:['器形 · 泥料 · 手作工艺']};
+const reviewWorks = reviewState === '#multiple' ? [
+  {kind:'board', name:'交付跟进板', subtitle:'事项 · 负责人 · 进度', tone:'blue', heading:'交付进度', rows:['确认演示范围　待完成','准备样例数据　进行中']},
+  {kind:'calculator', name:'简易计算器', subtitle:'加 · 减 · 乘 · 除', tone:'green', heading:'计算结果', rows:['12　＋　8','结果　20']},
+  {kind:'reading', name:'读书清单', subtitle:'书名 · 作者 · 阅读状态', tone:'violet', heading:'阅读记录', rows:['海边的卡夫卡　已读','设计中的设计　阅读中']},
+] : [];
+function renderWorks() {
+  const works = [...(published ? [tea] : []), ...reviewWorks];
+  el('discovery').hidden = !works.length;
+  el('works').replaceChildren(...works.map(work => {
+    const button = document.createElement('a');
+    const link = new URL(location.pathname, location.href);
+    link.searchParams.set('share', work.kind);
+    if (reviewState) link.searchParams.set('from', reviewState.slice(1));
+    button.href = link.href;
+    button.className = 'entry';
+    const cover = document.createElement('span');
+    cover.className = 'miniature';
+    cover.dataset.tone = work.tone || 'tea';
+    cover.setAttribute('aria-hidden', 'true');
+    const bar = document.createElement('span');
+    bar.className = 'thumb-bar';
+    bar.textContent = work.subtitle;
+    const heading = document.createElement('span');
+    heading.className = 'thumb-title';
+    heading.textContent = work.heading;
+    cover.append(bar, heading);
+    for (const value of work.rows) {
+      const row = document.createElement('span');
+      row.className = 'thumb-row';
+      row.textContent = value;
+      cover.append(row);
+    }
+    if (work.kind === 'website') {
+      const image = document.createElement('img');
+      image.src = 'root-discovery-teaware.jpg';
+      image.alt = '';
+      cover.classList.add('cover-image');
+      cover.replaceChildren(image);
+    }
+    button.dataset.work = work.kind;
+    const caption = document.createElement('span');
+    caption.textContent = work.name;
+    button.append(cover, caption);
+    return button;
+  }));
+}
+const calculatorMarkup = `<form class="trial">
+  <div class="fields">
+    <label>第一个数<input name="left" type="number" step="any" value="12" required></label>
+    <label>运算<select name="operator"><option value="+">加 ＋</option><option value="-">减 −</option><option value="*">乘 ×</option><option value="/">除 ÷</option></select></label>
+    <label>第二个数<input name="right" type="number" step="any" value="8" required></label>
+  </div><div class="actions"><button type="submit" class="primary">计算</button></div>
+  <output aria-live="polite"></output>
+</form>`;
+const checklistMarkup = `<section class="trial"><p data-count role="status"></p><ul></ul></section>`;
+function renderTrial(work) {
+  const content = el('trial-content');
+  if (work.kind === 'website') {
+    const frame = document.createElement('iframe');
+    frame.className = 'work-frame';
+    frame.title = '青砂茶器官网试玩';
+    frame.setAttribute('sandbox', 'allow-scripts');
+    frame.src = 'root-discovery-teaware.html';
+    content.replaceChildren(frame);
+    return;
+  }
+  if (work.kind === 'calculator') {
+    content.innerHTML = calculatorMarkup;
+    const form = content.querySelector('form');
+    form.onsubmit = event => {
+      event.preventDefault();
+      const fields = new FormData(form);
+      const left = Number(fields.get('left'));
+      const right = Number(fields.get('right'));
+      const operation = fields.get('operator');
+      const result = {'+':left + right, '-':left - right, '*':left * right, '/':left / right}[operation];
+      form.querySelector('output').textContent = operation === '/' && right === 0
+        ? '除数不能为 0。' : '结果 ' + new Intl.NumberFormat('zh-CN', {maximumSignificantDigits:12}).format(result);
+    };
+    return;
+  }
+  const reading = work.kind === 'reading';
+  const examples = reading ? ['海边的卡夫卡', '设计中的设计'] : ['确认演示范围', '准备样例数据', '复核体验入口'];
+  content.innerHTML = checklistMarkup;
+  const list = content.querySelector('ul');
+  for (const [index, name] of examples.entries()) {
+    const row = document.createElement('li');
+    const label = document.createElement('label');
+    const toggle = document.createElement('input');
+    toggle.type = 'checkbox';
+    toggle.checked = reading ? index === 0 : index === 2;
+    label.append(toggle, name);
+    row.append(label);
+    list.append(row);
+  }
+  function update() {
+    const checked = list.querySelectorAll('input:checked').length;
+    content.querySelector('[data-count]').textContent = reading
+      ? '已读 ' + checked + ' / ' + examples.length + ' 本'
+      : '还有 ' + (examples.length - checked) + ' 项未完成';
+  }
+  list.onchange = update;
+  update();
+}
+function show(page) {
+  el('start').hidden = page !== 'start';
+  el('tool').hidden = page === 'start';
+  el('saved').hidden = page === 'start';
+  el('new').setAttribute('aria-current', page === 'start' ? 'page' : 'false');
+  el('library').setAttribute('aria-current', page === 'owner' ? 'page' : 'false');
+  if (page === 'start') el('trial-content').replaceChildren();
+  else {
+    renderTrial(tea);
+    el('tool-name').focus();
+  }
+  renderWorks();
+  el('discovery').hidden ||= page !== 'start';
+  el('share').textContent = published ? '取消分享' : '分享到发现';
+  el('notice').textContent = published ? '已发布到发现' : '';
+}
+el('new').onclick = () => show('start');
+el('library').onclick = el('saved').onclick = () => show('owner');
+el('share').onclick = () => {
+  el('confirmation').returnValue = '';
+  el('dialog-title').textContent = published ? '取消分享' : '发布到发现';
+  el('dialog-copy').textContent = published ? '作品将从发现移除，分享页同时失效。' : '其他工作台用户可查看茶壶官网的当前版本。私有记录不会随作品分享。';
+  el('confirm').textContent = published ? '确认取消分享' : '确认发布';
+  el('confirmation').showModal();
+};
+el('confirmation').onclose = () => {
+  if (el('confirmation').returnValue !== 'confirm') return;
+  published = !published;
+  sessionStorage.setItem(publicationKey, published ? 'published' : 'withdrawn');
+  show('owner');
+  if (!published) el('notice').textContent = '已从发现移除';
+};
+el('prompt').oninput = () => { el('begin').disabled = !el('prompt').value.trim(); };
+function fill(text){ el('prompt').value=text;el('prompt').oninput();el('prompt').focus(); }
+el('example').onclick = () => fill('做一个茶壶品牌官网，展示茶壶系列和制壶工艺。');
+el('calculator').onclick = () => fill('做一个简易计算器，支持四则运算并提示除数不能为 0。');
+el('begin').onclick = () => { location.href = 'root-new-tool-review.html#draft=' + encodeURIComponent(el('prompt').value); };
+el('assistant').onclick = () => { location.href = 'root-workbench-entry.html?section=idea'; };
+el('table').onclick = () => { location.href = 'root-workbench-entry.html?section=table'; };
+function openSharedWork() {
+  document.body.classList.add('standalone');
+  el('start').hidden = true;
+  el('discovery').hidden = true;
+  el('tool').hidden = false;
+  el('share').hidden = true;
+  el('back').hidden = false;
+  el('back').href = location.pathname + reviewState;
+  const work = [ ...(published ? [tea] : []), ...reviewWorks ].find(item => item.kind === shareKey);
+  el('tool-name').textContent = work?.name || '作品不可用';
+  document.title = el('tool-name').textContent + ' · ROOT';
+  el('unavailable').hidden = Boolean(work);
+  el('notice').textContent = work && work.kind !== 'website' ? '正在使用演示数据。离开后重置。' : '';
+  el('trial-content').replaceChildren();
+  if (work) renderTrial(work);
+}
+if (shareKey) {
+  openSharedWork();
+  window.addEventListener('pageshow', event => {
+    if (!event.persisted) return;
+    published = sessionStorage.getItem(publicationKey) === 'published';
+    openSharedWork();
+  });
+} else {
+  show('start');
+  window.addEventListener('pageshow', event => {
+    if (!event.persisted) return;
+    published = sessionStorage.getItem(publicationKey) === 'published';
+    show('start');
+  });
+  if (published || reviewWorks.length) el('discovery').scrollIntoView({block:'start'});
+}
+</script>
+</html>

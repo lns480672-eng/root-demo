@@ -2,6 +2,7 @@
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
 import hashlib
+import io
 from http.client import HTTPConnection
 import json
 from pathlib import Path
@@ -17,6 +18,7 @@ from urllib.error import HTTPError
 from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
 from uuid import uuid4
+from zipfile import ZipFile
 
 from accounts import Store
 
@@ -378,7 +380,8 @@ class StagedHTTPFixture(unittest.TestCase):
         except HTTPError as error:
             response = error
         with response:
-            return response.status, json.load(response), response.headers.get("Set-Cookie")
+            payload = response.read() if response.headers.get_content_type() == "application/zip" else json.load(response)
+            return response.status, payload, response.headers.get("Set-Cookie")
 
     def account(self, name):
         status, user, cookie = self.request("/api/register", {"username":name, "password":"test-only-password",
@@ -934,6 +937,30 @@ class StagedHTTP(StagedHTTPFixture):
         status, new_task, _ = self.gen(owner, requirement)
         self.assertEqual(status, 202)
         self.assertNotEqual(new_task["task"]["id"], task)
+
+    def test_website_recheck_resolves_a_candidate_with_an_obsolete_proof(self):
+        owner = self.account("website-obsolete-proof")
+        for requirement, valid in (("官网选择器未命中", False), ("官网代码有效", True)):
+            status, result, _ = self.request("/api/generate", {
+                "requirement":requirement, "requestId":uuid4().hex, "category":"brand",
+            }, owner)
+            self.assertEqual(status, 202)
+            identifier = result["task"]["id"]
+            self.wait_task(owner, identifier, "complete")
+            path = "/api/staged/" + identifier
+            candidate = self.request(path + "/candidate", {}, owner)[1]
+            payload = {**candidate["staged"], "toolId":candidate["id"], "entries":[]}
+            with self.store.connection(write=True) as db:
+                db.execute("UPDATE staged_candidates SET runtime_proof=? WHERE task=?",
+                           ("a" * 64, identifier))
+            self.assertEqual(self.request(path + "/publish", payload, owner)[1]["code"], "staged_runtime_required")
+            self.assertEqual(self.request(path + "/verify-preview", payload, owner)[0], 200 if valid else 422)
+            if valid:
+                self.assertEqual(self.request(path + "/publish", payload, owner)[0], 200)
+                self.assertEqual(self.request(path + "/verify-preview", payload, owner)[0], 200)
+            else:
+                self.assertEqual(self.request(path, auth=owner)[1]["task"]["state"], "failed")
+                self.assertEqual(self.request(path + "/publish", payload, owner)[0], 409)
 
     def test_late_website_rejection_cannot_revoke_recorded_verification(self):
         owner = self.account("website-verification-race")
@@ -2172,6 +2199,18 @@ def agent_fixture(stage, requirement, prior, key, dispatch, *, base, timeout_sec
 
 original_agent_run = coding_agent.run
 def run_table_fixture(request, key, dispatch, validate, timeout):
+    if request["task"]["requirement"] == "代码台账 Agent 记录验证探针":
+        files = {"tool.html":"<p>占位</p>", "tool.css":"", "tool.js":"void 0;"}
+        dispatch()({"stage":"implementation", "status":"ok", "dispatched":True})
+        try:
+            validate({"files":files, "decision":{}})
+        except ValueError as error:
+            assert str(error) == "record_initialization", str(error)
+        else:
+            raise AssertionError("placeholder was accepted")
+        dispatch()({"stage":"implementation", "status":"ok", "dispatched":True})
+        return validate({"files":{**files, "tool.html":"<p>已修正</p>",
+                                  "tool.js":"window.rootRecords.list();"}, "decision":{}})
     if not request.get("tableRevision"):
         return original_agent_run(request, key, dispatch, validate, timeout)
     assert set(request["files"]) == {"tool.css"} and "私有记录" not in json.dumps(request, ensure_ascii=False)
@@ -2179,7 +2218,7 @@ def run_table_fixture(request, key, dispatch, validate, timeout):
     return validate({"decision":{}, "files":{"tool.css":"thead th { background: plum; }"}})
 
 def provide_fixture(*args, base=None, **kwargs):
-    if base and base["kind"] == "table":
+    if (base and base["kind"] == "table") or args[1] == "代码台账 Agent 记录验证探针":
         return original_agent_provide(*args, base=base, **kwargs)
     return agent_fixture(*args, base=base, **kwargs)
 
@@ -2188,6 +2227,24 @@ coding_agent.run = run_table_fixture
 coding_agent.provide = provide_fixture
 workbench.serve("fixture-key", 0, runs, coding_agent_enabled=True,'''
     )
+
+    def test_agent_repairs_initialization_and_publishes_the_same_task(self):
+        owner = self.account("agent-repair-owner")
+        balance = self.request("/api/trial", auth=owner)[1]["generation"]["used"]
+        code, response, _ = self.gen(owner, "代码台账 Agent 记录验证探针")
+        self.assertEqual(code, 202)
+        task = response["task"]["id"]
+        self.wait_task(owner, task, "complete")
+        path = "/api/staged/" + task
+        status, candidate, _ = self.request(path + "/candidate", {}, owner)
+        self.assertEqual(status, 200)
+        self.assertIn("已修正", candidate["html"])
+        self.assertNotIn("占位", candidate["html"])
+        proof = {**candidate["staged"], "toolId": candidate["id"], "entries": []}
+        self.assert_preview_verified(path, proof, owner)
+        self.assertEqual(self.request(path + "/publish", proof, owner)[0], 200)
+        self.wait_task(owner, task, "published")
+        self.assertEqual(self.request("/api/trial", auth=owner)[1]["generation"]["used"], balance + 1)
 
     def test_agent_can_restyle_imported_table_without_changing_rows_or_controls(self):
         owner = self.account("table-style-owner")
@@ -2239,6 +2296,15 @@ workbench.serve("fixture-key", 0, runs, coding_agent_enabled=True,'''
         self.assertEqual(status, 200)
         self.assertEqual((current["toolId"], current["version"], current["applied"]),
                          (created["id"], 1, True))
+        def assert_archive(endpoint, binding, source):
+            status, data, _ = self.request(endpoint, {**binding, "format":"zip"}, owner)
+            self.assertEqual(status, 200)
+            with ZipFile(io.BytesIO(data)) as archive:
+                self.assertEqual({name:archive.read(name).decode() for name in archive.namelist()},
+                                 {file["path"]:file["text"] for file in source["files"]})
+            self.assertEqual(self.request(endpoint, {**binding, "format":"zip"}, other)[0], 404)
+
+        assert_archive(tool + "/source", {"version":1}, current)
         paths = {item["path"]:item["text"] for item in current["files"]}
         self.assertEqual(set(paths), {"app.html", "implementation.json", "spec.json"})
         self.assertEqual(paths["app.html"], created["html"])
@@ -2271,6 +2337,7 @@ workbench.serve("fixture-key", 0, runs, coding_agent_enabled=True,'''
         self.assertEqual(status, 200)
         self.assertEqual((proposed["toolId"], proposed["version"], proposed["applied"]),
                          (created["id"], 2, False))
+        assert_archive(path + "/source", proof, proposed)
         pending_files = {item["path"]:item["text"] for item in proposed["files"]}
         self.assertEqual(pending_files["app.html"], pending["html"])
         self.assertIn("新版筛选", pending_files["implementation.json"])
@@ -2283,6 +2350,7 @@ workbench.serve("fixture-key", 0, runs, coding_agent_enabled=True,'''
         self.assertEqual(self.request(path + "/source", {**proof, "nonce":"f" * 32}, owner)[0], 409)
         self.assertEqual(self.request(tool + "/source", {"version":1}, owner)[1], current)
         self.assertEqual(self.request(path + "/cancel-revision", {"nonce":proof["nonce"]}, owner)[0], 200)
+        self.assertEqual(self.request(path + "/source", {**proof, "format":"zip"}, owner)[0], 409)
         self.assertEqual(self.request(path + "/source", proof, owner)[0], 409)
         self.assertEqual(self.request(tool + "/source", {"version":1}, owner)[1], current)
         self.assertEqual(self.request("/api/logout", {}, owner)[0], 200)
@@ -2321,6 +2389,31 @@ workbench.serve("fixture-key", 0, runs, coding_agent_enabled=True,'''
         self.assertEqual((updated["version"], updated["entries"]), (2, saved["entries"]))
         with self.store.connection() as db:
             self.assertEqual(db.execute("SELECT count(*) FROM staged_dispatches WHERE task=?", (task,)).fetchone()[0], 2)
+
+    def test_discovery_uses_synthetic_records_for_record_code(self):
+        owner = self.account("record-share-owner")
+        guest = self.account("record-share-guest")
+        task = self.gen(owner, "代码台账 Agent")[1]["task"]["id"]
+        self.wait_task(owner, task, "complete")
+        path = "/api/staged/" + task
+        candidate = self.request(path + "/candidate", {}, owner)[1]
+        proof = {**candidate["staged"], "toolId":candidate["id"], "entries":[]}
+        self.assert_preview_verified(path, proof, owner)
+        self.assertEqual(self.request(path + "/publish", proof, owner)[0], 200)
+        tool = "/api/tools/" + candidate["id"]
+        current = self.request(tool, auth=owner)[1]
+        status, saved, _ = self.request(tool + "/records", {"version":1, "revision":current["revision"],
+            "operation":{"action":"create", "values":{"name":"仅作者可见", "count":2, "status":"待处理"}}}, owner)
+        self.assertEqual(status, 200)
+        status, shared, _ = self.request(tool + "/share", {"action":"share", "version":1}, owner)
+        self.assertEqual(status, 200)
+        link = "/api/discovery/" + shared["share"]["id"]
+        status, demo, _ = self.request(link, auth=guest)
+        self.assertEqual(status, 200)
+        rows = json.loads(dict(demo["entries"])["root-structured-records-v1"])
+        self.assertEqual(rows[0]["name"], "验证记录")
+        self.assertNotIn("仅作者可见", json.dumps(demo, ensure_ascii=False))
+        self.assertEqual(self.request(tool, auth=owner)[1]["entries"], saved["entries"])
 
     def test_agent_data_change_requires_current_confirmation_and_applies_once(self):
         owner = self.account("agent-migration-owner")

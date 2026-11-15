@@ -19,6 +19,7 @@
       <span class="elys-brand-caption">工具工作台</span>
       <a id="auth-home" class="masthead-link" href="http://[::1]:8788/" hidden>返回官网</a>
       <a id="standalone-back" class="masthead-link" href="/" hidden>← 返回工作台</a>
+      <a id="discovery-back" class="masthead-link" href="/#discovery" hidden>← 返回发现</a>
       <a id="updates-back" class="masthead-link" href="/" hidden>← 返回工作台</a>
       <details id="account" class="account" hidden>
         <summary id="account-name" aria-label="账号菜单"></summary>
@@ -88,12 +89,21 @@
             <section class="tool-library" id="saved-tools" aria-labelledby="library-entry" hidden>
               <p id="library-empty">成功生成的工具会显示在这里。</p>
               <ul id="tool-list" aria-label="已保存的工具"></ul>
+              <button id="view-all-tools" type="button" aria-controls="all-tools" hidden>查看全部</button>
             </section>
             <button id="idea-entry" type="button">需求</button>
             <button id="history-entry" class="navigation-footer" type="button" aria-controls="staged-history" hidden>生成历史</button>
           </nav>
         </div>
       </aside>
+      <section id="all-tools" aria-labelledby="all-tools-title" hidden>
+        <h2 id="all-tools-title">我的工具</h2>
+        <label for="tool-search">按名称搜索</label>
+        <input id="tool-search" type="search" placeholder="输入工具名称">
+        <p id="all-tools-error" role="alert" hidden></p>
+        <p id="tool-search-empty" role="status" hidden>没有找到匹配的工具。</p>
+        <ul id="all-tool-list" aria-label="全部工具"></ul>
+      </section>
       <section id="profile" aria-labelledby="profile-title" hidden>
         <h1 id="profile-title" tabindex="-1">个人中心</h1>
         <section class="profile-card" aria-labelledby="profile-account-title">
@@ -135,6 +145,7 @@
           <section id="generation-result" class="generation-result" aria-labelledby="generation-saved" hidden>
             <p class="system-status-label">系统提示</p>
             <p id="generation-saved" role="status">已保存</p>
+            <p class="auth-muted">如果工具需要调整，打开后点「修改」，告诉 AI 你希望改什么。</p>
             <details id="generation-original"><summary>查看原需求</summary><p></p></details>
             <button id="open-generated-tool" type="button" class="elys-primary">打开工具</button>
           </section>
@@ -168,6 +179,10 @@
             <button id="assistant-entry" type="button"><strong>需求助手</strong><span>把想法梳理成需求</span></button>
             <button id="table-entry" type="button" aria-pressed="false" aria-controls="table-panel"><strong>从表格生成</strong><span>用现有数据开始</span></button>
           </nav>
+          <section id="discovery" aria-labelledby="discovery-title" hidden>
+            <h2 id="discovery-title" tabindex="-1">发现</h2>
+            <ul id="discovery-list"></ul>
+          </section>
           <section id="staged-panel" class="staged-panel" aria-labelledby="staged-title" hidden>
             <h3 id="staged-title">生成任务</h3>
             <details id="staged-original" hidden><summary>查看完整需求</summary><p></p></details>
@@ -268,6 +283,7 @@
             <div class="preview-actions">
               <button id="revise-tool" type="button" hidden>修改</button>
               <a id="open-standalone" class="masthead-link" target="_blank" rel="noopener" hidden>独立打开<span aria-hidden="true"> ↗</span></a>
+              <button id="share-tool" type="button" hidden>分享到发现</button>
               <button id="sync-tool" type="button" hidden>同步工具</button>
             </div>
           </div>
@@ -289,6 +305,7 @@
         </div>
         <p id="first-tool-saved" class="elys-config" role="status" hidden>工具已保存，可从「我的工具」找回。</p>
         <p id="publication-message" class="elys-config" role="status" hidden></p>
+        <p id="share-feedback" class="auth-muted" role="status" hidden></p>
         <p id="standalone-error" class="elys-error" role="status" hidden></p>
         <div id="empty" class="elys-empty">
           <h3 id="empty-title">还没有生成工具</h3>
@@ -297,8 +314,27 @@
         <div id="preview" class="preview-frames"></div>
         <section id="source-panel" aria-labelledby="source-view" hidden>
           <p id="source-status" role="status"></p>
-          <label id="source-file-label" hidden>生成文件 <select id="source-files"></select></label>
-          <pre id="source-text" tabindex="0" hidden><code id="source-code"></code></pre>
+          <button id="source-retry" type="button" hidden>重新读取代码</button>
+          <div id="source-browser" class="source-browser" hidden>
+            <nav class="source-sidebar" aria-label="生成文件">
+              <label for="source-search">搜索文件</label>
+              <input id="source-search" type="search" placeholder="文件名或路径">
+              <ul id="source-files"></ul>
+              <p id="source-no-match" role="status" hidden>没有匹配的文件。</p>
+            </nav>
+            <div class="source-document">
+              <div class="source-toolbar">
+                <strong id="source-path"></strong>
+                <button id="source-download" type="button">下载文件</button>
+                <button id="source-export" type="button">导出 ZIP</button>
+              </div>
+              <div id="source-text" class="source-text" tabindex="0" aria-labelledby="source-path">
+                <div id="source-lines" aria-hidden="true"></div>
+                <pre><code id="source-code"></code></pre>
+              </div>
+              <p id="source-export-status" role="status"></p>
+            </div>
+          </div>
         </section>
         <section id="tool-version-panel" class="tool-version-panel" aria-labelledby="tool-history" hidden>
           <p id="tool-version-status" role="status"></p>
@@ -309,6 +345,16 @@
         </footer>
       </section>
     </div>
+    <dialog id="share-dialog" aria-labelledby="share-dialog-title">
+      <form method="dialog">
+        <h2 id="share-dialog-title"></h2>
+        <p id="share-dialog-copy"></p>
+        <div class="entry-actions">
+          <button value="cancel" autofocus>取消</button>
+          <button id="share-confirm" value="confirm" class="elys-primary"></button>
+        </div>
+      </form>
+    </dialog>
     <dialog id="restore-version-dialog" aria-labelledby="restore-version-title">
       <form method="dialog">
         <h2 id="restore-version-title">恢复此版本</h2>

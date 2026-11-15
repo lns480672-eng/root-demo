@@ -477,6 +477,74 @@ try {
     else await verifyStandalone({base, cdp, evaluate, until, login, logout, generate, activeTool,
       click, pointerClick, type, visible, appRequest, accountA, accountB, anotherTab, screenshot, evidence, probeUrl, probeRequests, probeControls, live,
       readingRequirement:requirements[0], recordRun});
+  } else if (process.argv.includes('--discovery-flow')) {
+    stage = 'AC-023 discovery and sharing';
+    await cdp('Page.navigate', {url:base});
+    await login(accountA, true);
+    if (await visible('#guide-skip')) await click('#guide-skip');
+    assert.equal(await visible('#discovery'), false);
+    await generate(requirements[0]);
+    const original = await activeTool();
+    if (await visible('#open-generated-tool')) await click('#open-generated-tool');
+    const savedTool = await activeTool();
+    const privateBook = '作者账号的私有书目';
+    await type('#book', privateBook, savedTool.context);
+    await click('form button', savedTool.context);
+    await until(async () => JSON.stringify((await stored(savedTool.id)).entries).includes(privateBook));
+    await click('#share-tool');
+    await until(() => visible('#share-confirm'));
+    await click('#share-dialog button[value="cancel"]');
+    assert.deepEqual((await appRequest('/api/discovery')).body.items, []);
+    await click('#share-tool');
+    await until(() => visible('#share-confirm'));
+    await click('#share-confirm');
+    const shareId = await until(async () => (await appRequest('/api/discovery')).body.items[0]?.id, 30000);
+    await logout();
+    await login(accountB, true);
+    if (await visible('#guide-skip')) await click('#guide-skip');
+    await until(() => visible('#discovery-list a'));
+    for (const [width, columns] of [[1440, 4], [800, 2], [390, 1]]) {
+      await cdp('Emulation.setDeviceMetricsOverride', {width,height:844,deviceScaleFactor:1,mobile:width===390});
+      await evaluate('document.querySelector("#discovery-list a").scrollIntoView()');
+      await until(() => evaluate('document.querySelector("#discovery-list img")?.naturalWidth > 0'));
+      assert.equal(await evaluate('getComputedStyle(document.querySelector("#discovery-list")).gridTemplateColumns.split(" ").length'), columns);
+      assert.equal(await evaluate('document.documentElement.scrollWidth <= innerWidth'), true);
+      await screenshot('discovery-' + width);
+    }
+    const coverUrl = base + '/api/discovery/' + shareId + '/thumbnail';
+    assert.equal((await fetch(coverUrl)).status, 401);
+    await click('#discovery-list a');
+    const demo = await activeTool();
+    assert.equal(demo.id, shareId);
+    assert.notEqual(demo.id, original.id);
+    assert.equal(await evaluate('document.querySelector("#preview iframe").sandbox.contains("allow-same-origin")'), false);
+    assert.equal(await evaluate('document.querySelector("#list").textContent.includes(' + JSON.stringify(privateBook) + ')', demo.context), false);
+    await type('#book', '访客试玩书目', demo.context);
+    await click('form button', demo.context);
+    assert.match(await evaluate('document.querySelector("#list").textContent', demo.context), /访客试玩书目/);
+    await click('#discovery-back');
+    await until(() => visible('#discovery-list a'));
+    await click('#discovery-list a');
+    const reopened = await activeTool();
+    assert.doesNotMatch(await evaluate('document.querySelector("#list").textContent', reopened.context), /访客试玩书目/);
+    await logout();
+    await cdp('Page.navigate', {url:base});
+    await login(accountA);
+    assert.match(JSON.stringify((await stored(savedTool.id)).entries), /作者账号的私有书目/);
+    await selectHistory(savedTool.id);
+    await until(() => evaluate('document.querySelector("#share-tool").textContent === "撤回分享"'));
+    await click('#share-tool');
+    await until(() => visible('#share-confirm'));
+    await click('#share-confirm');
+    await until(async () => (await appRequest('/api/discovery')).body.items.length === 0);
+    assert.equal(await evaluate("fetch('/api/discovery/" + shareId + "/thumbnail').then(response => response.status)"), 404);
+    await logout();
+    await cdp('Page.navigate', {url:base});
+    await login(accountB);
+    await cdp('Page.navigate', {url:base + '/#share/' + shareId});
+    await until(() => visible('#standalone-error'));
+    assert.equal(await evaluate('document.querySelectorAll("#preview iframe").length'), 0);
+    evidence.tests.push('AC-023 owner confirmation, responsive cards, isolated demo, preserved private records, and revoked direct access');
   } else if (process.argv.includes('--tool-actions-flow')) {
     stage = 'AC-006/007/008 tool actions and history';
     await cdp('Page.navigate', {url:base});
@@ -637,6 +705,50 @@ try {
       }
       assert.deepEqual(await readDraft(draftB), b);
     }
+    stage = 'AC-006 saved-tool navigation at nine and ten tools';
+    const extra = [];
+    for (let i = 0; i < 7; i++) extra.push(await create('读书清单补充 ' + i));
+    await reload();
+    await click('#library-entry');
+    const sidebarIds = () => evaluate('Array.from(document.querySelectorAll("#tool-list li:not([hidden]) button"), button => button.dataset.id)');
+    assert.equal((await sidebarIds()).length, 9);
+    assert.equal(await visible('#view-all-tools'), false);
+    const tenth = await create('回归：工具列表搜索样例');
+    const newest = [tenth, ...extra.reverse(), latestTool];
+    for (const width of [1440, 390]) {
+      await cdp('Emulation.setDeviceMetricsOverride', {width,height:844,deviceScaleFactor:1,mobile:width===390});
+      await reload();
+      await click('#library-entry');
+      assert.deepEqual(await sidebarIds(), newest);
+      assert.equal(await visible('#view-all-tools'), true);
+      await until(() => evaluate('!document.querySelector("#view-all-tools").disabled'));
+      await click('#view-all-tools');
+      assert.equal(await visible('#all-tools'), true);
+      assert.equal(await visible('.elys-preview'), false);
+      assert.equal(await evaluate('document.documentElement.scrollWidth === document.documentElement.clientWidth'), true);
+      assert.equal(await evaluate(`(() => {
+        const sidebar = document.querySelector('.workspace-sidebar').getBoundingClientRect();
+        return ['#idea-entry', '#view-all-tools'].every(selector =>
+          document.querySelector(selector).getBoundingClientRect().bottom <= sidebar.bottom);
+      })()`), true);
+      assert.equal(await evaluate('document.querySelectorAll("#all-tool-list button").length'), 10);
+      await screenshot('all-tools-' + width);
+      await type('#tool-search', '不存在');
+      assert.equal(await visible('#tool-search-empty'), true);
+      await evaluate('document.querySelector("#tool-search").value = ""');
+      await type('#tool-search', '旅行');
+      assert.deepEqual(await evaluate('Array.from(document.querySelectorAll("#all-tool-list li:not([hidden]) button"), button => button.dataset.id)'), [tenth]);
+      await evaluate('document.querySelector("#tool-search").value = ""');
+      const old = (await library()).items.find(item => item.id === olderTool);
+      await type('#tool-search', old.title);
+      assert.equal(await visible('#all-tool-list button[data-id="' + olderTool + '"]'), true);
+      await click('#all-tool-list button[data-id="' + olderTool + '"]');
+      await until(async () => await visible('.elys-preview') && evaluate('document.querySelector("#tool-list button[aria-current=true]")?.dataset.id === ' + JSON.stringify(olderTool)));
+      assert.equal(await visible('#all-tools'), false);
+      assert.deepEqual(await sidebarIds(), [...newest.slice(0, 8), olderTool]);
+      assert.equal(await evaluate('document.querySelector("#tool-list button[aria-current=true]").dataset.version'), 'v2');
+    }
+    evidence.tests.push({id:'AC-006 tool library overflow', result:'passed', thresholds:[9,10], widths:[1440,390], search:true, olderToolPinned:true});
     evidence.tests.push({id:'NAV-01/02', orderSurvivesToolRevision:true, orderTracksDraftSave:true, otherDraftUnchanged:true});
   } else if (profileFlow) {
     stage = 'AC-022 personal profile';

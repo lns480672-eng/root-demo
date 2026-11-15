@@ -30,7 +30,7 @@ class AccountHTTP(unittest.TestCase):
              "    if requirement == '额度测试超时': raise TimeoutError('fixture timeout')\n"
              "    if requirement == '额度统计不完整': return 200, b'{}'\n"
              "    return 200, json.dumps({'id':'fixture-account','model':generate.MODEL,"
-             "'choices':[{'finish_reason':'stop','message':{'content':'<!doctype html><html><body>工具</body></html>'}}]}).encode()\n"
+             "'choices':[{'finish_reason':'stop','message':{'content':'<!doctype html><html><body><p>工具</p></body></html>'}}]}).encode()\n"
              "generate.request_completion = fixture\n"
              "def analysis(data, key, admit, *, record=None):\n"
              "    if data.get('idea') == '额度统计不完整':\n"
@@ -63,6 +63,94 @@ class AccountHTTP(unittest.TestCase):
             response = error
         with response:
             return response.status, json.load(response), response.headers.get("Set-Cookie")
+
+    def test_discovery_shares_only_a_pinned_published_version(self):
+        def register(prefix):
+            _, identity, cookie = self.request("/api/register", {
+                "username": prefix + uuid4().hex[:10], "password": "discovery-test-password!",
+                "invite": self.store.create_invite(),
+            })
+            return {"cookie": cookie.split(";", 1)[0], "marker": identity["marker"]}
+
+        owner, guest = register("share-owner-"), register("share-guest-")
+        _, tool, _ = self.request("/api/generate", {"requirement": "发现验收清单"}, **owner)
+        tool_id = tool["id"]
+        control = f"/api/tools/{tool_id}/share"
+        payload = {"action": "share", "version": 1}
+        self.assertEqual(self.request("/api/discovery", **guest)[:2], (200, {"items": []}))
+        self.assertEqual(self.request(control, payload, **guest)[0], 404)
+        self.assertEqual(self.request(control, payload, **owner)[0], 404)
+        private_entries = [["books", '["作者私有记录"]']]
+        self.assertEqual(self.request(f"/api/tools/{tool_id}/commit", {
+            "revision": tool["revision"], "entries": private_entries,
+        }, **owner)[0], 200)
+        code, shared, _ = self.request(control, payload, **owner)
+        self.assertEqual(code, 200)
+        share_id = shared["share"]["id"]
+        link = f"/api/discovery/{share_id}"
+        self.assertEqual(self.request(link)[0], 401)
+        self.assertEqual(self.request(f"/api/discovery/{tool_id}", **guest)[0], 404)
+        self.assertEqual(self.request(f"/api/tools/{tool_id}", **guest)[0], 404)
+        self.assertEqual(self.request(control, payload, **owner)[1]["share"]["id"], share_id)
+        public = self.request(link, **guest)[1]
+        self.assertEqual(public["version"], 1)
+        self.assertEqual(public["entries"], [])
+        self.assertIn("工具", public["html"])
+        self.assertEqual(self.request("/api/discovery", **guest)[1]["items"], [shared["share"]])
+        _, revision, _ = self.request(f"/api/tools/{tool_id}/revise", {
+            "requirement": "更新验收清单", "version": 1,
+        }, **owner)
+        self.assertEqual(self.request(f"/api/tools/{tool_id}/publish", {
+            "runId": revision["runId"], "revision": revision["revision"], "entries": private_entries,
+        }, **owner)[0], 200)
+        self.assertEqual(self.request(link, **guest)[1], public)
+        revoke = {"action": "revoke", "id": share_id}
+        self.assertEqual(self.request(control, revoke, **guest)[0], 404)
+        self.assertEqual(self.request(control, revoke, **owner)[0], 200)
+        self.assertEqual(self.request(link, **guest)[0], 404)
+        self.assertEqual(self.request("/api/discovery", **guest)[1]["items"], [])
+        self.assertEqual(self.request(f"/api/tools/{tool_id}", **owner)[1]["entries"], private_entries)
+        next_share = self.request(control, {"action": "share", "version": 2}, **owner)[1]["share"]
+        self.assertNotEqual(next_share["id"], share_id)
+        self.assertEqual(self.request(link, **guest)[0], 404)
+
+    def test_discovery_rejects_a_tool_that_fails_demo_startup(self):
+        name = "broken-share-owner"
+        self.assertEqual(self.register(name, self.store.create_invite())[0], 201)
+        cookie, marker = self.login(name)
+        _, tool, _ = self.request("/api/generate", {"requirement":"测试分享启动失败"}, cookie, marker)
+        path = "/api/tools/" + tool["id"]
+        self.assertEqual(self.request(path + "/commit", {"entries":[]}, cookie, marker)[0], 200)
+        artifact = Path(self.runs) / tool["id"] / "app.html"
+        artifact.write_text("<!doctype html><p>工具</p><script>throw new Error('startup')</script>")
+        status, result, _ = self.request(path + "/share", {"action":"share","version":1}, cookie, marker)
+        self.assertEqual((status, result.get("code")), (409, "share_demo_unavailable"))
+        self.assertEqual(self.request("/api/discovery", None, cookie, marker)[1]["items"], [])
+
+    def test_discovery_uses_synthetic_data_for_imported_tables(self):
+        owner_name, guest_name = "table-share-owner", "table-share-guest"
+        for username in (owner_name, guest_name):
+            self.assertEqual(self.register(username, self.store.create_invite())[0], 201)
+        owner, guest = self.login(owner_name), self.login(guest_name)
+        status, table, _ = self.request("/api/table/inspect", {
+            "source": "upload", "filename": "私有文件.csv", "csv": "事项,负责人\n私有事项,私有姓名\n",
+        }, *owner)
+        self.assertEqual(status, 200)
+        status, tool, _ = self.request("/api/table/generate", {"table": table}, *owner)
+        self.assertEqual(status, 200)
+        path = "/api/tools/" + tool["id"]
+        self.assertEqual(self.request(path + "/commit", {"entries": tool["entries"]}, *owner)[0], 200)
+        status, result, _ = self.request(path + "/share", {"action": "share", "version": 1}, *owner)
+        self.assertEqual(status, 200)
+        share_id = result["share"]["id"]
+        status, sample, _ = self.request("/api/discovery/" + share_id, None, *guest)
+        self.assertEqual(status, 200)
+        self.assertNotIn("私有", json.dumps(sample, ensure_ascii=False))
+        entries = json.loads(dict(sample["entries"])[TABLE_KEY])
+        self.assertEqual([column["name"] for column in entries["columns"]], ["事项", "负责人"])
+        self.assertEqual(entries["rows"], [["示例", "示例"]])
+        self.assertEqual(self.request(path, None, *owner)[1]["entries"], tool["entries"])
+        self.assertEqual(self.request(path + "/share", {"action": "revoke", "id": share_id}, *owner)[0], 200)
 
     def test_deeply_nested_json_returns_a_structured_error(self):
         body = b'{"value":' + b"[" * 1200 + b"0" + b"]" * 1200 + b"}"
@@ -757,10 +845,11 @@ class AccountHTTP(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(releases["items"][0]["build"], config["build"])
         self.assertEqual(releases["items"][0]["version"], releases["current"])
-        self.assertEqual(releases["current"], "0.9.2")
+        self.assertEqual(releases["current"], "0.9.5")
         self.assertEqual(
-            [(item["version"], item["build"]) for item in releases["items"][1:4]],
-            [("0.9.1", "v4-6b961219ca38"), ("0.9", "v4-ecf34a605b87"), ("0.8", "v4-396a683db32f")],
+            [(item["version"], item["build"]) for item in releases["items"][1:7]],
+            [("0.9.4", "v4-84259f118cb3"), ("0.9.3", "v4-3cc91591d320"), ("0.9.2", "v4-d417a4dd9e13"),
+             ("0.9.1", "v4-6b961219ca38"), ("0.9", "v4-ecf34a605b87"), ("0.8", "v4-396a683db32f")],
         )
         self.assertIn("v4-44e3da0cae1b", [item["build"] for item in releases["items"][1:]])
         with urlopen(self.base + "/updates", timeout=5) as response:

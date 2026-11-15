@@ -108,6 +108,11 @@ class Store:
                     entries TEXT NOT NULL DEFAULT '[]', revision INTEGER NOT NULL DEFAULT 0
                 );
                 CREATE INDEX IF NOT EXISTS tools_owner ON tools(owner, published);
+                CREATE TABLE IF NOT EXISTS discovery_shares (
+                    id TEXT PRIMARY KEY, tool_id TEXT NOT NULL UNIQUE REFERENCES tools(id),
+                    version INTEGER NOT NULL, run_id TEXT NOT NULL, title TEXT NOT NULL,
+                    demo_entries TEXT NOT NULL DEFAULT '[]', thumbnail BLOB
+                );
                 CREATE TABLE IF NOT EXISTS table_tools (
                     id TEXT PRIMARY KEY REFERENCES tools(id)
                 );
@@ -440,6 +445,71 @@ class Store:
         with self.connection() as db:
             user = self.session(db, token, marker)
             return dict(self.owned_tool(db, user, tool_id))
+
+    def discovery(self, token, marker):
+        with self.connection() as db:
+            self.session(db, token, marker)
+            rows = db.execute("""
+                SELECT s.id,s.title,s.version FROM discovery_shares s JOIN tools t ON t.id=s.tool_id
+                WHERE t.published=1 ORDER BY s.rowid DESC
+            """)
+            return {"items": [dict(row) for row in rows]}
+
+    def shared_tool(self, token, marker, share_id, read_html, *, thumbnail=False):
+        with self.connection() as db:
+            self.session(db, token, marker)
+            row = db.execute("""
+                SELECT s.* FROM discovery_shares s JOIN tools t ON t.id=s.tool_id
+                WHERE s.id=? AND t.published=1
+            """, (share_id,)).fetchone()
+            if row is None:
+                raise ApiError(404, "share_unavailable", "此作品不可用。")
+            if thumbnail:
+                if row["thumbnail"] is None:
+                    raise ApiError(404, "thumbnail_unavailable", "暂无缩略图。")
+                return row["thumbnail"]
+            return {"id": row["id"], "title": row["title"], "version": row["version"],
+                    "html": read_html(row["run_id"]), "entries": json.loads(row["demo_entries"])}
+
+    def tool_share(self, token, marker, tool_id, data=None, prepare_demo=None, verify_demo=None):
+        action = data.get("action") if data is not None else None
+        if data is not None and not (
+            action == "share" and data.keys() == {"action", "version"}
+            or action == "revoke" and data.keys() == {"action", "id"} and isinstance(data["id"], str)
+        ):
+            raise ApiError(400, "invalid_share", "分享操作无效。")
+
+        def find_share(db):
+            return db.execute("SELECT id,title,version FROM discovery_shares WHERE tool_id=?", (tool_id,)).fetchone()
+
+        if action == "share":
+            with self.connection() as db:
+                owner = self.session(db, token, marker)
+                tool = self.owned_tool(db, owner, tool_id)
+                self.require_version(data["version"], tool["version"])
+                row = find_share(db)
+                if row:
+                    return {"share": dict(row)}
+                html, entries = prepare_demo(db, tool)
+            thumbnail = verify_demo(html, entries, table=tool["table_tool"])
+
+        with self.connection(write=data is not None) as db:
+            owner = self.session(db, token, marker)
+            tool = self.owned_tool(db, owner, tool_id)
+            row = find_share(db)
+            if data is None:
+                return {"share": dict(row) if row else None}
+            if action == "revoke":
+                db.execute("DELETE FROM discovery_shares WHERE tool_id=? AND id=?", (tool_id, data["id"]))
+                remaining = row if row and row["id"] != data["id"] else None
+                return {"share": dict(remaining) if remaining else None}
+            self.require_version(data["version"], tool["version"])
+            if row:
+                return {"share": dict(row)}
+            share = {"id": secrets.token_hex(16), "title": tool["title"], "version": tool["version"]}
+            db.execute("INSERT INTO discovery_shares(id,tool_id,version,run_id,title,demo_entries,thumbnail) VALUES(?,?,?,?,?,?,?)",
+                       (share["id"], tool_id, share["version"], tool["run_id"], share["title"], json.dumps(entries), thumbnail))
+            return {"share": share}
 
     def draft(self, token, marker, tool_id, requirement, entries=None, *, table=False, model=False):
         title = " ".join(requirement.split())[:48]

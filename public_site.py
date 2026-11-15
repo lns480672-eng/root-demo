@@ -9,11 +9,12 @@ from socket import AF_INET6
 from urllib.parse import urlsplit
 
 PAGE = Path(__file__).resolve().parent / "design" / "root-public-site.html"
+BRAND_PREVIEW = PAGE.with_name("root-site-taoyin-preview.png")
 SITE_HOST = "::1"
 DEFAULT_WORKBENCH = "http://127.0.0.1:8774/"
 POLICY = (
     "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; "
-    "base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+    "img-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
 )
 
 
@@ -46,6 +47,11 @@ def serve(port, workbench):
         f'href="{DEFAULT_WORKBENCH}"', f'href="{escape(workbench, quote=True)}"'
     ).encode("utf-8")
 
+    routes = {
+        "/": (body, "text/html; charset=utf-8"),
+        "/root-site-taoyin-preview.png": (BRAND_PREVIEW.read_bytes(), "image/png"),
+    }
+
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, format, *args):
             pass
@@ -54,18 +60,20 @@ def serve(port, workbench):
             if self.headers.get_all("Host") != [host]:
                 self.send_error(400)
                 return
-            if self.path.partition("?")[0] != "/":
+            resource = routes.get(self.path.partition("?")[0])
+            if resource is None:
                 self.send_error(404)
                 return
+            content, content_type = resource
             self.send_response(200)
-            self.send_header("Content-Type", "text/html; charset=utf-8")
-            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(len(content)))
             self.send_header("Content-Security-Policy", POLICY)
             self.send_header("Referrer-Policy", "no-referrer")
             self.send_header("X-Content-Type-Options", "nosniff")
             self.end_headers()
             if include_body:
-                self.wfile.write(body)
+                self.wfile.write(content)
 
         def do_GET(self):
             self.send_page(include_body=True)

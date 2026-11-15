@@ -95,6 +95,32 @@ class AgentWebsiteTests(unittest.TestCase):
         self.assertEqual(len(responses), 2)
 
 
+class AgentRecordTests(unittest.TestCase):
+    def test_initial_record_read_is_required_before_accepting_candidate(self):
+        import coding_agent
+
+        spec = {"kind": "ledger", "title": "工作事项进度看板", "modules": [],
+                "implementation": "record-code-v1",
+                "fields": [{"id": "name", "label": "事项", "type": "text", "required": True, "options": []}]}
+        prior = {"spec.json": json.dumps(spec).encode()}
+
+        def submit(_request, _key, _dispatch, validate, _timeout):
+            files = {"tool.html": "<p>正在澄清时间字段。</p>", "tool.css": "", "tool.js": "void 0;"}
+            with self.assertRaisesRegex(ValueError, "^record_initialization$"):
+                validate({"files": files, "decision": {}})
+            files.update({"tool.html": "<p id='records'></p>", "tool.js": (
+                "window.rootRecords.list().then(rows => {"
+                "document.getElementById('records').textContent = String(rows.length);"
+                "});"
+            )})
+            return validate({"files": files, "decision": {}})
+
+        with patch.object(coding_agent, "run", submit):
+            result = coding_agent.provide("implementation", "制作事项看板", prior, "fixture-key", None,
+                                          timeout_seconds=120)
+        self.assertIn("window.rootRecords.list()", json.loads(result)["script"])
+
+
 class AgentProgramTests(unittest.TestCase):
     def test_calculator_agent_can_style_and_replace_stateless_controls(self):
         import coding_agent

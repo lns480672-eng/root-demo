@@ -2,11 +2,13 @@
 
 import argparse
 import hashlib
+import io
 import json
 import logging
 import os
 import re
 import sqlite3
+import subprocess
 import tempfile
 import threading
 from concurrent.futures import ThreadPoolExecutor
@@ -14,9 +16,10 @@ from html import escape
 from html.parser import HTMLParser
 from http.cookies import CookieError, SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from urllib.parse import urlsplit
 from uuid import uuid4
+from zipfile import ZIP_DEFLATED, ZipFile
 
 import generate
 import generation_settings
@@ -26,9 +29,10 @@ import assistant_model
 import table_import
 import staged_blueprint
 import staged_revision
+import staged_record_code
 import runtime_verify
 from staged_jobs import MAX_ATTEMPTS, StagedJobs
-from accounts import ApiError, DEFAULT_INVITE_HOURS, InviteError, SESSION_SECONDS, Store, TABLE_STORAGE_BYTES
+from accounts import ApiError, DEFAULT_INVITE_HOURS, InviteError, SESSION_SECONDS, Store, TABLE_STORAGE_BYTES, TOOL_STORAGE_BYTES
 from trial_budget import TrialBudget
 
 ROOT = Path(__file__).resolve().parent
@@ -57,6 +61,9 @@ STATIC = {
 }
 TOOL_PATH = re.compile(r"/api/tools/(run-[a-z0-9_]{8})")
 TOOL_ACTION = re.compile(r"/api/tools/(run-[a-z0-9_]{8})/(commit|open|data|records|publish|revise|restore|resolve-publish|resolve-commit|source)")
+DISCOVERY = "/api/discovery"
+DISCOVERY_ITEM = re.compile(r"/api/discovery/([0-9a-f]{32})(/thumbnail)?")
+TOOL_SHARE = re.compile(r"/api/tools/(run-[a-z0-9_]{8})/share")
 TOOL_VERSIONS = re.compile(r"/api/tools/(run-[a-z0-9_]{8})/versions")
 TOOL_REVISION_TASKS = re.compile(r"/api/tools/(run-[a-z0-9_]{8})/revision-tasks")
 DRAFTS = "/api/requirement-drafts"
@@ -83,7 +90,10 @@ TABLE_INSPECT = "/api/table/inspect"
 TABLE_GENERATE = "/api/table/generate"
 TABLE_CONFIG = "/api/table/config"
 RELEASES = (
-    ("0.9.2", "2026-11-14", None, "新建工具使用统一生成状态卡。可查看失败详情、重试或编辑需求，旧工具仍可使用。"),
+    ("0.9.5", "2026-11-14", None, "修复新建台账和看板的预览校验，以及新建失败或重试时显示旧工具的问题。"),
+    ("0.9.4", "2026-11-14", "v4-84259f118cb3", "新增发现与作品分享，支持源码浏览和导出，可在全部工具中按名称搜索。"),
+    ("0.9.3", "2026-11-14", "v4-3cc91591d320", "官网增加品牌官网示例。工作台补充生成等待动效，将最后一步标为准备预览，并拦截显示 HTML 标签的异常官网。"),
+    ("0.9.2", "2026-11-14", "v4-d417a4dd9e13", "新建工具使用统一生成状态卡。可查看失败详情、重试或编辑需求，旧工具仍可使用。"),
     ("0.9.1", "2026-11-14", "v4-6b961219ca38", "后台新增生成配置。扩大源码与续改上下文容量，更新工作台导航与修改对话，修正草稿和独立工具入口。"),
     ("0.9", "2026-11-14", "v4-ecf34a605b87", "更新工作台和后台。生成任务支持短标题，草稿工具名称在保存后保留，断连后可恢复原任务。"),
     ("0.8", "2026-11-14", "v4-396a683db32f", "启用编程 Agent 生成与继续修改工具，支持预览后确认适用的记录变更。"),
@@ -97,7 +107,7 @@ RELEASES = (
 )
 SHELL_POLICY = (
     "default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; "
-    "img-src data:; connect-src 'self'; frame-src 'none'; frame-ancestors 'none'; "
+    "img-src 'self' data:; connect-src 'self'; frame-src 'none'; frame-ancestors 'none'; "
     "base-uri 'none'; form-action 'none'"
 )
 GENERATION_ERRORS = {
@@ -298,7 +308,8 @@ def serve(key, port, runs=generate.RUNS, *, generation_limits=(5, 30), analysis_
                 self.send_header("Content-Security-Policy", policy)
                 paths = (*STATIC, "/api/config", "/api/releases", "/api/session", "/api/register", "/api/login", "/api/logout",
                          "/api/generate", "/api/tools", "/api/tools/*", DRAFTS, DRAFTS + "/*", ANALYZE, CLAIM_ANALYSIS_DRAFT,
-                         TABLE_INSPECT, TABLE_GENERATE, TABLE_CONFIG, PROFILE, TRIAL, ADMIN_SESSION, *ADMIN_ACTIONS)
+                         TABLE_INSPECT, TABLE_GENERATE, TABLE_CONFIG, PROFILE, TRIAL, ADMIN_SESSION,
+                         DISCOVERY, DISCOVERY + "/*", *ADMIN_ACTIONS)
                 if staged:
                     paths += (STAGED, STAGED + "/*")
                 allowed = " ".join(f'"http://{host}{path}"' for path in paths)
@@ -311,6 +322,21 @@ def serve(key, port, runs=generate.RUNS, *, generation_limits=(5, 30), analysis_
         def send_json(self, status, payload, cookie=None):
             self.send_bytes(status, json.dumps(payload, ensure_ascii=False).encode(),
                             "application/json; charset=utf-8", cookie=cookie)
+
+        def send_source(self, source, data):
+            if data.get("format") != "zip":
+                self.send_json(200, source)
+                return
+            if not source["files"]:
+                raise ApiError(404, "tool_source_unavailable", "此版本没有可导出的代码。")
+            buffer = io.BytesIO()
+            with ZipFile(buffer, "w", compression=ZIP_DEFLATED) as archive:
+                for file in source["files"]:
+                    path = file["path"]
+                    if PurePosixPath(path).is_absolute() or "\\" in path or not path or ".." in path.split("/"):
+                        raise ApiError(503, "tool_source_unavailable", "此版本的文件路径无法导出。")
+                    archive.writestr(path, file["text"].encode())
+            self.send_bytes(200, buffer.getvalue(), "application/zip")
 
         def error(self, status, code, message):
             self.send_json(status, {"code": code, "message": message})
@@ -431,6 +457,18 @@ def serve(key, port, runs=generate.RUNS, *, generation_limits=(5, 30), analysis_
                 with store.connection() as db:
                     store.session(db, self.cookie_token(), self.marker())
                 self.send_json(200, {"bytes": table_limits.bytes, "rows": table_limits.rows, "columns": table_limits.columns})
+            elif self.path == DISCOVERY:
+                self.send_json(200, store.discovery(self.cookie_token(), self.marker()))
+            elif match := DISCOVERY_ITEM.fullmatch(self.path):
+                thumbnail = match[2] is not None
+                result = store.shared_tool(self.cookie_token(), None if thumbnail else self.marker(), match[1], self.read_tool_html,
+                                           thumbnail=thumbnail)
+                if thumbnail:
+                    self.send_bytes(200, result, "image/jpeg")
+                else:
+                    self.send_json(200, result)
+            elif match := TOOL_SHARE.fullmatch(self.path):
+                self.send_json(200, store.tool_share(self.cookie_token(), self.marker(), match[1]))
             elif match := TOOL_VERSIONS.fullmatch(self.path):
                 versions = store.versions(self.cookie_token(), self.marker(), match[1],
                                           ensure_history=history.ensure_tool_history)
@@ -468,6 +506,41 @@ def serve(key, port, runs=generate.RUNS, *, generation_limits=(5, 30), analysis_
                 return (runs / tool_id / "app.html").read_text(encoding="utf-8")
             except (OSError, UnicodeError):
                 raise ApiError(404, "tool_unavailable", "此工具不可用。") from None
+
+        def prepare_share_demo(self, db, tool):
+            html = self.read_tool_html(tool["run_id"])
+            entries = []
+            try:
+                if tool["table_tool"]:
+                    table = table_import.read_saved_table(tool["entries"])
+                    samples = {"number": "1", "date": "2026-01-15", "boolean": "是"}
+                    demo = {
+                        "filename": "演示表格", "columns": table["columns"],
+                        "rows": [[samples.get(col["type"], "示例") for col in table["columns"]]],
+                        "done": [False],
+                    }
+                    entries = [[table_import.TABLE_KEY, json.dumps(demo, ensure_ascii=False)]]
+                else:
+                    source = history.published_source(db, tool["run_id"])
+                    if source is not None:
+                        spec = history.blueprint.read_spec(history.read(source, source["head"], "spec.json"))
+                        if spec.get("fields"):
+                            entries = staged_record_code.verification_entries(spec["fields"])
+            except (KeyError, OSError, TypeError, ValueError, subprocess.SubprocessError) as error:
+                raise ApiError(409, "share_demo_unavailable", "无法准备演示数据，请重试。") from error
+            if staged_record_code.MARKER in html[:100] and not entries:
+                raise ApiError(409, "share_demo_unavailable", "无法准备演示数据，请重试。")
+            return html, entries
+
+        @staticmethod
+        def verify_share_demo(html, entries, *, table):
+            try:
+                return runtime_verify.verify(
+                    html.encode(), entries, thumbnail=True,
+                    storage_limit=TABLE_STORAGE_BYTES if table else TOOL_STORAGE_BYTES,
+                )
+            except runtime_verify.RuntimeVerificationError as error:
+                raise ApiError(409, "share_demo_unavailable", "此工具无法启动试玩，请检查预览后再分享。") from error
 
         def do_POST(self):
             if not self.valid_host():
@@ -530,6 +603,9 @@ def serve(key, port, runs=generate.RUNS, *, generation_limits=(5, 30), analysis_
                 store.logout(token, self.marker())
                 self.send_json(200, {"ok": True}, session_cookie("", 0))
                 return
+            if match := TOOL_SHARE.fullmatch(self.path):
+                self.send_json(200, store.tool_share(token, self.marker(), match[1], data, self.prepare_share_demo, self.verify_share_demo))
+                return
             if match := DRAFT_PATH.fullmatch(self.path):
                 value = data.get("text")
                 if key and any(isinstance(item, str) and key in item for item in (value, data.get("title"))):
@@ -588,7 +664,7 @@ def serve(key, port, runs=generate.RUNS, *, generation_limits=(5, 30), analysis_
                 elif match[2] == "candidate":
                     self.send_json(200, staged.candidate(token, marker, match[1]))
                 elif match[2] == "source":
-                    self.send_json(200, staged.candidate_source(token, marker, match[1], data))
+                    self.send_source(staged.candidate_source(token, marker, match[1], data), data)
                 elif match[2] == "confirm-revision":
                     staged.confirm_revision(token, marker, match[1], data)
                     self.send_json(200, {"confirmed":True})
@@ -624,7 +700,7 @@ def serve(key, port, runs=generate.RUNS, *, generation_limits=(5, 30), analysis_
                 return
             if match := TOOL_ACTION.fullmatch(self.path):
                 if match[2] == "source":
-                    self.send_json(200, history.current_source(token, self.marker(), match[1], data.get("version")))
+                    self.send_source(history.current_source(token, self.marker(), match[1], data.get("version")), data)
                     return
                 if match[2] == "revise":
                     self.handle_generation(data, match[1])
